@@ -12,24 +12,47 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")   // pooled: runtime
   directUrl = env("DIRECT_URL")     // direct: migrations
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 model User {
-  id          String     @id @default(cuid())
-  authUserId  String     @unique
-  email       String     @unique
-  createdAt   DateTime   @default(now())
-  templates   Template[]
+  id            String         @id @default(cuid())
+  authUserId    String         @unique
+  email         String         @unique
+  passwordHash  String
+  displayName   String?
+  credits       Int            @default(0)
+  profileImage  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  templates     Template[]
+  gallery       GalleryEntry[]
 }
 
 model Template {
-  id           String   @id @default(cuid())
+  id           String         @id @default(cuid())
   name         String
   modality     String
   category     String?
   description  String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  ownerAuthId  String
+  owner        User           @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  gallery      GalleryEntry[]
+}
+
+model GalleryEntry {
+  id           String   @id @default(cuid())
+  ownerAuthId  String
+  templateId   String?
+  assetUrl     String
+  metadata     Json?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  ownerAuthId  String
+
   owner        User     @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  template     Template? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([ownerAuthId, createdAt(sort: Desc)])
 }

@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "public"."Template" (
+CREATE TABLE IF NOT EXISTS "Template" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "modality" TEXT NOT NULL,

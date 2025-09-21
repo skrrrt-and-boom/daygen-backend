@@ -1,3 +1,32 @@
+# DayGen Backend
+
+This service now issues JSON Web Tokens for email/password accounts and persists user galleries so creations follow you between sessions.
+
+## Quick Start
+
+1. Install dependencies: `npm install`
+2. Set the required environment variables (see below)
+3. Run the development server: `npm run start:dev`
+
+## Required Environment
+
+- `DATABASE_URL` and `DIRECT_URL` – PostgreSQL connection strings for Prisma
+- `JWT_SECRET` – secret used to sign authentication tokens (fallbacks to `change-me-in-production` in development)
+
+## Key Endpoints
+
+- `POST /api/auth/signup` – create a new account (`email`, `password`, optional `displayName`)
+- `POST /api/auth/login` – exchange valid credentials for a JWT
+- `GET /api/auth/me` – fetch the profile for the active bearer token
+- `PATCH /api/users/me` – update `displayName` or `profileImage`
+- `GET /api/gallery` – list gallery entries for the current user (supports `limit`/`cursor`)
+- `POST /api/gallery` – persist a generation (`assetUrl`, optional `templateId`, optional metadata JSON)
+- `DELETE /api/gallery/:id` – remove one of your gallery items
+
+Tokens must be supplied via the `Authorization: Bearer <token>` header. The frontend stores the token in `localStorage` and automatically refreshes profile state on load.
+
+---
+
 <p align="center">
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>

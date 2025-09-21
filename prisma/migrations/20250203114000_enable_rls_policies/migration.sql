@@ -1,47 +1,65 @@
 -- Enable RLS on application tables
-ALTER TABLE public."User" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public."Template" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public."_prisma_migrations" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "User" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Template" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "GalleryEntry" ENABLE ROW LEVEL SECURITY;
 
 -- Drop legacy policies if they exist to avoid duplicates when reapplying
-DROP POLICY IF EXISTS "user_select_own" ON public."User";
-DROP POLICY IF EXISTS "user_insert_own" ON public."User";
-DROP POLICY IF EXISTS "user_update_own" ON public."User";
-DROP POLICY IF EXISTS "user_delete_own" ON public."User";
-DROP POLICY IF EXISTS "template_select_own" ON public."Template";
-DROP POLICY IF EXISTS "template_write_own" ON public."Template";
-DROP POLICY IF EXISTS "template_manage_migrations" ON public."_prisma_migrations";
+DROP POLICY IF EXISTS "user_select_own" ON "User";
+DROP POLICY IF EXISTS "user_insert_own" ON "User";
+DROP POLICY IF EXISTS "user_update_own" ON "User";
+DROP POLICY IF EXISTS "user_delete_own" ON "User";
+DROP POLICY IF EXISTS "template_select_own" ON "Template";
+DROP POLICY IF EXISTS "template_write_own" ON "Template";
+DROP POLICY IF EXISTS "gallery_select_own" ON "GalleryEntry";
+DROP POLICY IF EXISTS "gallery_write_own" ON "GalleryEntry";
 
--- Users: authenticated callers can work with the row bound to their auth UID
-CREATE POLICY "user_select_own" ON public."User"
-  FOR SELECT TO authenticated
-  USING ("authUserId" = (SELECT auth.uid()));
+DO $$
+BEGIN
+  -- Supabase exposes auth.uid() via the auth schema. Skip policy creation when
+  -- the schema is missing (e.g. newly created shadow databases during migrate dev).
+  IF EXISTS (
+    SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth'
+  ) THEN
+    -- Users: authenticated callers can work with the row bound to their auth UID
+    CREATE POLICY "user_select_own" ON "User"
+      FOR SELECT TO authenticated
+      USING ("authUserId" = (SELECT auth.uid())::text);
 
-CREATE POLICY "user_insert_own" ON public."User"
-  FOR INSERT TO authenticated
-  WITH CHECK ("authUserId" = (SELECT auth.uid()));
+    CREATE POLICY "user_insert_own" ON "User"
+      FOR INSERT TO authenticated
+      WITH CHECK ("authUserId" = (SELECT auth.uid())::text);
 
-CREATE POLICY "user_update_own" ON public."User"
-  FOR UPDATE TO authenticated
-  USING ("authUserId" = (SELECT auth.uid()))
-  WITH CHECK ("authUserId" = (SELECT auth.uid()));
+    CREATE POLICY "user_update_own" ON "User"
+      FOR UPDATE TO authenticated
+      USING ("authUserId" = (SELECT auth.uid())::text)
+      WITH CHECK ("authUserId" = (SELECT auth.uid())::text);
 
-CREATE POLICY "user_delete_own" ON public."User"
-  FOR DELETE TO authenticated
-  USING ("authUserId" = (SELECT auth.uid()));
+    CREATE POLICY "user_delete_own" ON "User"
+      FOR DELETE TO authenticated
+      USING ("authUserId" = (SELECT auth.uid())::text);
 
--- Templates: authenticated callers can manage templates they own
-CREATE POLICY "template_select_own" ON public."Template"
-  FOR SELECT TO authenticated
-  USING ("ownerAuthId" = (SELECT auth.uid()));
+    -- Templates: authenticated callers can manage templates they own
+    CREATE POLICY "template_select_own" ON "Template"
+      FOR SELECT TO authenticated
+      USING ("ownerAuthId" = (SELECT auth.uid())::text);
 
-CREATE POLICY "template_write_own" ON public."Template"
-  FOR ALL TO authenticated
-  USING ("ownerAuthId" = (SELECT auth.uid()))
-  WITH CHECK ("ownerAuthId" = (SELECT auth.uid()));
+    CREATE POLICY "template_write_own" ON "Template"
+      FOR ALL TO authenticated
+      USING ("ownerAuthId" = (SELECT auth.uid())::text)
+      WITH CHECK ("ownerAuthId" = (SELECT auth.uid())::text);
 
--- Allow the service role (used by Prisma migrations) to continue operating
-CREATE POLICY "template_manage_migrations" ON public."_prisma_migrations"
-  FOR ALL TO service_role
-  USING (true)
-  WITH CHECK (true);
+    -- Gallery entries: authenticated callers can manage gallery entries they own
+    CREATE POLICY "gallery_select_own" ON "GalleryEntry"
+      FOR SELECT TO authenticated
+      USING ("ownerAuthId" = (SELECT auth.uid())::text);
+
+    CREATE POLICY "gallery_write_own" ON "GalleryEntry"
+      FOR ALL TO authenticated
+      USING ("ownerAuthId" = (SELECT auth.uid())::text)
+      WITH CHECK ("ownerAuthId" = (SELECT auth.uid())::text);
+
+  ELSE
+    RAISE NOTICE 'auth schema missing, skipping Supabase auth policies';
+  END IF;
+END
+$$ LANGUAGE plpgsql;
