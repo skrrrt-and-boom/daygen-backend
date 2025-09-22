@@ -1,7 +1,6 @@
 -- Enable RLS on application tables
 ALTER TABLE "User" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Template" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "GalleryEntry" ENABLE ROW LEVEL SECURITY;
 
 -- Drop legacy policies if they exist to avoid duplicates when reapplying
 DROP POLICY IF EXISTS "user_select_own" ON "User";
@@ -10,8 +9,6 @@ DROP POLICY IF EXISTS "user_update_own" ON "User";
 DROP POLICY IF EXISTS "user_delete_own" ON "User";
 DROP POLICY IF EXISTS "template_select_own" ON "Template";
 DROP POLICY IF EXISTS "template_write_own" ON "Template";
-DROP POLICY IF EXISTS "gallery_select_own" ON "GalleryEntry";
-DROP POLICY IF EXISTS "gallery_write_own" ON "GalleryEntry";
 
 DO $$
 BEGIN
@@ -44,16 +41,6 @@ BEGIN
       USING ("ownerAuthId" = (SELECT auth.uid())::text);
 
     CREATE POLICY "template_write_own" ON "Template"
-      FOR ALL TO authenticated
-      USING ("ownerAuthId" = (SELECT auth.uid())::text)
-      WITH CHECK ("ownerAuthId" = (SELECT auth.uid())::text);
-
-    -- Gallery entries: authenticated callers can manage gallery entries they own
-    CREATE POLICY "gallery_select_own" ON "GalleryEntry"
-      FOR SELECT TO authenticated
-      USING ("ownerAuthId" = (SELECT auth.uid())::text);
-
-    CREATE POLICY "gallery_write_own" ON "GalleryEntry"
       FOR ALL TO authenticated
       USING ("ownerAuthId" = (SELECT auth.uid())::text)
       WITH CHECK ("ownerAuthId" = (SELECT auth.uid())::text);
