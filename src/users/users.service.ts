@@ -42,7 +42,10 @@ export class UsersService {
     return user;
   }
 
-  async updateProfile(authUserId: string, patch: { displayName?: string | null; profileImage?: string | null }): Promise<SanitizedUser> {
+  async updateProfile(
+    authUserId: string,
+    patch: { displayName?: string | null; profileImage?: string | null },
+  ): Promise<SanitizedUser> {
     const user = await this.prisma.user.update({
       where: { authUserId },
       data: {

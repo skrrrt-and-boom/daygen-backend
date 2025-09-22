@@ -17,7 +17,10 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard)
   @Patch('me')
-  updateProfile(@CurrentUser() user: SanitizedUser, @Body() dto: UpdateProfileDto) {
+  updateProfile(
+    @CurrentUser() user: SanitizedUser,
+    @Body() dto: UpdateProfileDto,
+  ) {
     return this.usersService.updateProfile(user.authUserId, dto);
   }
 }

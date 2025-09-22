@@ -21,7 +21,7 @@ export class GalleryService {
 
     const hasMore = entries.length > take;
     const items = hasMore ? entries.slice(0, take) : entries;
-    const nextCursor = hasMore ? items[items.length - 1]?.id ?? null : null;
+    const nextCursor = hasMore ? (items[items.length - 1]?.id ?? null) : null;
 
     return {
       items: items.map((entry) => this.toResponse(entry)),

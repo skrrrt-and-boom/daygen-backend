@@ -3,7 +3,7 @@ import { SanitizedUser } from '../users/types';
 
 export const CurrentUser = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): SanitizedUser => {
-    const request = ctx.switchToHttp().getRequest();
-    return request.user as SanitizedUser;
+    const { user } = ctx.switchToHttp().getRequest<{ user?: SanitizedUser }>();
+    return user as SanitizedUser;
   },
 );

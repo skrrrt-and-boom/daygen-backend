@@ -1,19 +1,36 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
-import { ExtractJwt, Strategy } from 'passport-jwt';
+import {
+  Strategy,
+  type JwtFromRequestFunction,
+  type StrategyOptions,
+} from 'passport-jwt';
+import type { Request } from 'express';
 import { UsersService } from '../users/users.service';
 import { JwtPayload } from './jwt.types';
 
 const jwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
+const bearerTokenMatcher = /^Bearer\s+(.+)$/i;
+const jwtFromRequest: JwtFromRequestFunction = (req: Request) => {
+  const header = req?.headers?.authorization;
+  if (!header) {
+    return null;
+  }
+
+  const match = header.match(bearerTokenMatcher);
+  return match?.[1] ?? null;
+};
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(private readonly usersService: UsersService) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- passport-jwt expects a function here
+      jwtFromRequest,
       ignoreExpiration: false,
       secretOrKey: jwtSecret,
-    });
+    } as StrategyOptions);
   }
 
   async validate(payload: JwtPayload) {

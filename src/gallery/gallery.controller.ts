@@ -1,4 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { GalleryService } from './gallery.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -17,11 +26,18 @@ export class GalleryController {
     @Query('cursor') cursor?: string,
   ) {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
-    return this.galleryService.list(user.authUserId, parsedLimit, cursor ?? undefined);
+    return this.galleryService.list(
+      user.authUserId,
+      parsedLimit,
+      cursor ?? undefined,
+    );
   }
 
   @Post()
-  create(@CurrentUser() user: SanitizedUser, @Body() dto: CreateGalleryEntryDto) {
+  create(
+    @CurrentUser() user: SanitizedUser,
+    @Body() dto: CreateGalleryEntryDto,
+  ) {
     return this.galleryService.create(user.authUserId, dto);
   }
 

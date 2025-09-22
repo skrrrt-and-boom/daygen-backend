@@ -20,7 +20,10 @@ export class TemplatesService {
   }
 
   update(id: string, updateTemplateDto: UpdateTemplateDto) {
-    return this.prisma.template.update({ where: { id }, data: updateTemplateDto });
+    return this.prisma.template.update({
+      where: { id },
+      data: updateTemplateDto,
+    });
   }
 
   remove(id: string) {
