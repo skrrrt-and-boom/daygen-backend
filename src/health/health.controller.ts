@@ -6,12 +6,14 @@ import {
   HealthIndicatorFunction,
   PrismaHealthIndicator,
 } from '@nestjs/terminus';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('health')
 export class HealthController {
   constructor(
     private readonly health: HealthCheckService,
     private readonly prisma: PrismaHealthIndicator,
+    private readonly prismaService: PrismaService,
   ) {}
 
   @Get()
@@ -20,7 +22,7 @@ export class HealthController {
     const checks: HealthIndicatorFunction[] = [];
 
     if (process.env.SKIP_DATABASE_HEALTHCHECK !== 'true') {
-      checks.push(() => this.prisma.pingCheck('database'));
+      checks.push(() => this.prisma.pingCheck('database', this.prismaService));
     }
 
     if (checks.length === 0) {
