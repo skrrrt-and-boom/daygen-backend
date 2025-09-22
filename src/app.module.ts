@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
+import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
@@ -9,9 +10,11 @@ import { TemplatesModule } from './templates/templates.module';
 import { AuthModule } from './auth/auth.module';
 import { GalleryModule } from './gallery/gallery.module';
 import { HealthModule } from './health/health.module';
+import { GenerationModule } from './generation/generation.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true, cache: true }),
     LoggerModule.forRoot({
       pinoHttp: {
         genReqId: (req, res) => {
@@ -42,6 +45,7 @@ import { HealthModule } from './health/health.module';
     TemplatesModule,
     GalleryModule,
     HealthModule,
+    GenerationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

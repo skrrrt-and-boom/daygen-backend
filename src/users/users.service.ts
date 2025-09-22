@@ -18,6 +18,7 @@ export class UsersService {
         passwordHash: input.passwordHash,
         displayName: input.displayName?.trim() || null,
         credits: 200, // starter credits for new accounts
+        role: 'USER',
       },
     });
   }
@@ -40,6 +41,16 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
     return user;
+  }
+
+  async listBalances(limit = 100) {
+    const safeLimit = Math.min(Math.max(limit, 1), 200);
+    const users = await this.prisma.user.findMany({
+      orderBy: [{ credits: 'asc' }, { createdAt: 'asc' }],
+      take: safeLimit,
+    });
+
+    return users.map((user) => this.toSanitizedUser(user));
   }
 
   async updateProfile(
@@ -65,6 +76,7 @@ export class UsersService {
       displayName: user.displayName ?? null,
       credits: user.credits,
       profileImage: user.profileImage ?? null,
+      role: user.role,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };

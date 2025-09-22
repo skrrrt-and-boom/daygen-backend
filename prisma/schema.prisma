@@ -25,8 +25,10 @@ model User {
   profileImage  String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  role          UserRole       @default(USER)
   templates     Template[]
   gallery       GalleryEntry[]
+  usageEvents   UsageEvent[]
 }
 
 model Template {
@@ -55,4 +57,31 @@ model GalleryEntry {
   template     Template? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   @@index([ownerAuthId, createdAt(sort: Desc)])
+}
+
+model UsageEvent {
+  id            String       @id @default(cuid())
+  userAuthId    String
+  provider      String
+  model         String?
+  prompt        String?
+  cost          Int
+  balanceAfter  Int
+  status        UsageStatus  @default(COMPLETED)
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+
+  user          User         @relation(fields: [userAuthId], references: [authUserId], onDelete: Cascade)
+
+  @@index([userAuthId, createdAt(sort: Desc)])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UsageStatus {
+  COMPLETED
+  GRACE
 }
