@@ -1,4 +1,11 @@
-import { Allow, IsArray, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  Allow,
+  IsArray,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 const KNOWN_KEYS = new Set([

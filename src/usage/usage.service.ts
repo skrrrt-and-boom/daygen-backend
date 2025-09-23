@@ -33,7 +33,10 @@ export class UsageService {
     this.graceLimit = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
   }
 
-  async recordGeneration(user: SanitizedUser, event: UsageEventInput): Promise<UsageEventResult> {
+  async recordGeneration(
+    user: SanitizedUser,
+    event: UsageEventInput,
+  ): Promise<UsageEventResult> {
     const cost = this.normalizeCost(event.cost);
 
     return this.prisma.$transaction(async (tx) => {
@@ -51,7 +54,9 @@ export class UsageService {
 
       if (balanceAfter < 0) {
         if (Math.abs(balanceAfter) > this.graceLimit) {
-          throw new ForbiddenException('Insufficient credits to complete generation');
+          throw new ForbiddenException(
+            'Insufficient credits to complete generation',
+          );
         }
         status = UsageStatus.GRACE;
       }
@@ -78,7 +83,11 @@ export class UsageService {
     });
   }
 
-  async listEvents(params: { userAuthId?: string; limit?: number; cursor?: string }) {
+  async listEvents(params: {
+    userAuthId?: string;
+    limit?: number;
+    cursor?: string;
+  }) {
     const limit = Math.min(Math.max(params.limit ?? 25, 1), 100);
 
     const events = await this.prisma.usageEvent.findMany({
@@ -91,7 +100,7 @@ export class UsageService {
 
     const hasMore = events.length > limit;
     const items = hasMore ? events.slice(0, limit) : events;
-    const nextCursor = hasMore ? items[items.length - 1]?.id ?? null : null;
+    const nextCursor = hasMore ? (items[items.length - 1]?.id ?? null) : null;
 
     return {
       items: items.map((event) => ({
@@ -115,7 +124,9 @@ export class UsageService {
       return this.defaultCost;
     }
     if (!Number.isFinite(input)) {
-      this.logger.warn(`Invalid cost value received: ${String(input)}. Falling back to default.`);
+      this.logger.warn(
+        `Invalid cost value received: ${String(input)}. Falling back to default.`,
+      );
       return this.defaultCost;
     }
     const rounded = Math.max(0, Math.round(input));

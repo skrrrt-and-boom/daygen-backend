@@ -14,7 +14,9 @@ const createService = (credits: number, grace = 0) => {
   };
 
   const prisma = {
-    $transaction: jest.fn((fn: (txArg: typeof tx) => Promise<unknown>) => fn(tx)),
+    $transaction: jest.fn((fn: (txArg: typeof tx) => Promise<unknown>) =>
+      fn(tx),
+    ),
   } as unknown as any;
 
   if (grace !== undefined) {
