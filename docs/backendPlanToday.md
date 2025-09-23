@@ -8,6 +8,14 @@ Commands I used to get frontend and backend to work locally:
         npm run dev
 
 
+To ask codex:
+template.service.ts file, expose template CRUD with no auth guard and trust a caller-supplied ownerAuthId, Any caller can create or update or delete templates for any user. Protect routes and derive ownership from CurrentUser
+
+User@Example.com and user@example.com are distinct records and login requires matching case. Normalize and trim emails everywhere before storing, or enforce lowercase at the database level. users.service.ts file
+
+auth.service.ts currently trusts the prior existence check. A parallel signup can still hit the unique constraint and get a 500.
+
+users.service.ts In the JWT guard this propagates as a 404 instead of a 401, leaking existence information and confusing clients. Catch the lookup, treat missing users as unauthorized, and return a consistent 401.
 
 TO DO:
 Add Ideogram and Qwen every feature

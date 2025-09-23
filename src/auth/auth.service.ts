@@ -10,6 +10,8 @@ import { LoginDto } from './dto/login.dto';
 import { UsersService } from '../users/users.service';
 import { JwtPayload } from './jwt.types';
 import { SanitizedUser } from '../users/types';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { User } from '@prisma/client';
 
 export interface AuthResult {
   accessToken: string;
@@ -30,11 +32,22 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
-    const user = await this.usersService.createLocalUser({
-      email: dto.email,
-      passwordHash,
-      displayName: dto.displayName,
-    });
+    let user: User;
+    try {
+      user = await this.usersService.createLocalUser({
+        email: dto.email,
+        passwordHash,
+        displayName: dto.displayName,
+      });
+    } catch (error) {
+      if (
+        error instanceof PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Email is already registered');
+      }
+      throw error;
+    }
 
     const safeUser = this.usersService.toSanitizedUser(user);
     const token = await this.buildToken(safeUser);

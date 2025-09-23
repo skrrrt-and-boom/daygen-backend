@@ -4,16 +4,20 @@ import { CreateLocalUserInput, SanitizedUser } from './types';
 import { User } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
+const normalizeEmailValue = (email: string): string =>
+  email.trim().toLowerCase();
+
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createLocalUser(input: CreateLocalUserInput): Promise<User> {
     const authUserId = randomUUID();
+    const normalizedEmail = normalizeEmailValue(input.email);
 
     return this.prisma.user.create({
       data: {
-        email: input.email,
+        email: normalizedEmail,
         authUserId,
         passwordHash: input.passwordHash,
         displayName: input.displayName?.trim() || null,
@@ -24,7 +28,8 @@ export class UsersService {
   }
 
   async findByEmailWithSecret(email: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = normalizeEmailValue(email);
+    return this.prisma.user.findUnique({ where: { email: normalizedEmail } });
   }
 
   async findById(id: string): Promise<User> {
@@ -72,7 +77,7 @@ export class UsersService {
     return {
       id: user.id,
       authUserId: user.authUserId,
-      email: user.email,
+      email: normalizeEmailValue(user.email),
       displayName: user.displayName ?? null,
       credits: user.credits,
       profileImage: user.profileImage ?? null,

@@ -14,7 +14,11 @@ import { GenerationModule } from './generation/generation.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, cache: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      cache: true,
+      envFilePath: ['.env.image-services', '.env'],
+    }),
     LoggerModule.forRoot({
       pinoHttp: {
         genReqId: (req, res) => {

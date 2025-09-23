@@ -20,8 +20,4 @@ export class CreateTemplateDto {
   @IsString()
   @MaxLength(500)
   description?: string;
-
-  @IsString()
-  @IsNotEmpty()
-  ownerAuthId: string;
 }

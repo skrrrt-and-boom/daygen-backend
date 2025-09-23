@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { UsageStatus } from '@prisma/client';
 import { UsageService } from './usage.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 const createService = (credits: number, grace = 0) => {
   const tx = {
@@ -17,7 +18,7 @@ const createService = (credits: number, grace = 0) => {
     $transaction: jest.fn((fn: (txArg: typeof tx) => Promise<unknown>) =>
       fn(tx),
     ),
-  } as unknown as any;
+  } as unknown as PrismaService;
 
   if (grace !== undefined) {
     process.env.USAGE_GRACE_CREDITS = grace.toString();
@@ -61,14 +62,22 @@ describe('UsageService', () => {
       where: { authUserId: 'auth-id' },
       data: { credits: 8 },
     });
-    expect(tx.usageEvent.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
+    expect(tx.usageEvent.create).toHaveBeenCalledTimes(1);
+    const usageCreateMock = tx.usageEvent.create as jest.Mock<
+      Promise<unknown>,
+      [Record<string, unknown>]
+    >;
+    const usagePayloadRaw: unknown = usageCreateMock.mock.calls[0]?.[0];
+    expect(usagePayloadRaw).toBeDefined();
+    const usagePayload = usagePayloadRaw as Record<string, unknown>;
+    expect(usagePayload).toMatchObject({
+      data: {
         provider: 'test-provider',
         model: 'test-model',
         cost: 2,
         balanceAfter: 8,
         status: UsageStatus.COMPLETED,
-      }),
+      },
     });
     expect(result).toEqual({ status: UsageStatus.COMPLETED, balanceAfter: 8 });
   });
@@ -98,11 +107,19 @@ describe('UsageService', () => {
       where: { authUserId: 'auth-id' },
       data: { credits: -3 },
     });
-    expect(tx.usageEvent.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
+    expect(tx.usageEvent.create).toHaveBeenCalledTimes(1);
+    const graceCreateMock = tx.usageEvent.create as jest.Mock<
+      Promise<unknown>,
+      [Record<string, unknown>]
+    >;
+    const gracePayloadRaw: unknown = graceCreateMock.mock.calls[0]?.[0];
+    expect(gracePayloadRaw).toBeDefined();
+    const gracePayload = gracePayloadRaw as Record<string, unknown>;
+    expect(gracePayload).toMatchObject({
+      data: {
         balanceAfter: -3,
         status: UsageStatus.GRACE,
-      }),
+      },
     });
     expect(result).toEqual({ status: UsageStatus.GRACE, balanceAfter: -3 });
   });

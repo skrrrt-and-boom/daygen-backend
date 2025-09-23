@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateGalleryEntryDto } from './dto/create-gallery-entry.dto';
 import { Prisma } from '@prisma/client';
 import type { GalleryEntry } from '@prisma/client';
+import { GalleryEntryStatus } from '@prisma/client';
 
 @Injectable()
 export class GalleryService {
@@ -12,7 +13,10 @@ export class GalleryService {
     const take = Math.min(Math.max(limit, 1), 100);
 
     const entries = await this.prisma.galleryEntry.findMany({
-      where: { ownerAuthId },
+      where: {
+        ownerAuthId,
+        status: GalleryEntryStatus.ACTIVE,
+      },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: take + 1,
       cursor: cursor ? { id: cursor } : undefined,
@@ -43,11 +47,24 @@ export class GalleryService {
   }
 
   async remove(ownerAuthId: string, id: string) {
-    const result = await this.prisma.galleryEntry.deleteMany({
+    const entry = await this.prisma.galleryEntry.findFirst({
       where: { id, ownerAuthId },
     });
 
-    return { removed: result.count > 0 };
+    if (!entry) {
+      return { removed: false };
+    }
+
+    if (entry.status === GalleryEntryStatus.REMOVED) {
+      return { removed: true, entry: this.toResponse(entry) };
+    }
+
+    const updated = await this.prisma.galleryEntry.update({
+      where: { id },
+      data: { status: GalleryEntryStatus.REMOVED },
+    });
+
+    return { removed: true, entry: this.toResponse(updated) };
   }
 
   private toResponse(entry: GalleryEntry) {
@@ -57,6 +74,7 @@ export class GalleryService {
       ownerAuthId: entry.ownerAuthId,
       assetUrl: entry.assetUrl,
       metadata: entry.metadata ?? null,
+      status: entry.status,
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
     };

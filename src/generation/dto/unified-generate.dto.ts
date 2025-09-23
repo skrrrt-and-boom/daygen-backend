@@ -20,16 +20,25 @@ const KNOWN_KEYS = new Set([
   'providerOptions',
 ]);
 
-function collectProviderOptions(obj: Record<string, unknown> | undefined) {
-  if (!obj) {
+function collectProviderOptions(obj: unknown) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     return {};
   }
+
+  const source = obj as Record<string, unknown>;
   const extras: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
+
+  for (const [key, value] of Object.entries(source)) {
     if (!KNOWN_KEYS.has(key)) {
       extras[key] = value;
     }
   }
+
+  const nested = source.providerOptions;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return { ...(nested as Record<string, unknown>), ...extras };
+  }
+
   return extras;
 }
 
