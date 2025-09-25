@@ -1,49 +1,3 @@
-Commands I used to get frontend and backend to work locally:
-    In both terminals first:
-        npm run build
-
-    In backend terminal:
-        npm run start:dev
-    In frontend terminal:
-        npm run dev
-
-
-To ask codex:
-template.service.ts file, expose template CRUD with no auth guard and trust a caller-supplied ownerAuthId, Any caller can create or update or delete templates for any user. Protect routes and derive ownership from CurrentUser
-
-User@Example.com and user@example.com are distinct records and login requires matching case. Normalize and trim emails everywhere before storing, or enforce lowercase at the database level. users.service.ts file
-
-auth.service.ts currently trusts the prior existence check. A parallel signup can still hit the unique constraint and get a 500.
-
-users.service.ts In the JWT guard this propagates as a 404 instead of a 401, leaking existence information and confusing clients. Catch the lookup, treat missing users as unauthorized, and return a consistent 401.
-
-TO DO:
-Add Ideogram and Qwen every feature
- The edit/reframe/upscale/describe (Ideogram) and image-edit (Qwen) variants were previously handled in daygen0/server.js, and since that server layer is now gone, there’s nothing on the backend to service those requests
-
----
-
-introduce persistent storage (object store + CDN) instead of returning data URLs, so big libraries don’t sit in Postgres or memory.
-
-1) Store big files in object storage + serve via CDN (no more data URLs)
-   My pick is Cloudflare R2 + Cloudflare CDN
-
-Plainly: Don’t shove large assets (images, audio, big JSON libs) into Postgres or return them inline as data: URLs. Instead:
-	•	Write files to an object store (e.g., S3, GCS, MinIO).
-	•	Serve them through a CDN (CloudFront, Cloudflare) via a normal https://... URL.
-
-Why:
-	•	Databases and memory are expensive and slow for big binaries.
-	•	CDNs are fast, cheap, and built for this.
-	•	Clients get small JSON responses with links instead of megabytes of base64.
-
-Done looks like
-	•	Upload helper (streaming) writes to s3://bucket/key.
-	•	API returns { url, contentType, size }, not data: blobs.
-	•	Postgres only stores metadata (key, checksum, expiry), not the file.
-	•	CDN headers (cache, content-type, range) are correctly set.
-
----
 
 queue long-running jobs with BullMQ/SQS and send status via webhooks or WebSockets; polling from the frontend will collapse under heavy load.
 
@@ -65,7 +19,7 @@ Done looks like
 
 harden usage accounting: automated resets/top-ups, Stripe or internal billing hooks, rate-limits per provider, admin dashboards.
 
-4) Solid usage + billing controls
+3) Solid usage + billing controls
 
 Plainly: Track how much each user/team/provider is using, enforce limits, and automate resets/payments.
 
@@ -86,7 +40,7 @@ Done looks like
 
 add structured logging/metrics (Pino to log shipper, tracing, error reporting) and integration tests that hit the new modules end-to-end.
 
-5) Real logs, metrics, tracing, and end-to-end tests
+4) Real logs, metrics, tracing, and end-to-end tests
 
 Plainly: Make it observable and testable:
 	•	Structured logging: Use Pino. Every log line is JSON with keys (route, userId, jobId, latency, errorCode).
