@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -35,7 +34,7 @@ interface InlineImage {
 }
 
 interface InMemoryFilePayload {
-  buffer: Buffer;
+  buffer: ArrayBuffer | ArrayBufferView;
   filename?: string;
   mimeType?: string;
 }
@@ -96,6 +95,9 @@ const FLUX_ALLOWED_DOWNLOAD_HOSTS = new Set([
 
 const FLUX_POLL_INTERVAL_MS = 5000;
 const FLUX_MAX_ATTEMPTS = 60;
+
+const FLUX_ALLOWED_POLL_SUFFIXES = ['.bfl.ai'] as const;
+const FLUX_ALLOWED_DOWNLOAD_SUFFIXES = ['.bfl.ai', '.googleusercontent.com'] as const;
 
 const GEMINI_API_KEY_CANDIDATES = [
   'GEMINI_API_KEY',
@@ -183,38 +185,65 @@ const asNumber = (value: unknown): number | undefined => {
 @Injectable()
 export class GenerationService {
   private readonly logger = new Logger(GenerationService.name);
+  private readonly fluxExtraPollHosts: Set<string>;
+  private readonly fluxExtraDownloadHosts: Set<string>;
+  private readonly fluxExtraPollSuffixes: string[];
+  private readonly fluxExtraDownloadSuffixes: string[];
 
   constructor(
     private readonly configService: ConfigService,
     private readonly galleryService: GalleryService,
     private readonly usageService: UsageService,
-  ) {}
+  ) {
+    this.fluxExtraPollHosts = this.readFluxHostSet('BFL_ALLOWED_POLL_HOSTS');
+    this.fluxExtraDownloadHosts = this.readFluxHostSet(
+      'BFL_ALLOWED_DOWNLOAD_HOSTS',
+    );
+    this.fluxExtraPollSuffixes = this.readFluxSuffixList(
+      'BFL_ALLOWED_POLL_SUFFIXES',
+    );
+    this.fluxExtraDownloadSuffixes = this.readFluxSuffixList(
+      'BFL_ALLOWED_DOWNLOAD_SUFFIXES',
+    );
+  }
 
   async generate(user: SanitizedUser, dto: UnifiedGenerateDto) {
     const prompt = dto.prompt?.trim();
     if (!prompt) {
-      throw new BadRequestException('Prompt is required');
+      this.throwBadRequest('Prompt is required');
     }
 
     const model = dto.model?.trim();
     if (!model) {
-      throw new BadRequestException('Model is required');
+      this.throwBadRequest('Model is required');
     }
 
-    const providerResult = await this.dispatch(model, {
-      ...dto,
-      prompt,
-      model,
-    });
+    this.logger.log(`Starting generation for user ${user.authUserId} with model ${model}`);
 
-    await this.persistResult(
-      user,
-      prompt,
-      providerResult,
-      dto.providerOptions ?? {},
-    );
+    try {
+      const providerResult = await this.dispatch(model, {
+        ...dto,
+        prompt,
+        model,
+      });
 
-    return providerResult.clientPayload;
+      await this.persistResult(
+        user,
+        prompt,
+        providerResult,
+        dto.providerOptions ?? {},
+      );
+
+      this.logger.log(`Generation completed successfully for user ${user.authUserId}`);
+      return providerResult.clientPayload;
+    } catch (error) {
+      this.logger.error(`Generation failed for user ${user.authUserId} with model ${model}`, {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        dto: { prompt, model, providerOptions: dto.providerOptions },
+      });
+      throw error;
+    }
   }
 
   private async dispatch(
@@ -246,8 +275,11 @@ export class GenerationService {
       case 'recraft-v2':
       case 'recraft-v3':
         return this.handleRecraft(dto);
+      case 'luma-dream-shaper':
+      case 'luma-realistic-vision':
+        return this.handleLuma(dto);
       default:
-        throw new BadRequestException(`Unsupported model: ${model}`);
+        this.throwBadRequest('Unsupported model', { model });
     }
   }
 
@@ -339,7 +371,14 @@ export class GenerationService {
       );
     }
 
-    this.ensureFluxHost(pollingUrl, FLUX_ALLOWED_POLL_HOSTS, 'polling URL');
+    this.ensureFluxHost(
+      pollingUrl,
+      FLUX_ALLOWED_POLL_HOSTS,
+      'polling URL',
+      FLUX_ALLOWED_POLL_SUFFIXES,
+      this.fluxExtraPollHosts,
+      this.fluxExtraPollSuffixes,
+    );
 
     const pollResult = await this.pollFluxJob(pollingUrl, apiKey);
     const sampleUrl = this.extractFluxSampleUrl(pollResult.payload);
@@ -355,6 +394,9 @@ export class GenerationService {
         sampleUrl,
         FLUX_ALLOWED_DOWNLOAD_HOSTS,
         'download URL',
+        FLUX_ALLOWED_DOWNLOAD_SUFFIXES,
+        this.fluxExtraDownloadHosts,
+        this.fluxExtraDownloadSuffixes,
       );
     }
 
@@ -415,11 +457,29 @@ export class GenerationService {
       }
     }
 
+    const requestPayload: Record<string, unknown> = {
+      contents: [{ role: 'user', parts }],
+    };
+
+    const generationConfig: Record<string, number> = {};
+    if (dto.temperature !== undefined) {
+      generationConfig.temperature = dto.temperature;
+    }
+    if (dto.topP !== undefined) {
+      generationConfig.topP = dto.topP;
+    }
+    if (dto.outputLength !== undefined) {
+      generationConfig.maxOutputTokens = dto.outputLength;
+    }
+    if (Object.keys(generationConfig).length > 0) {
+      requestPayload.generationConfig = generationConfig;
+    }
+
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts }] }),
+      body: JSON.stringify(requestPayload),
     });
 
     if (!response.ok) {
@@ -442,33 +502,122 @@ export class GenerationService {
 
     let base64: string | undefined;
     let mimeType: string | undefined;
+    let remoteUrl: string | undefined;
+
+    const registerRemoteCandidate = (candidate?: string) => {
+      if (remoteUrl) {
+        return;
+      }
+      const normalized = this.normalizeGeminiUri(candidate);
+      if (normalized) {
+        remoteUrl = normalized;
+      }
+    };
 
     for (const part of partCandidates) {
       const partRecord = optionalJsonRecord(part);
       if (!partRecord) {
         continue;
       }
-      const inlineRecord = optionalJsonRecord(partRecord['inlineData']);
-      if (!inlineRecord) {
-        continue;
+
+      if (!base64) {
+        const inlineRecord = optionalJsonRecord(partRecord['inlineData']);
+        if (inlineRecord) {
+          const data = asString(inlineRecord['data']);
+          if (data) {
+            base64 = data;
+            mimeType = asString(inlineRecord['mimeType']) ?? mimeType;
+            continue;
+          }
+        }
       }
-      const data = asString(inlineRecord['data']);
-      if (!data) {
-        continue;
+
+      const fileData = optionalJsonRecord(partRecord['fileData']);
+      if (fileData) {
+        registerRemoteCandidate(
+          asString(fileData['fileUri']) ??
+            asString(fileData['uri']) ??
+            asString(fileData['url']),
+        );
       }
-      base64 = data;
-      mimeType = asString(inlineRecord['mimeType']) ?? 'image/png';
-      break;
+
+      const mediaRecord = optionalJsonRecord(partRecord['media']);
+      if (mediaRecord) {
+        registerRemoteCandidate(
+          asString(mediaRecord['mediaUri']) ??
+            asString(mediaRecord['uri']) ??
+            asString(mediaRecord['url']),
+        );
+      }
+
+      registerRemoteCandidate(
+        asString(partRecord['url']) ??
+          asString(partRecord['uri']) ??
+          asString(partRecord['signedUrl']) ??
+          asString(partRecord['imageUrl']),
+      );
+
+      if (!base64) {
+        const dataCandidate = asString(partRecord['data']);
+        if (dataCandidate && isProbablyBase64(dataCandidate)) {
+          base64 = dataCandidate;
+          mimeType = asString(partRecord['mimeType']) ?? mimeType;
+        }
+      }
+    }
+
+    let dataUrl: string | undefined;
+
+    if (!base64 && remoteUrl) {
+      const ensured = await this.ensureDataUrl(remoteUrl);
+      const asset = this.assetFromDataUrl(ensured);
+      base64 = asset.base64;
+      mimeType = asset.mimeType;
+      dataUrl = asset.dataUrl;
     }
 
     if (!base64) {
-      throw new BadRequestException(
-        'No image returned from Gemini 2.5 Flash Image',
-      );
+      const fallbackCandidates = this.collectImageCandidates(responsePayload);
+      for (const candidate of fallbackCandidates) {
+        if (!base64 && candidate.startsWith('data:')) {
+          const asset = this.assetFromDataUrl(candidate);
+          base64 = asset.base64;
+          mimeType = asset.mimeType;
+          dataUrl = asset.dataUrl;
+          break;
+        }
+      }
+      if (!base64 && !remoteUrl) {
+        const remoteFallback = fallbackCandidates.find(
+          (candidate) => !candidate.startsWith('data:'),
+        );
+        if (remoteFallback) {
+          registerRemoteCandidate(remoteFallback);
+        }
+      }
+    }
+
+    if (!base64 && remoteUrl) {
+      const ensured = await this.ensureDataUrl(remoteUrl);
+      const asset = this.assetFromDataUrl(ensured);
+      base64 = asset.base64;
+      mimeType = asset.mimeType;
+      dataUrl = asset.dataUrl;
+    }
+
+    if (!base64) {
+      this.throwBadRequest('No image returned from Gemini 2.5 Flash Image');
     }
 
     const resolvedMimeType = mimeType ?? 'image/png';
-    const dataUrl = `data:${resolvedMimeType};base64,${base64}`;
+    const resolvedDataUrl =
+      dataUrl ?? `data:${resolvedMimeType};base64,${base64}`;
+    const asset: GeneratedAsset = {
+      dataUrl: resolvedDataUrl,
+      mimeType: resolvedMimeType,
+      base64,
+      ...(remoteUrl ? { remoteUrl } : {}),
+    };
 
     return {
       provider: 'gemini',
@@ -477,15 +626,11 @@ export class GenerationService {
         success: true,
         mimeType: resolvedMimeType,
         imageBase64: base64,
+        dataUrl: resolvedDataUrl,
         model: targetModel,
+        remoteUrl: remoteUrl ?? null,
       },
-      assets: [
-        {
-          dataUrl,
-          mimeType: resolvedMimeType,
-          base64,
-        },
-      ],
+      assets: [asset],
       rawResponse: responsePayload,
     };
   }
@@ -505,7 +650,8 @@ export class GenerationService {
   ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('IDEOGRAM_API_KEY');
     if (!apiKey) {
-      throw new ServiceUnavailableException('Ideogram API key not configured');
+      this.logger.error('IDEOGRAM_API_KEY environment variable is not configured');
+      throw new ServiceUnavailableException('Ideogram API key not configured. Please set IDEOGRAM_API_KEY environment variable.');
     }
 
     const response = await fetch('https://api.ideogram.ai/api/v1/images', {
@@ -524,8 +670,16 @@ export class GenerationService {
     if (!response.ok) {
       const errorText = await response.text();
       this.logger.error(`Ideogram API error ${response.status}: ${errorText}`);
+      let errorMessage = `Ideogram API error: ${response.status}`;
+      if (response.status === 404) {
+        errorMessage = 'Ideogram API endpoint not found. Please check your API key and endpoint configuration.';
+      } else if (response.status === 401) {
+        errorMessage = 'Ideogram API authentication failed. Please check your API key.';
+      } else if (response.status === 429) {
+        errorMessage = 'Ideogram API rate limit exceeded. Please try again later.';
+      }
       throw new HttpException(
-        { error: `Ideogram API error: ${response.status}`, details: errorText },
+        { error: errorMessage, details: errorText },
         response.status,
       );
     }
@@ -533,7 +687,7 @@ export class GenerationService {
     const resultPayload = (await response.json()) as unknown;
     const urls = this.collectIdeogramUrls(resultPayload);
     if (urls.length === 0) {
-      throw new BadRequestException('No images returned from Ideogram');
+      this.throwBadRequest('No images returned from Ideogram');
     }
 
     const dataUrls: string[] = [];
@@ -611,7 +765,7 @@ export class GenerationService {
 
     const imageUrl = this.extractDashscopeImageUrl(resultPayload);
     if (!imageUrl) {
-      throw new BadRequestException('No image returned from DashScope');
+      this.throwBadRequest('No image returned from DashScope');
     }
 
     const dataUrl = await this.ensureDataUrl(imageUrl);
@@ -671,7 +825,7 @@ export class GenerationService {
 
     const remoteUrl = this.extractRunwayImageUrl(resultPayload);
     if (!remoteUrl) {
-      throw new BadRequestException('No image URL returned from Runway');
+      this.throwBadRequest('No image URL returned from Runway');
     }
 
     const dataUrl = await this.ensureDataUrl(remoteUrl);
@@ -731,15 +885,17 @@ export class GenerationService {
 
     const urls = this.extractSeedreamImages(resultPayload);
     if (urls.length === 0) {
-      throw new BadRequestException('No images returned from Seedream');
+      this.throwBadRequest('No images returned from Seedream');
     }
 
-    const dataUrls = [] as string[];
+    const dataUrls: string[] = [];
     const assets: GeneratedAsset[] = [];
     for (const url of urls) {
+      const remoteUrl = url.startsWith('data:') ? undefined : url;
       const ensured = await this.ensureDataUrl(url);
-      dataUrls.push(ensured);
-      assets.push(this.assetFromDataUrl(ensured));
+      const asset = this.assetFromDataUrl(ensured);
+      dataUrls.push(asset.dataUrl);
+      assets.push(remoteUrl ? { ...asset, remoteUrl } : asset);
     }
 
     return {
@@ -792,7 +948,7 @@ export class GenerationService {
 
     const url = this.extractOpenAiImage(resultPayload);
     if (!url) {
-      throw new BadRequestException('No image returned from OpenAI');
+      this.throwBadRequest('No image returned from OpenAI');
     }
 
     const dataUrl = await this.ensureDataUrl(url);
@@ -823,7 +979,8 @@ export class GenerationService {
   private async handleReve(dto: UnifiedGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('REVE_API_KEY');
     if (!apiKey) {
-      throw new ServiceUnavailableException('Reve API key not configured');
+      this.logger.error('REVE_API_KEY environment variable is not configured');
+      throw new ServiceUnavailableException('Reve API key not configured. Please set REVE_API_KEY environment variable.');
     }
 
     const providerOptions = dto.providerOptions ?? {};
@@ -903,8 +1060,16 @@ export class GenerationService {
     if (!response.ok) {
       const details = this.stringifyUnknown(resultPayload);
       this.logger.error(`Reve API error ${response.status}: ${details}`);
+      let errorMessage = `Reve API error: ${response.status}`;
+      if (response.status === 404) {
+        errorMessage = 'Reve API endpoint not found. Please check your API key and endpoint configuration.';
+      } else if (response.status === 401) {
+        errorMessage = 'Reve API authentication failed. Please check your API key.';
+      } else if (response.status === 429) {
+        errorMessage = 'Reve API rate limit exceeded. Please try again later.';
+      }
       throw new HttpException(
-        { error: `Reve API error: ${response.status}`, details: resultPayload },
+        { error: errorMessage, details: resultPayload },
         response.status,
       );
     }
@@ -929,7 +1094,7 @@ export class GenerationService {
     const { dataUrls, assets } = await this.resolveReveAssets(resultPayload);
 
     if (dataUrls.length === 0) {
-      throw new BadRequestException('No images returned from Reve');
+      this.throwBadRequest('No images returned from Reve');
     }
 
     const clientPayload = this.buildReveClientPayload(
@@ -956,7 +1121,7 @@ export class GenerationService {
   async getReveJobStatus(jobId: string) {
     const trimmedId = jobId?.trim?.() ?? '';
     if (!trimmedId) {
-      throw new BadRequestException('Job ID is required');
+      this.throwBadRequest('Job ID is required');
     }
 
     const apiKey = this.configService.get<string>('REVE_API_KEY');
@@ -1042,13 +1207,13 @@ export class GenerationService {
       form.set('aspect_ratio', input.aspectRatio);
     }
 
-    const imageBlob = new Blob([input.image.buffer], {
+    const imageBlob = new Blob([this.cloneToArrayBuffer(input.image.buffer)], {
       type: input.image.mimeType ?? 'application/octet-stream',
     });
     form.set('image', imageBlob, input.image.filename ?? 'image.png');
 
     if (input.mask) {
-      const maskBlob = new Blob([input.mask.buffer], {
+      const maskBlob = new Blob([this.cloneToArrayBuffer(input.mask.buffer)], {
         type: input.mask.mimeType ?? 'application/octet-stream',
       });
       form.set('mask', maskBlob, input.mask.filename ?? 'mask.png');
@@ -1140,7 +1305,8 @@ export class GenerationService {
   ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('RECRAFT_API_KEY');
     if (!apiKey) {
-      throw new ServiceUnavailableException('Recraft API key not configured');
+      this.logger.error('RECRAFT_API_KEY environment variable is not configured');
+      throw new ServiceUnavailableException('Recraft API key not configured. Please set RECRAFT_API_KEY environment variable.');
     }
 
     const model = dto.model === 'recraft-v2' ? 'recraftv2' : 'recraftv3';
@@ -1182,7 +1348,7 @@ export class GenerationService {
 
     const urls = this.extractRecraftImages(resultPayload);
     if (urls.length === 0) {
-      throw new BadRequestException('No images returned from Recraft');
+      this.throwBadRequest('No images returned from Recraft');
     }
 
     const dataUrls = [] as string[];
@@ -1195,6 +1361,76 @@ export class GenerationService {
 
     return {
       provider: 'recraft',
+      model,
+      clientPayload: { dataUrls },
+      assets,
+      rawResponse: resultPayload,
+    };
+  }
+
+  private async handleLuma(dto: UnifiedGenerateDto): Promise<ProviderResult> {
+    const apiKey = this.configService.get<string>('LUMAAI_API_KEY');
+    if (!apiKey) {
+      this.logger.error('LUMAAI_API_KEY environment variable is not configured');
+      throw new ServiceUnavailableException('Luma AI API key not configured. Please set LUMAAI_API_KEY environment variable.');
+    }
+
+    const model = dto.model === 'luma-realistic-vision' ? 'luma-realistic-vision' : 'luma-dream-shaper';
+    const response = await fetch('https://api.lumalabs.ai/dream-machine/v1/generations', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: dto.prompt,
+        model,
+        aspect_ratio: dto.providerOptions.aspectRatio || '1:1',
+        style: dto.providerOptions.style || 'realistic',
+        quality: dto.providerOptions.quality || 'standard',
+        negative_prompt: dto.providerOptions.negativePrompt,
+        seed: dto.providerOptions.seed,
+        steps: dto.providerOptions.steps,
+        guidance_scale: dto.providerOptions.guidanceScale,
+      }),
+    });
+
+    const resultPayload = (await response.json()) as unknown;
+    if (!response.ok) {
+      const details = this.stringifyUnknown(resultPayload);
+      this.logger.error(`Luma AI API error ${response.status}: ${details}`);
+      let errorMessage = `Luma AI API error: ${response.status}`;
+      if (response.status === 404) {
+        errorMessage = 'Luma AI API endpoint not found. Please check your API key and endpoint configuration.';
+      } else if (response.status === 401) {
+        errorMessage = 'Luma AI API authentication failed. Please check your API key.';
+      } else if (response.status === 429) {
+        errorMessage = 'Luma AI API rate limit exceeded. Please try again later.';
+      }
+      throw new HttpException(
+        {
+          error: errorMessage,
+          details: resultPayload,
+        },
+        response.status,
+      );
+    }
+
+    const urls = this.extractLumaImages(resultPayload);
+    if (urls.length === 0) {
+      this.throwBadRequest('No images returned from Luma AI');
+    }
+
+    const dataUrls = [] as string[];
+    const assets: GeneratedAsset[] = [];
+    for (const url of urls) {
+      const ensured = await this.ensureDataUrl(url);
+      dataUrls.push(ensured);
+      assets.push(this.assetFromDataUrl(ensured));
+    }
+
+    return {
+      provider: 'luma',
       model,
       clientPayload: { dataUrls },
       assets,
@@ -1274,7 +1510,10 @@ export class GenerationService {
     if (source.startsWith('data:')) {
       return source;
     }
-    const { dataUrl } = await this.downloadAsDataUrl(source);
+    const normalized = source.startsWith('gs://')
+      ? this.convertGsUriToHttps(source) ?? source
+      : source;
+    const { dataUrl } = await this.downloadAsDataUrl(normalized);
     return dataUrl;
   }
 
@@ -1486,7 +1725,7 @@ export class GenerationService {
   private async ensureReveDataUrl(source: string): Promise<string> {
     const trimmed = source.trim();
     if (!trimmed) {
-      throw new BadRequestException('Empty image reference from Reve');
+      this.throwBadRequest('Empty image reference from Reve');
     }
     if (trimmed.startsWith('data:')) {
       return trimmed;
@@ -1521,6 +1760,16 @@ export class GenerationService {
     }
 
     return clientPayload;
+  }
+
+  private cloneToArrayBuffer(value: ArrayBuffer | ArrayBufferView): ArrayBuffer {
+    if (value instanceof ArrayBuffer) {
+      return value.slice(0);
+    }
+    const view = value as ArrayBufferView;
+    const copy = new Uint8Array(view.byteLength);
+    copy.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+    return copy.buffer;
   }
 
   private extractReveImages(result: unknown): string[] {
@@ -1592,34 +1841,118 @@ export class GenerationService {
   }
 
   private extractRecraftImages(result: unknown): string[] {
-    const images: string[] = [];
-    const resultRecord = optionalJsonRecord(result);
-    if (!resultRecord) {
-      return images;
-    }
+    return this.collectImageCandidates(result);
+  }
 
-    for (const entry of asArray(resultRecord['data'])) {
-      if (typeof entry === 'string') {
-        images.push(entry);
-        continue;
-      }
-      const entryRecord = optionalJsonRecord(entry);
-      if (!entryRecord) {
-        continue;
-      }
-      const url = asString(entryRecord['url']);
-      if (url) {
-        images.push(url);
-      }
-    }
+  private extractLumaImages(result: unknown): string[] {
+    return this.collectImageCandidates(result);
+  }
 
-    for (const entry of asArray(resultRecord['images'])) {
-      if (typeof entry === 'string') {
-        images.push(entry);
-      }
-    }
+  private collectImageCandidates(source: unknown): string[] {
+    const results = new Set<string>();
+    const seen = new WeakSet<object>();
 
-    return images;
+    const addCandidate = (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        return;
+      }
+      if (trimmed.startsWith('data:')) {
+        results.add(trimmed);
+        return;
+      }
+      if (trimmed.startsWith('gs://')) {
+        const converted = this.convertGsUriToHttps(trimmed);
+        results.add(converted ?? trimmed);
+        return;
+      }
+      if (isProbablyBase64(trimmed)) {
+        const normalized = trimmed.replace(/\s+/g, '');
+        results.add(`data:image/png;base64,${normalized}`);
+        return;
+      }
+      if (/^https?:\/\//i.test(trimmed)) {
+        results.add(trimmed);
+      }
+    };
+
+    const visit = (node: unknown, depth: number) => {
+      if (node === null || node === undefined) {
+        return;
+      }
+      if (typeof node === 'string') {
+        addCandidate(node);
+        return;
+      }
+      if (depth > 6) {
+        return;
+      }
+      if (Array.isArray(node)) {
+        if (seen.has(node)) {
+          return;
+        }
+        seen.add(node);
+        for (const entry of node) {
+          visit(entry, depth + 1);
+        }
+        return;
+      }
+      if (!isJsonRecord(node)) {
+        return;
+      }
+      if (seen.has(node)) {
+        return;
+      }
+      seen.add(node);
+
+      for (const [key, value] of Object.entries(node)) {
+        const lowerKey = key.toLowerCase();
+        if (
+          lowerKey.includes('image') ||
+          lowerKey.includes('url') ||
+          lowerKey.includes('media') ||
+          lowerKey.includes('file') ||
+          lowerKey.includes('asset') ||
+          lowerKey.includes('signed') ||
+          lowerKey.includes('uri') ||
+          lowerKey.includes('link') ||
+          lowerKey === 'data' ||
+          lowerKey.includes('b64') ||
+          lowerKey.includes('base64')
+        ) {
+          visit(value, depth + 1);
+        }
+      }
+    };
+
+    visit(source, 0);
+    return [...results];
+  }
+
+  private normalizeGeminiUri(candidate?: string): string | undefined {
+    if (!candidate) {
+      return undefined;
+    }
+    const trimmed = candidate.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (trimmed.startsWith('gs://')) {
+      return this.convertGsUriToHttps(trimmed) ?? trimmed;
+    }
+    return trimmed;
+  }
+
+  private convertGsUriToHttps(uri: string): string | undefined {
+    const trimmed = uri.trim();
+    if (!trimmed.startsWith('gs://')) {
+      return undefined;
+    }
+    const path = trimmed.slice('gs://'.length).replace(/^\/+/, '');
+    if (!path) {
+      return undefined;
+    }
+    return `https://storage.googleapis.com/${path}`;
   }
 
   private async pollFluxJob(
@@ -1799,24 +2132,98 @@ export class GenerationService {
     return null;
   }
 
+  private throwBadRequest(message: string, details?: unknown): never {
+    const payload: Record<string, unknown> = { error: message };
+    if (details !== undefined) {
+      payload.details = details;
+    }
+    throw new HttpException(payload, HttpStatus.BAD_REQUEST);
+  }
+
   private ensureFluxHost(
     url: string,
     allowedHosts: Set<string>,
     label: string,
+    allowedSuffixes: readonly string[] = [],
+    extraHosts: Set<string> = new Set(),
+    extraSuffixes: readonly string[] = [],
   ): void {
+    let parsed: URL;
     try {
-      const parsed = new URL(url);
-      if (!allowedHosts.has(parsed.hostname)) {
-        throw new BadRequestException(
-          `Invalid ${label} host: ${parsed.hostname}`,
-        );
-      }
-    } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new BadRequestException(`Invalid ${label}`);
+      parsed = new URL(url);
+    } catch {
+      this.throwBadRequest(`Invalid ${label}`);
     }
+    const host = parsed.hostname.toLowerCase();
+    if (
+      allowedHosts.has(host) ||
+      extraHosts.has(host) ||
+      this.matchesSuffix(host, allowedSuffixes) ||
+      this.matchesSuffix(host, extraSuffixes)
+    ) {
+      return;
+    }
+
+    this.throwBadRequest(`Invalid ${label} host`, {
+      host,
+    });
+  }
+
+  private matchesSuffix(host: string, suffixes: readonly string[]): boolean {
+    for (const suffix of suffixes) {
+      const trimmed = suffix.trim();
+      if (!trimmed) {
+        continue;
+      }
+      const normalized = trimmed.startsWith('.')
+        ? trimmed.slice(1)
+        : trimmed;
+      if (
+        host === normalized ||
+        host.endsWith(`.${normalized}`)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private readFluxHostSet(configKey: string): Set<string> {
+    const raw = this.configService.get<string>(configKey);
+    if (!raw) {
+      return new Set();
+    }
+    const entries = raw
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+    return new Set(entries);
+  }
+
+  private readFluxSuffixList(configKey: string): string[] {
+    const raw = this.configService.get<string>(configKey);
+    if (!raw) {
+      return [];
+    }
+    const entries = raw
+      .split(',')
+      .map((value) => this.normalizeFluxSuffix(value))
+      .filter(Boolean);
+    return [...new Set(entries)];
+  }
+
+  private normalizeFluxSuffix(value: string): string {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) {
+      return '';
+    }
+    const withoutWildcard = trimmed
+      .replace(/^[*]+\./, '')
+      .replace(/^[.]+/, '');
+    if (!withoutWildcard) {
+      return '';
+    }
+    return `.${withoutWildcard}`;
   }
 
   private async wait(ms: number): Promise<void> {

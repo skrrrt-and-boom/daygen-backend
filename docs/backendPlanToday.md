@@ -26,6 +26,7 @@ Add Ideogram and Qwen every feature
 introduce persistent storage (object store + CDN) instead of returning data URLs, so big libraries don’t sit in Postgres or memory.
 
 1) Store big files in object storage + serve via CDN (no more data URLs)
+   My pick is Cloudflare R2 + Cloudflare CDN
 
 Plainly: Don’t shove large assets (images, audio, big JSON libs) into Postgres or return them inline as data: URLs. Instead:
 	•	Write files to an object store (e.g., S3, GCS, MinIO).
@@ -46,7 +47,7 @@ Done looks like
 
 queue long-running jobs with BullMQ/SQS and send status via webhooks or WebSockets; polling from the frontend will collapse under heavy load.
 
-3) Use a queue for long jobs; push status via events (no polling loops)
+1) Use a queue for long jobs; push status via events (no polling loops)
 
 Plainly: If a job may take > a second (transcription, upscales, multi-step generation), enqueue it (BullMQ on Redis or SQS). Let a worker do the heavy lifting. Tell the frontend progress via webhooks or WebSockets. Avoid “Are we done yet?” polling from the browser.
 

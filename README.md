@@ -13,6 +13,22 @@ This service now issues JSON Web Tokens for email/password accounts and persists
 - `DATABASE_URL` and `DIRECT_URL` – PostgreSQL connection strings for Prisma
 - `JWT_SECRET` – secret used to sign authentication tokens (fallbacks to `change-me-in-production` in development)
 
+### Image Provider Configuration
+
+Set the provider keys you plan to use before hitting `/api/unified-generate`. Each handler in `src/generation/generation.service.ts` expects the following environment variables:
+
+- `BFL_API_KEY` (+ optional `BFL_API_BASE`) for Flux models ([docs/bfl.ai](https://bfl.ai/api-reference))
+- One of `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_AI_KEY`, or `VITE_GEMINI_API_KEY` for Gemini image preview ([docs/ai.google.dev](https://ai.google.dev/gemini-api/docs))
+- `IDEOGRAM_API_KEY` for Ideogram V3 ([docs.ideogram.ai](https://docs.ideogram.ai))
+- `DASHSCOPE_API_KEY` (+ optional `DASHSCOPE_BASE`) for Qwen Image via DashScope ([dashscope.aliyun.com](https://dashscope.aliyun.com/api-reference/multimodal/image-generation))
+- `RUNWAY_API_KEY` for Runway Gen-4 ([learn.runwayml.com](https://learn.runwayml.com/reference/image-generations))
+- `ARK_API_KEY` (+ optional `ARK_BASE_URL`) for SeeDream on BytePlus Ark ([byteplus.com](https://www.byteplus.com/en/docs/byteplus-ark/api-ref))
+- `OPENAI_API_KEY` for DALL·E via Images API ([platform.openai.com](https://platform.openai.com/docs/api-reference/images))
+- `REVE_API_KEY` (+ optional `REVE_BASE_URL`) for Rêve image generation ([reve.gitbook.io](https://reve.gitbook.io/revepo/api))
+- `RECRAFT_API_KEY` for Recraft v2/v3 ([docs.recraft.ai](https://docs.recraft.ai/reference))
+
+See `docs/image-generation-providers.md` for a quick reference covering required payload fields, response shapes, and troubleshooting tips gathered from the official docs.
+
 ## Key Endpoints
 
 - `POST /api/auth/signup` – create a new account (`email`, `password`, optional `displayName`)
