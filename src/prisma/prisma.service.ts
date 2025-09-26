@@ -8,15 +8,19 @@ export class PrismaService
 {
   constructor() {
     const databaseUrl = process.env.DATABASE_URL;
-    
+
     if (!databaseUrl) {
-      console.warn('⚠️  DATABASE_URL not provided. Database features will be disabled.');
+      console.warn(
+        '⚠️  DATABASE_URL not provided. Database features will be disabled.',
+      );
     }
-    
+
     super({
       datasources: {
         db: {
-          url: databaseUrl || 'postgresql://placeholder:placeholder@localhost:5432/placeholder',
+          url:
+            databaseUrl ||
+            'postgresql://placeholder:placeholder@localhost:5432/placeholder',
         },
       },
       // Increase timeout for long-running operations
@@ -33,14 +37,19 @@ export class PrismaService
         await this.$connect();
         console.log('✅ Database connected successfully');
       } catch (error) {
-        console.error('❌ Failed to connect to database:', error.message);
+        console.error(
+          '❌ Failed to connect to database:',
+          (error as Error).message,
+        );
         // Don't throw error, let the app start without database
       }
     } else {
-      console.log('ℹ️  Skipping database connection (no DATABASE_URL provided)');
+      console.log(
+        'ℹ️  Skipping database connection (no DATABASE_URL provided)',
+      );
     }
   }
-  
+
   async onModuleDestroy() {
     await this.$disconnect();
   }

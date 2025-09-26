@@ -97,7 +97,10 @@ const FLUX_POLL_INTERVAL_MS = 5000;
 const FLUX_MAX_ATTEMPTS = 60;
 
 const FLUX_ALLOWED_POLL_SUFFIXES = ['.bfl.ai'] as const;
-const FLUX_ALLOWED_DOWNLOAD_SUFFIXES = ['.bfl.ai', '.googleusercontent.com'] as const;
+const FLUX_ALLOWED_DOWNLOAD_SUFFIXES = [
+  '.bfl.ai',
+  '.googleusercontent.com',
+] as const;
 
 const GEMINI_API_KEY_CANDIDATES = [
   'GEMINI_API_KEY',
@@ -218,7 +221,9 @@ export class GenerationService {
       this.throwBadRequest('Model is required');
     }
 
-    this.logger.log(`Starting generation for user ${user.authUserId} with model ${model}`);
+    this.logger.log(
+      `Starting generation for user ${user.authUserId} with model ${model}`,
+    );
 
     try {
       const providerResult = await this.dispatch(model, {
@@ -234,14 +239,19 @@ export class GenerationService {
         dto.providerOptions ?? {},
       );
 
-      this.logger.log(`Generation completed successfully for user ${user.authUserId}`);
+      this.logger.log(
+        `Generation completed successfully for user ${user.authUserId}`,
+      );
       return providerResult.clientPayload;
     } catch (error) {
-      this.logger.error(`Generation failed for user ${user.authUserId} with model ${model}`, {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        dto: { prompt, model, providerOptions: dto.providerOptions },
-      });
+      this.logger.error(
+        `Generation failed for user ${user.authUserId} with model ${model}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          dto: { prompt, model, providerOptions: dto.providerOptions },
+        },
+      );
       throw error;
     }
   }
@@ -650,8 +660,12 @@ export class GenerationService {
   ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('IDEOGRAM_API_KEY');
     if (!apiKey) {
-      this.logger.error('IDEOGRAM_API_KEY environment variable is not configured');
-      throw new ServiceUnavailableException('Ideogram API key not configured. Please set IDEOGRAM_API_KEY environment variable.');
+      this.logger.error(
+        'IDEOGRAM_API_KEY environment variable is not configured',
+      );
+      throw new ServiceUnavailableException(
+        'Ideogram API key not configured. Please set IDEOGRAM_API_KEY environment variable.',
+      );
     }
 
     const response = await fetch('https://api.ideogram.ai/api/v1/images', {
@@ -672,11 +686,14 @@ export class GenerationService {
       this.logger.error(`Ideogram API error ${response.status}: ${errorText}`);
       let errorMessage = `Ideogram API error: ${response.status}`;
       if (response.status === 404) {
-        errorMessage = 'Ideogram API endpoint not found. Please check your API key and endpoint configuration.';
+        errorMessage =
+          'Ideogram API endpoint not found. Please check your API key and endpoint configuration.';
       } else if (response.status === 401) {
-        errorMessage = 'Ideogram API authentication failed. Please check your API key.';
+        errorMessage =
+          'Ideogram API authentication failed. Please check your API key.';
       } else if (response.status === 429) {
-        errorMessage = 'Ideogram API rate limit exceeded. Please try again later.';
+        errorMessage =
+          'Ideogram API rate limit exceeded. Please try again later.';
       }
       throw new HttpException(
         { error: errorMessage, details: errorText },
@@ -980,7 +997,9 @@ export class GenerationService {
     const apiKey = this.configService.get<string>('REVE_API_KEY');
     if (!apiKey) {
       this.logger.error('REVE_API_KEY environment variable is not configured');
-      throw new ServiceUnavailableException('Reve API key not configured. Please set REVE_API_KEY environment variable.');
+      throw new ServiceUnavailableException(
+        'Reve API key not configured. Please set REVE_API_KEY environment variable.',
+      );
     }
 
     const providerOptions = dto.providerOptions ?? {};
@@ -1009,8 +1028,7 @@ export class GenerationService {
       requestBody.seed = seed;
     }
     const guidanceScale = asNumber(
-      (providerOptions.guidance_scale ?? providerOptions.guidanceScale) as
-        unknown,
+      providerOptions.guidance_scale ?? providerOptions.guidanceScale,
     );
     if (guidanceScale !== undefined) {
       requestBody.guidance_scale = guidanceScale;
@@ -1020,7 +1038,7 @@ export class GenerationService {
       requestBody.steps = steps;
     }
     const batchSize = asNumber(
-      (providerOptions.batch_size ?? providerOptions.batchSize) as unknown,
+      providerOptions.batch_size ?? providerOptions.batchSize,
     );
     if (batchSize !== undefined) {
       requestBody.batch_size = batchSize;
@@ -1062,9 +1080,11 @@ export class GenerationService {
       this.logger.error(`Reve API error ${response.status}: ${details}`);
       let errorMessage = `Reve API error: ${response.status}`;
       if (response.status === 404) {
-        errorMessage = 'Reve API endpoint not found. Please check your API key and endpoint configuration.';
+        errorMessage =
+          'Reve API endpoint not found. Please check your API key and endpoint configuration.';
       } else if (response.status === 401) {
-        errorMessage = 'Reve API authentication failed. Please check your API key.';
+        errorMessage =
+          'Reve API authentication failed. Please check your API key.';
       } else if (response.status === 429) {
         errorMessage = 'Reve API rate limit exceeded. Please try again later.';
       }
@@ -1085,11 +1105,7 @@ export class GenerationService {
       );
     }
 
-    const jobId = getFirstString(payloadRecord, [
-      'job_id',
-      'request_id',
-      'id',
-    ]);
+    const jobId = getFirstString(payloadRecord, ['job_id', 'request_id', 'id']);
 
     const { dataUrls, assets } = await this.resolveReveAssets(resultPayload);
 
@@ -1148,9 +1164,7 @@ export class GenerationService {
 
     if (!response.ok) {
       const details = this.stringifyUnknown(resultPayload);
-      this.logger.error(
-        `Reve job status error ${response.status}: ${details}`,
-      );
+      this.logger.error(`Reve job status error ${response.status}: ${details}`);
       throw new HttpException(
         {
           error: `Reve job status error: ${response.status}`,
@@ -1239,7 +1253,10 @@ export class GenerationService {
       const details = this.stringifyUnknown(resultPayload);
       this.logger.error(`Reve edit error ${response.status}: ${details}`);
       throw new HttpException(
-        { error: `Reve edit error: ${response.status}`, details: resultPayload },
+        {
+          error: `Reve edit error: ${response.status}`,
+          details: resultPayload,
+        },
         response.status,
       );
     }
@@ -1255,11 +1272,7 @@ export class GenerationService {
       );
     }
 
-    const jobId = getFirstString(payloadRecord, [
-      'job_id',
-      'request_id',
-      'id',
-    ]);
+    const jobId = getFirstString(payloadRecord, ['job_id', 'request_id', 'id']);
 
     const { dataUrls, assets } = await this.resolveReveAssets(resultPayload);
 
@@ -1305,8 +1318,12 @@ export class GenerationService {
   ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('RECRAFT_API_KEY');
     if (!apiKey) {
-      this.logger.error('RECRAFT_API_KEY environment variable is not configured');
-      throw new ServiceUnavailableException('Recraft API key not configured. Please set RECRAFT_API_KEY environment variable.');
+      this.logger.error(
+        'RECRAFT_API_KEY environment variable is not configured',
+      );
+      throw new ServiceUnavailableException(
+        'Recraft API key not configured. Please set RECRAFT_API_KEY environment variable.',
+      );
     }
 
     const model = dto.model === 'recraft-v2' ? 'recraftv2' : 'recraftv3';
@@ -1371,29 +1388,39 @@ export class GenerationService {
   private async handleLuma(dto: UnifiedGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('LUMAAI_API_KEY');
     if (!apiKey) {
-      this.logger.error('LUMAAI_API_KEY environment variable is not configured');
-      throw new ServiceUnavailableException('Luma AI API key not configured. Please set LUMAAI_API_KEY environment variable.');
+      this.logger.error(
+        'LUMAAI_API_KEY environment variable is not configured',
+      );
+      throw new ServiceUnavailableException(
+        'Luma AI API key not configured. Please set LUMAAI_API_KEY environment variable.',
+      );
     }
 
-    const model = dto.model === 'luma-realistic-vision' ? 'luma-realistic-vision' : 'luma-dream-shaper';
-    const response = await fetch('https://api.lumalabs.ai/dream-machine/v1/generations', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+    const model =
+      dto.model === 'luma-realistic-vision'
+        ? 'luma-realistic-vision'
+        : 'luma-dream-shaper';
+    const response = await fetch(
+      'https://api.lumalabs.ai/dream-machine/v1/generations',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: dto.prompt,
+          model,
+          aspect_ratio: dto.providerOptions.aspectRatio || '1:1',
+          style: dto.providerOptions.style || 'realistic',
+          quality: dto.providerOptions.quality || 'standard',
+          negative_prompt: dto.providerOptions.negativePrompt,
+          seed: dto.providerOptions.seed,
+          steps: dto.providerOptions.steps,
+          guidance_scale: dto.providerOptions.guidanceScale,
+        }),
       },
-      body: JSON.stringify({
-        prompt: dto.prompt,
-        model,
-        aspect_ratio: dto.providerOptions.aspectRatio || '1:1',
-        style: dto.providerOptions.style || 'realistic',
-        quality: dto.providerOptions.quality || 'standard',
-        negative_prompt: dto.providerOptions.negativePrompt,
-        seed: dto.providerOptions.seed,
-        steps: dto.providerOptions.steps,
-        guidance_scale: dto.providerOptions.guidanceScale,
-      }),
-    });
+    );
 
     const resultPayload = (await response.json()) as unknown;
     if (!response.ok) {
@@ -1401,11 +1428,14 @@ export class GenerationService {
       this.logger.error(`Luma AI API error ${response.status}: ${details}`);
       let errorMessage = `Luma AI API error: ${response.status}`;
       if (response.status === 404) {
-        errorMessage = 'Luma AI API endpoint not found. Please check your API key and endpoint configuration.';
+        errorMessage =
+          'Luma AI API endpoint not found. Please check your API key and endpoint configuration.';
       } else if (response.status === 401) {
-        errorMessage = 'Luma AI API authentication failed. Please check your API key.';
+        errorMessage =
+          'Luma AI API authentication failed. Please check your API key.';
       } else if (response.status === 429) {
-        errorMessage = 'Luma AI API rate limit exceeded. Please try again later.';
+        errorMessage =
+          'Luma AI API rate limit exceeded. Please try again later.';
       }
       throw new HttpException(
         {
@@ -1511,7 +1541,7 @@ export class GenerationService {
       return source;
     }
     const normalized = source.startsWith('gs://')
-      ? this.convertGsUriToHttps(source) ?? source
+      ? (this.convertGsUriToHttps(source) ?? source)
       : source;
     const { dataUrl } = await this.downloadAsDataUrl(normalized);
     return dataUrl;
@@ -1682,9 +1712,7 @@ export class GenerationService {
   ): string | undefined {
     const overrideValue = asString(override)?.trim();
     if (overrideValue) {
-      return overrideValue === 'reve-image'
-        ? 'reve-image-1.0'
-        : overrideValue;
+      return overrideValue === 'reve-image' ? 'reve-image-1.0' : overrideValue;
     }
     const primaryValue =
       typeof primary === 'string' ? primary.trim() : asString(primary)?.trim();
@@ -1762,11 +1790,13 @@ export class GenerationService {
     return clientPayload;
   }
 
-  private cloneToArrayBuffer(value: ArrayBuffer | ArrayBufferView): ArrayBuffer {
+  private cloneToArrayBuffer(
+    value: ArrayBuffer | ArrayBufferView,
+  ): ArrayBuffer {
     if (value instanceof ArrayBuffer) {
       return value.slice(0);
     }
-    const view = value as ArrayBufferView;
+    const view = value;
     const copy = new Uint8Array(view.byteLength);
     copy.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
     return copy.buffer;
@@ -2175,13 +2205,8 @@ export class GenerationService {
       if (!trimmed) {
         continue;
       }
-      const normalized = trimmed.startsWith('.')
-        ? trimmed.slice(1)
-        : trimmed;
-      if (
-        host === normalized ||
-        host.endsWith(`.${normalized}`)
-      ) {
+      const normalized = trimmed.startsWith('.') ? trimmed.slice(1) : trimmed;
+      if (host === normalized || host.endsWith(`.${normalized}`)) {
         return true;
       }
     }
@@ -2217,9 +2242,7 @@ export class GenerationService {
     if (!trimmed) {
       return '';
     }
-    const withoutWildcard = trimmed
-      .replace(/^[*]+\./, '')
-      .replace(/^[.]+/, '');
+    const withoutWildcard = trimmed.replace(/^[*]+\./, '').replace(/^[.]+/, '');
     if (!withoutWildcard) {
       return '';
     }

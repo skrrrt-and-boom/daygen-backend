@@ -22,7 +22,10 @@ export class HealthController {
     const checks: HealthIndicatorFunction[] = [];
 
     // Only check database if DATABASE_URL is provided and not explicitly skipped
-    if (process.env.DATABASE_URL && process.env.SKIP_DATABASE_HEALTHCHECK !== 'true') {
+    if (
+      process.env.DATABASE_URL &&
+      process.env.SKIP_DATABASE_HEALTHCHECK !== 'true'
+    ) {
       checks.push(() => this.prisma.pingCheck('database', this.prismaService));
     }
 
