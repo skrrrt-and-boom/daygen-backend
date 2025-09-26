@@ -11,6 +11,7 @@ import { AuthModule } from './auth/auth.module';
 import { GalleryModule } from './gallery/gallery.module';
 import { HealthModule } from './health/health.module';
 import { GenerationModule } from './generation/generation.module';
+import { UploadModule } from './upload/upload.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { GenerationModule } from './generation/generation.module';
     GalleryModule,
     HealthModule,
     GenerationModule,
+    UploadModule,
   ],
   controllers: [AppController],
   providers: [AppService],

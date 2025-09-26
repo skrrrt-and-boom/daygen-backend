@@ -4,10 +4,14 @@ import { CreateGalleryEntryDto } from './dto/create-gallery-entry.dto';
 import { Prisma } from '@prisma/client';
 import type { GalleryEntry } from '@prisma/client';
 import { GalleryEntryStatus } from '@prisma/client';
+import { R2Service } from '../upload/r2.service';
 
 @Injectable()
 export class GalleryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly r2Service: R2Service,
+  ) {}
 
   async list(ownerAuthId: string, limit = 50, cursor?: string) {
     const take = Math.min(Math.max(limit, 1), 100);
@@ -59,6 +63,16 @@ export class GalleryService {
       return { removed: true, entry: this.toResponse(entry) };
     }
 
+    // Try to delete the file from R2 if it's an R2 URL
+    if (entry.assetUrl && this.isR2Url(entry.assetUrl)) {
+      try {
+        await this.r2Service.deleteFile(entry.assetUrl);
+      } catch (error) {
+        console.warn('Failed to delete file from R2:', error);
+        // Continue with database update even if R2 deletion fails
+      }
+    }
+
     const updated = await this.prisma.galleryEntry.update({
       where: { id },
       data: { status: GalleryEntryStatus.REMOVED },
@@ -78,5 +92,14 @@ export class GalleryService {
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
     };
+  }
+
+  private isR2Url(url: string): boolean {
+    try {
+      const urlObj = new URL(url);
+      return urlObj.hostname.includes('r2.dev') || urlObj.hostname.includes('cloudflarestorage.com');
+    } catch {
+      return false;
+    }
   }
 }
