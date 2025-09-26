@@ -10,7 +10,10 @@ async function bootstrap() {
   });
   app.useLogger(app.get(Logger));
   app.setGlobalPrefix('api', {
-    exclude: [{ path: 'health', method: RequestMethod.GET }],
+    exclude: [
+      { path: 'health', method: RequestMethod.GET },
+      { path: '', method: RequestMethod.GET }, // Exclude root path
+    ],
   });
   app.enableCors({
     origin: (process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173,https://*.vercel.app,https://daygen0.vercel.app')
