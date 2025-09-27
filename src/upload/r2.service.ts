@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
 
@@ -58,7 +62,7 @@ export class R2Service {
     // Remove data URL prefix if present
     const base64 = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
-    
+
     const fileExtension = this.getFileExtensionFromMimeType(mimeType);
     const fileName = `${folder}/${randomUUID()}${fileExtension}`;
 

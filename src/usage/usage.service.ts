@@ -58,7 +58,7 @@ export class UsageService {
       }
 
       const balanceAfter = userRecord.credits - cost;
-      let status: UsageStatus = UsageStatus.COMPLETED;
+      const status: UsageStatus = UsageStatus.COMPLETED;
 
       if (balanceAfter < 0) {
         throw new ForbiddenException(

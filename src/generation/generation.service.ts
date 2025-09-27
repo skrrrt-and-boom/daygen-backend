@@ -243,12 +243,7 @@ export class GenerationService {
         model,
       });
 
-      await this.persistResult(
-        user,
-        prompt,
-        providerResult,
-        dto.providerOptions ?? {},
-      );
+      await this.persistResult(user, prompt, providerResult);
 
       this.logger.log(
         `Generation completed successfully for user ${user.authUserId}`,
@@ -1314,12 +1309,7 @@ export class GenerationService {
       },
     };
 
-    await this.persistResult(
-      user,
-      input.prompt,
-      providerResult,
-      input.providerOptions,
-    );
+    await this.persistResult(user, input.prompt, providerResult);
 
     return clientPayload;
   }
@@ -1483,7 +1473,6 @@ export class GenerationService {
     user: SanitizedUser,
     prompt: string,
     providerResult: ProviderResult,
-    providerOptions: Record<string, unknown>,
   ) {
     try {
       await this.usageService.recordGeneration(user, {
@@ -1503,12 +1492,13 @@ export class GenerationService {
       return;
     }
 
-    const metadata: Record<string, unknown> = {
-      provider: providerResult.provider,
-      model: providerResult.model,
-      prompt,
-      options: providerOptions,
-    };
+    // Metadata for usage tracking (currently not used but kept for future use)
+    // const metadata: Record<string, unknown> = {
+    //   provider: providerResult.provider,
+    //   model: providerResult.model,
+    //   prompt,
+    //   options: providerOptions,
+    // };
 
     // Upload to R2 and create R2File record
     const [asset] = providerResult.assets;
@@ -1523,7 +1513,7 @@ export class GenerationService {
             mimeType,
             'generated-images',
           );
-          
+
           // Create R2File record
           const fileName = `image-${Date.now()}.${mimeType.split('/')[1] || 'png'}`;
           await this.r2FilesService.create(user.authUserId, {
@@ -1534,12 +1524,15 @@ export class GenerationService {
             prompt,
             model: providerResult.model,
           });
-          
+
           // Update the asset URL to use R2 URL
           asset.dataUrl = publicUrl;
-          
+
           // Update clientPayload with R2 URL for consistency
-          this.updateClientPayloadWithR2Url(providerResult.clientPayload, publicUrl);
+          this.updateClientPayloadWithR2Url(
+            providerResult.clientPayload,
+            publicUrl,
+          );
         }
       } catch (error) {
         this.logger.error(`Failed to upload to R2: ${String(error)}`);
@@ -1548,13 +1541,16 @@ export class GenerationService {
     }
   }
 
-  private updateClientPayloadWithR2Url(clientPayload: unknown, r2Url: string): void {
+  private updateClientPayloadWithR2Url(
+    clientPayload: unknown,
+    r2Url: string,
+  ): void {
     if (!clientPayload || typeof clientPayload !== 'object') {
       return;
     }
-    
+
     const payload = clientPayload as Record<string, unknown>;
-    
+
     // Update common URL fields
     if (payload.dataUrl) {
       payload.dataUrl = r2Url;
@@ -1565,7 +1561,7 @@ export class GenerationService {
     if (payload.image_url) {
       payload.image_url = r2Url;
     }
-    
+
     // Handle arrays of URLs
     if (Array.isArray(payload.dataUrls)) {
       payload.dataUrls = [r2Url];

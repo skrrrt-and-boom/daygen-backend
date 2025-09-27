@@ -34,10 +34,7 @@ export class R2FilesController {
   }
 
   @Post()
-  create(
-    @CurrentUser() user: SanitizedUser,
-    @Body() dto: CreateR2FileDto,
-  ) {
+  create(@CurrentUser() user: SanitizedUser, @Body() dto: CreateR2FileDto) {
     return this.r2FilesService.create(user.authUserId, dto);
   }
 

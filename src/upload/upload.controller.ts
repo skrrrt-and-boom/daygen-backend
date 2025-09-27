@@ -25,19 +25,19 @@ class UploadFileDto {
 class UploadBase64Dto {
   @IsString()
   base64Data: string;
-  
+
   @IsOptional()
   @IsString()
   mimeType?: string;
-  
+
   @IsOptional()
   @IsString()
   folder?: string;
-  
+
   @IsOptional()
   @IsString()
   prompt?: string;
-  
+
   @IsOptional()
   @IsString()
   model?: string;
@@ -46,10 +46,10 @@ class UploadBase64Dto {
 class PresignedUploadDto {
   @IsString()
   fileName: string;
-  
+
   @IsString()
   contentType: string;
-  
+
   @IsOptional()
   @IsString()
   folder?: string;
@@ -63,17 +63,18 @@ export class UploadController {
   ) {}
 
   @Get('status')
-  async getStatus() {
+  getStatus() {
     return {
       configured: this.r2Service.isConfigured(),
       bucketName: process.env.CLOUDFLARE_R2_BUCKET_NAME || 'not-set',
       accountId: process.env.CLOUDFLARE_R2_ACCOUNT_ID ? 'set' : 'not-set',
       accessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID ? 'set' : 'not-set',
-      secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY ? 'set' : 'not-set',
+      secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY
+        ? 'set'
+        : 'not-set',
       publicUrl: process.env.CLOUDFLARE_R2_PUBLIC_URL || 'not-set',
     };
   }
-
 
   @Post('file')
   @UseGuards(JwtAuthGuard)
@@ -81,7 +82,6 @@ export class UploadController {
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: UploadFileDto,
-    @CurrentUserDecorator() user: SanitizedUser,
   ) {
     if (!file) {
       throw new BadRequestException('No file provided');
@@ -93,7 +93,7 @@ export class UploadController {
 
     try {
       const publicUrl = await this.r2Service.uploadFile(file, dto.folder);
-      
+
       return {
         success: true,
         url: publicUrl,
@@ -113,7 +113,10 @@ export class UploadController {
     @Body() dto: UploadBase64Dto,
     @CurrentUserDecorator() user: SanitizedUser,
   ) {
-    console.log('Received base64 upload request:', JSON.stringify(dto, null, 2));
+    console.log(
+      'Received base64 upload request:',
+      JSON.stringify(dto, null, 2),
+    );
     if (!dto.base64Data) {
       throw new BadRequestException('No base64 data provided');
     }
@@ -128,7 +131,7 @@ export class UploadController {
         dto.mimeType || 'image/png',
         dto.folder,
       );
-      
+
       // Save R2File record to database
       const fileName = `image-${Date.now()}.${dto.mimeType?.split('/')[1] || 'png'}`;
       await this.r2FilesService.create(user.authUserId, {
@@ -139,7 +142,7 @@ export class UploadController {
         prompt: dto.prompt,
         model: dto.model,
       });
-      
+
       return {
         success: true,
         url: publicUrl,
@@ -153,10 +156,7 @@ export class UploadController {
 
   @Post('presigned')
   @UseGuards(JwtAuthGuard)
-  async generatePresignedUrl(
-    @Body() dto: PresignedUploadDto,
-    @CurrentUserDecorator() user: SanitizedUser,
-  ) {
+  async generatePresignedUrl(@Body() dto: PresignedUploadDto) {
     if (!dto.fileName || !dto.contentType) {
       throw new BadRequestException('fileName and contentType are required');
     }
@@ -166,12 +166,13 @@ export class UploadController {
     }
 
     try {
-      const { uploadUrl, publicUrl } = await this.r2Service.generatePresignedUploadUrl(
-        dto.fileName,
-        dto.contentType,
-        dto.folder,
-      );
-      
+      const { uploadUrl, publicUrl } =
+        await this.r2Service.generatePresignedUploadUrl(
+          dto.fileName,
+          dto.contentType,
+          dto.folder,
+        );
+
       return {
         success: true,
         uploadUrl,
@@ -187,10 +188,7 @@ export class UploadController {
 
   @Post('delete')
   @UseGuards(JwtAuthGuard)
-  async deleteFile(
-    @Body() body: { url: string },
-    @CurrentUserDecorator() user: SanitizedUser,
-  ) {
+  async deleteFile(@Body() body: { url: string }) {
     if (!body.url) {
       throw new BadRequestException('URL is required');
     }
@@ -201,7 +199,7 @@ export class UploadController {
 
     try {
       const success = await this.r2Service.deleteFile(body.url);
-      
+
       return {
         success,
         url: body.url,

@@ -34,7 +34,7 @@ export class R2FilesService {
 
   async list(ownerAuthId: string, limit = 50, cursor?: string) {
     const take = Math.min(Math.max(limit, 1), 100);
-    
+
     const where: Prisma.R2FileWhereInput = {
       ownerAuthId,
       deletedAt: null, // Only show non-deleted files
@@ -55,12 +55,13 @@ export class R2FilesService {
       this.prisma.r2File.count({ where }),
     ]);
 
-    const nextCursor = items.length === take && items.length > 0
-      ? items[items.length - 1].createdAt.toISOString()
-      : null;
+    const nextCursor =
+      items.length === take && items.length > 0
+        ? items[items.length - 1].createdAt.toISOString()
+        : null;
 
     return {
-      items: items.map(item => this.toResponse(item)),
+      items: items.map((item) => this.toResponse(item)),
       totalCount,
       nextCursor,
     };
@@ -96,7 +97,7 @@ export class R2FilesService {
     // Soft delete: mark as deleted instead of removing from database
     await this.prisma.r2File.update({
       where: { id },
-      data: { 
+      data: {
         deletedAt: new Date(),
         updatedAt: new Date(),
       },
@@ -105,15 +106,25 @@ export class R2FilesService {
     return { success: true };
   }
 
-  private toResponse(file: any): R2FileResponse {
+  private toResponse(file: {
+    id: string;
+    fileName: string;
+    fileUrl: string;
+    fileSize?: number | null;
+    mimeType?: string | null;
+    prompt?: string | null;
+    model?: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): R2FileResponse {
     return {
       id: file.id,
       fileName: file.fileName,
       fileUrl: file.fileUrl,
-      fileSize: file.fileSize,
-      mimeType: file.mimeType,
-      prompt: file.prompt,
-      model: file.model,
+      fileSize: file.fileSize ?? undefined,
+      mimeType: file.mimeType ?? undefined,
+      prompt: file.prompt ?? undefined,
+      model: file.model ?? undefined,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt,
     };
@@ -122,7 +133,10 @@ export class R2FilesService {
   private isR2Url(url: string): boolean {
     try {
       const urlObj = new URL(url);
-      return urlObj.hostname.includes('r2.dev') || urlObj.hostname.includes('cloudflarestorage.com');
+      return (
+        urlObj.hostname.includes('r2.dev') ||
+        urlObj.hostname.includes('cloudflarestorage.com')
+      );
     } catch {
       return false;
     }
