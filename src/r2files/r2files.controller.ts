@@ -8,16 +8,16 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { GalleryService } from './gallery.service';
+import { R2FilesService } from './r2files.service';
+import type { CreateR2FileDto } from './r2files.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
-import { CreateGalleryEntryDto } from './dto/create-gallery-entry.dto';
 
 @UseGuards(JwtAuthGuard)
-@Controller('gallery')
-export class GalleryController {
-  constructor(private readonly galleryService: GalleryService) {}
+@Controller('r2files')
+export class R2FilesController {
+  constructor(private readonly r2FilesService: R2FilesService) {}
 
   @Get()
   list(
@@ -26,7 +26,7 @@ export class GalleryController {
     @Query('cursor') cursor?: string,
   ) {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
-    return this.galleryService.list(
+    return this.r2FilesService.list(
       user.authUserId,
       parsedLimit,
       cursor ?? undefined,
@@ -36,13 +36,13 @@ export class GalleryController {
   @Post()
   create(
     @CurrentUser() user: SanitizedUser,
-    @Body() dto: CreateGalleryEntryDto,
+    @Body() dto: CreateR2FileDto,
   ) {
-    return this.galleryService.create(user.authUserId, dto);
+    return this.r2FilesService.create(user.authUserId, dto);
   }
 
   @Delete(':id')
   remove(@CurrentUser() user: SanitizedUser, @Param('id') id: string) {
-    return this.galleryService.remove(user.authUserId, id);
+    return this.r2FilesService.remove(user.authUserId, id);
   }
 }

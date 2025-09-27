@@ -1,0 +1,20 @@
+-- Create the R2File table
+CREATE TABLE IF NOT EXISTS "R2File" (
+    "id" TEXT NOT NULL,
+    "ownerAuthId" TEXT NOT NULL,
+    "fileName" TEXT NOT NULL,
+    "fileUrl" TEXT NOT NULL,
+    "fileSize" INTEGER,
+    "mimeType" TEXT,
+    "prompt" TEXT,
+    "model" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "R2File_pkey" PRIMARY KEY ("id")
+);
+
+-- Create index for R2File
+CREATE INDEX IF NOT EXISTS "R2File_ownerAuthId_createdAt_idx" ON "R2File"("ownerAuthId", "createdAt" DESC);
+
+-- Add foreign key constraint
+ALTER TABLE "R2File" ADD CONSTRAINT "R2File_ownerAuthId_fkey" FOREIGN KEY ("ownerAuthId") REFERENCES "User"("authUserId") ON DELETE CASCADE ON UPDATE CASCADE;

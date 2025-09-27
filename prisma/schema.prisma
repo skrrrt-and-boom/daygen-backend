@@ -10,49 +10,18 @@ datasource db {
 }
 
 model User {
-  id           String         @id @default(cuid())
-  email        String         @unique
-  createdAt    DateTime       @default(now())
-  authUserId   String         @unique
+  id           String        @id @default(cuid())
+  email        String        @unique
+  createdAt    DateTime      @default(now())
+  authUserId   String        @unique
   passwordHash String
   displayName  String?
-  credits      Int            @default(0)
+  credits      Int           @default(3)
   profileImage String?
-  updatedAt    DateTime       @updatedAt
-  role         UserRole       @default(USER)
-  gallery      GalleryEntry[]
-  templates    Template[]
+  updatedAt    DateTime      @updatedAt
+  role         UserRole      @default(USER)
+  r2Files      R2File[]
   usageEvents  UsageEvent[]
-}
-
-model Template {
-  id          String         @id @default(cuid())
-  name        String
-  modality    String
-  category    String?
-  description String?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  ownerAuthId String
-  gallery     GalleryEntry[]
-  owner       User           @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
-
-  @@index([ownerAuthId])
-}
-
-model GalleryEntry {
-  id          String             @id @default(dbgenerated("(gen_random_uuid())::text"))
-  ownerAuthId String
-  templateId  String?
-  assetUrl    String
-  metadata    Json?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @default(now()) @updatedAt
-  status      GalleryEntryStatus @default(ACTIVE)
-  owner       User               @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
-  template    Template?          @relation(fields: [templateId], references: [id])
-
-  @@index([ownerAuthId, createdAt(sort: Desc)])
 }
 
 model UsageEvent {
@@ -71,6 +40,22 @@ model UsageEvent {
   @@index([userAuthId, createdAt(sort: Desc)])
 }
 
+model R2File {
+  id          String   @id @default(cuid())
+  ownerAuthId String
+  fileName    String
+  fileUrl     String
+  fileSize    Int?
+  mimeType    String?
+  prompt      String?
+  model       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  owner       User     @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+
+  @@index([ownerAuthId, createdAt(sort: Desc)])
+}
+
 enum UserRole {
   USER
   ADMIN
@@ -79,9 +64,4 @@ enum UserRole {
 enum UsageStatus {
   COMPLETED
   GRACE
-}
-
-enum GalleryEntryStatus {
-  ACTIVE
-  REMOVED
 }

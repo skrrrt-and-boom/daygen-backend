@@ -25,12 +25,20 @@ interface UsageEventResult {
 export class UsageService {
   private readonly logger = new Logger(UsageService.name);
   private readonly defaultCost = 1;
-  private readonly graceLimit: number;
 
-  constructor(private readonly prisma: PrismaService) {
-    const rawGrace = process.env.USAGE_GRACE_CREDITS;
-    const parsed = rawGrace ? Number.parseInt(rawGrace, 10) : 0;
-    this.graceLimit = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  constructor(private readonly prisma: PrismaService) {}
+
+  async checkCredits(user: SanitizedUser, cost: number = 1): Promise<boolean> {
+    const userRecord = await this.prisma.user.findUnique({
+      where: { authUserId: user.authUserId },
+      select: { credits: true },
+    });
+
+    if (!userRecord) {
+      throw new NotFoundException('User not found');
+    }
+
+    return userRecord.credits >= cost;
   }
 
   async recordGeneration(
@@ -53,12 +61,9 @@ export class UsageService {
       let status: UsageStatus = UsageStatus.COMPLETED;
 
       if (balanceAfter < 0) {
-        if (Math.abs(balanceAfter) > this.graceLimit) {
-          throw new ForbiddenException(
-            'Insufficient credits to complete generation',
-          );
-        }
-        status = UsageStatus.GRACE;
+        throw new ForbiddenException(
+          'Insufficient credits to complete generation. Each generation costs 1 credit.',
+        );
       }
 
       await tx.user.update({

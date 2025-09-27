@@ -3,13 +3,14 @@ import { ConfigModule } from '@nestjs/config';
 import { GenerationController } from './generation.controller';
 import { GenerationService } from './generation.service';
 import { AuthModule } from '../auth/auth.module';
-import { GalleryModule } from '../gallery/gallery.module';
+import { R2FilesModule } from '../r2files/r2files.module';
+import { R2Service } from '../upload/r2.service';
 import { UsageModule } from '../usage/usage.module';
 
 @Module({
-  imports: [ConfigModule, AuthModule, GalleryModule, UsageModule],
+  imports: [ConfigModule, AuthModule, R2FilesModule, UsageModule],
   controllers: [GenerationController],
-  providers: [GenerationService],
+  providers: [GenerationService, R2Service],
   exports: [GenerationService],
 })
 export class GenerationModule {}

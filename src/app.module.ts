@@ -6,9 +6,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { PrismaModule } from './prisma/prisma.module';
-import { TemplatesModule } from './templates/templates.module';
 import { AuthModule } from './auth/auth.module';
-import { GalleryModule } from './gallery/gallery.module';
+import { R2FilesModule } from './r2files/r2files.module';
 import { HealthModule } from './health/health.module';
 import { GenerationModule } from './generation/generation.module';
 import { UploadModule } from './upload/upload.module';
@@ -47,8 +46,7 @@ import { UploadModule } from './upload/upload.module';
     PrismaModule,
     AuthModule,
     UsersModule,
-    TemplatesModule,
-    GalleryModule,
+    R2FilesModule,
     HealthModule,
     GenerationModule,
     UploadModule,

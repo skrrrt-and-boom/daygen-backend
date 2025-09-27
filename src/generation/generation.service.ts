@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -8,7 +9,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { SanitizedUser } from '../users/types';
-import { GalleryService } from '../gallery/gallery.service';
+import { R2FilesService } from '../r2files/r2files.service';
+import { R2Service } from '../upload/r2.service';
 import { UnifiedGenerateDto } from './dto/unified-generate.dto';
 import { UsageService } from '../usage/usage.service';
 
@@ -195,7 +197,8 @@ export class GenerationService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly galleryService: GalleryService,
+    private readonly r2FilesService: R2FilesService,
+    private readonly r2Service: R2Service,
     private readonly usageService: UsageService,
   ) {
     this.fluxExtraPollHosts = this.readFluxHostSet('BFL_ALLOWED_POLL_HOSTS');
@@ -219,6 +222,14 @@ export class GenerationService {
     const model = dto.model?.trim();
     if (!model) {
       this.throwBadRequest('Model is required');
+    }
+
+    // Check if user has sufficient credits
+    const hasCredits = await this.usageService.checkCredits(user, 1);
+    if (!hasCredits) {
+      throw new ForbiddenException(
+        'Insufficient credits. Each generation costs 1 credit. Please purchase more credits to continue.',
+      );
     }
 
     this.logger.log(
@@ -1499,13 +1510,68 @@ export class GenerationService {
       options: providerOptions,
     };
 
-    try {
-      await this.galleryService.create(user.authUserId, {
-        assetUrl: firstAsset.dataUrl,
-        metadata,
-      });
-    } catch (error) {
-      this.logger.error(`Failed to persist gallery entry: ${String(error)}`);
+    // Upload to R2 and create R2File record
+    const [asset] = providerResult.assets;
+    if (asset && this.r2Service.isConfigured()) {
+      try {
+        // Extract base64 data from data URL
+        const base64Match = asset.dataUrl.match(/^data:([^;,]+);base64,(.*)$/);
+        if (base64Match) {
+          const [, mimeType, base64Data] = base64Match;
+          const publicUrl = await this.r2Service.uploadBase64Image(
+            base64Data,
+            mimeType,
+            'generated-images',
+          );
+          
+          // Create R2File record
+          const fileName = `image-${Date.now()}.${mimeType.split('/')[1] || 'png'}`;
+          await this.r2FilesService.create(user.authUserId, {
+            fileName,
+            fileUrl: publicUrl,
+            fileSize: Math.round((base64Data.length * 3) / 4),
+            mimeType,
+            prompt,
+            model: providerResult.model,
+          });
+          
+          // Update the asset URL to use R2 URL
+          asset.dataUrl = publicUrl;
+          
+          // Update clientPayload with R2 URL for consistency
+          this.updateClientPayloadWithR2Url(providerResult.clientPayload, publicUrl);
+        }
+      } catch (error) {
+        this.logger.error(`Failed to upload to R2: ${String(error)}`);
+        // Continue with original data URL if R2 upload fails
+      }
+    }
+  }
+
+  private updateClientPayloadWithR2Url(clientPayload: unknown, r2Url: string): void {
+    if (!clientPayload || typeof clientPayload !== 'object') {
+      return;
+    }
+    
+    const payload = clientPayload as Record<string, unknown>;
+    
+    // Update common URL fields
+    if (payload.dataUrl) {
+      payload.dataUrl = r2Url;
+    }
+    if (payload.image) {
+      payload.image = r2Url;
+    }
+    if (payload.image_url) {
+      payload.image_url = r2Url;
+    }
+    
+    // Handle arrays of URLs
+    if (Array.isArray(payload.dataUrls)) {
+      payload.dataUrls = [r2Url];
+    }
+    if (Array.isArray(payload.images)) {
+      payload.images = [r2Url];
     }
   }
 
