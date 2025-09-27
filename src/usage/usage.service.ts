@@ -46,6 +46,7 @@ export class UsageService {
     event: UsageEventInput,
   ): Promise<UsageEventResult> {
     const cost = this.normalizeCost(event.cost);
+    const graceCredits = this.getGraceCredits();
 
     return this.prisma.$transaction(async (tx) => {
       const userRecord = await tx.user.findUnique({
@@ -58,12 +59,18 @@ export class UsageService {
       }
 
       const balanceAfter = userRecord.credits - cost;
-      const status: UsageStatus = UsageStatus.COMPLETED;
+      let status: UsageStatus = UsageStatus.COMPLETED;
 
+      // Check if we're going negative and if grace credits allow it
       if (balanceAfter < 0) {
-        throw new ForbiddenException(
-          'Insufficient credits to complete generation. Each generation costs 1 credit.',
-        );
+        const graceLimit = -graceCredits;
+        if (balanceAfter < graceLimit) {
+          throw new ForbiddenException(
+            'Insufficient credits to complete generation. Each generation costs 1 credit.',
+          );
+        }
+        // Within grace limit, mark as GRACE status
+        status = UsageStatus.GRACE;
       }
 
       await tx.user.update({
@@ -122,6 +129,15 @@ export class UsageService {
       })),
       nextCursor,
     };
+  }
+
+  private getGraceCredits(): number {
+    const graceCredits = process.env.USAGE_GRACE_CREDITS;
+    if (graceCredits === undefined) {
+      return 0;
+    }
+    const parsed = parseInt(graceCredits, 10);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
   }
 
   private normalizeCost(input?: number): number {
