@@ -16,5 +16,6 @@ CREATE TABLE IF NOT EXISTS "R2File" (
 -- Create index for R2File
 CREATE INDEX IF NOT EXISTS "R2File_ownerAuthId_createdAt_idx" ON "R2File"("ownerAuthId", "createdAt" DESC);
 
--- Add foreign key constraint
+-- Add foreign key constraint (drop first if exists to avoid conflict)
+ALTER TABLE "R2File" DROP CONSTRAINT IF EXISTS "R2File_ownerAuthId_fkey";
 ALTER TABLE "R2File" ADD CONSTRAINT "R2File_ownerAuthId_fkey" FOREIGN KEY ("ownerAuthId") REFERENCES "User"("authUserId") ON DELETE CASCADE ON UPDATE CASCADE;
