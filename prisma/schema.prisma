@@ -41,7 +41,7 @@ model UsageEvent {
 }
 
 model R2File {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   ownerAuthId String
   fileName    String
   fileUrl     String
@@ -49,11 +49,13 @@ model R2File {
   mimeType    String?
   prompt      String?
   model       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  owner       User     @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  owner       User      @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
 
   @@index([ownerAuthId, createdAt(sort: Desc)])
+  @@index([ownerAuthId, deletedAt])
 }
 
 enum UserRole {

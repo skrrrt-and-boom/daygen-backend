@@ -37,6 +37,7 @@ export class R2FilesService {
     
     const where: Prisma.R2FileWhereInput = {
       ownerAuthId,
+      deletedAt: null, // Only show non-deleted files
     };
 
     if (cursor) {
@@ -85,26 +86,20 @@ export class R2FilesService {
 
   async remove(ownerAuthId: string, id: string) {
     const file = await this.prisma.r2File.findFirst({
-      where: { id, ownerAuthId },
+      where: { id, ownerAuthId, deletedAt: null }, // Only find non-deleted files
     });
 
     if (!file) {
       throw new Error('File not found');
     }
 
-    // Try to delete the file from R2 if it's an R2 URL
-    if (this.isR2Url(file.fileUrl)) {
-      try {
-        await this.r2Service.deleteFile(file.fileUrl);
-      } catch (error) {
-        console.warn('Failed to delete file from R2:', error);
-        // Continue with database update even if R2 deletion fails
-      }
-    }
-
-    // Delete the record from the database
-    await this.prisma.r2File.delete({
+    // Soft delete: mark as deleted instead of removing from database
+    await this.prisma.r2File.update({
       where: { id },
+      data: { 
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      },
     });
 
     return { success: true };
