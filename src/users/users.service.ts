@@ -32,6 +32,25 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { email: normalizedEmail } });
   }
 
+  async findByEmail(email: string): Promise<User | null> {
+    const normalizedEmail = normalizeEmailValue(email);
+    return this.prisma.user.findUnique({ 
+      where: { email: normalizedEmail },
+      select: {
+        id: true,
+        authUserId: true,
+        email: true,
+        displayName: true,
+        credits: true,
+        profileImage: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        // Exclude passwordHash for security
+      }
+    }) as Promise<User | null>;
+  }
+
   async findById(id: string): Promise<User> {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
@@ -71,6 +90,13 @@ export class UsersService {
     });
 
     return this.toSanitizedUser(user);
+  }
+
+  async updatePassword(userId: string, passwordHash: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
   }
 
   toSanitizedUser(user: User): SanitizedUser {

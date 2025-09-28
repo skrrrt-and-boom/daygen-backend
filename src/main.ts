@@ -17,8 +17,7 @@ async function bootstrap() {
   });
   app.enableCors({
     origin: [
-      'http://localhost:5173',
-      'http://localhost:3000',
+      /^http:\/\/localhost:\d+$/, // Allow any localhost port
       'https://daygen0.vercel.app',
       'https://daygen0-t0wrj83i8-dominiks-projects-6a524274.vercel.app',
       /^https:\/\/.*\.vercel\.app$/,
