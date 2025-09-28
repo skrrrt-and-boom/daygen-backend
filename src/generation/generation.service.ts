@@ -266,6 +266,7 @@ export class GenerationService {
     model: string,
     dto: UnifiedGenerateDto,
   ): Promise<ProviderResult> {
+    // Handle FLUX models
     if (model.startsWith('flux-')) {
       return this.handleFlux(dto);
     }
@@ -674,7 +675,7 @@ export class GenerationService {
       );
     }
 
-    const response = await fetch('https://api.ideogram.ai/api/v1/images', {
+    const response = await fetch('https://api.ideogram.ai/api/v1/text2image', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -816,12 +817,13 @@ export class GenerationService {
     const model =
       dto.model === 'runway-gen4-turbo' ? 'gen4_image_turbo' : 'gen4_image';
     const response = await fetch(
-      'https://api.runwayml.com/v1/image_generations',
+      'https://api.dev.runwayml.com/v1/image_generations',
       {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
+          'X-Runway-Version': '1.0',
         },
         body: JSON.stringify({
           model,
@@ -1013,13 +1015,14 @@ export class GenerationService {
       prompt: dto.prompt,
     };
 
-    const resolvedModel = this.resolveReveModel(
-      dto.model,
-      providerOptions.model,
-    );
-    if (resolvedModel) {
-      requestBody.model = resolvedModel;
-    }
+    // Note: Reve API doesn't accept model parameter, so we skip it
+    // const resolvedModel = this.resolveReveModel(
+    //   dto.model,
+    //   providerOptions.model,
+    // );
+    // if (resolvedModel) {
+    //   requestBody.model = resolvedModel;
+    // }
 
     const width = asNumber(providerOptions.width);
     if (width !== undefined) {
@@ -1127,7 +1130,7 @@ export class GenerationService {
 
     return {
       provider: 'reve',
-      model: resolvedModel ?? 'reve-image-1.0',
+      model: 'reve-image-1.0',
       clientPayload,
       assets,
       rawResponse: resultPayload,
