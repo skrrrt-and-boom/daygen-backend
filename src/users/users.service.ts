@@ -73,6 +73,13 @@ export class UsersService {
     return this.toSanitizedUser(user);
   }
 
+  async updatePassword(userId: string, passwordHash: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+  }
+
   toSanitizedUser(user: User): SanitizedUser {
     return {
       id: user.id,
