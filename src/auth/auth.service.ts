@@ -85,36 +85,30 @@ export class AuthService {
   }
 
   async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
-    const user = await this.usersService.findByEmailWithSecret(dto.email);
-
+    const user = await this.usersService.findByEmail(dto.email);
+    
     // Always return success message for security (don't reveal if email exists)
     if (!user) {
-      return {
-        message:
-          'If an account with that email exists, we have sent a password reset link.',
-      };
+      return { message: 'If an account with that email exists, we have sent a password reset link.' };
     }
 
     // Generate a password reset token
     const resetToken = await this.jwtService.signAsync(
       { sub: user.id, type: 'password-reset' },
-      { expiresIn: '1h' },
+      { expiresIn: '1h' }
     );
 
     // Send email with reset link
     const resetUrl = `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
-
+    
     // TODO: Implement email sending service
     // Example with SendGrid:
     // await this.emailService.sendPasswordResetEmail(user.email, resetUrl);
-
+    
     // For now, log the URL (remove in production)
     console.log(`Password reset URL for ${user.email}: ${resetUrl}`);
 
-    return {
-      message:
-        'If an account with that email exists, we have sent a password reset link.',
-    };
+    return { message: 'If an account with that email exists, we have sent a password reset link.' };
   }
 
   async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
@@ -132,7 +126,7 @@ export class AuthService {
       const userId = payload.sub;
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       const user = await this.usersService.findById(userId);
-
+      
       if (!user) {
         throw new NotFoundException('User not found');
       }
@@ -146,10 +140,7 @@ export class AuthService {
 
       return { message: 'Password has been successfully reset.' };
     } catch (error) {
-      if (
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException
-      ) {
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }
       throw new BadRequestException('Invalid or expired reset token');

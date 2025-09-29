@@ -30,6 +30,7 @@ export class AuthController {
 
   @Post('forgot-password')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
+    console.log('🔑 Forgot password endpoint called with email:', dto.email);
     return this.authService.forgotPassword(dto);
   }
 
