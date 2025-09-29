@@ -24,6 +24,7 @@ describe('AppController (e2e)', () => {
       .get('/health')
       .expect(200)
       .expect((res) => {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         expect(res.body.status).toBe('ok');
       });
   });
@@ -41,6 +42,7 @@ describe('AppController (e2e)', () => {
       .expect((res) => {
         expect(res.body).toHaveProperty('accessToken');
         expect(res.body).toHaveProperty('user');
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         expect(res.body.user.email).toBe(`test${timestamp}@example.com`);
       });
   });
@@ -48,15 +50,13 @@ describe('AppController (e2e)', () => {
   it('/auth/login (POST)', async () => {
     const timestamp = Date.now();
     const email = `login${timestamp}@example.com`;
-    
+
     // First create a user
-    await request(app.getHttpServer())
-      .post('/auth/signup')
-      .send({
-        email,
-        password: 'password123',
-        displayName: 'Login User',
-      });
+    await request(app.getHttpServer()).post('/auth/signup').send({
+      email,
+      password: 'password123',
+      displayName: 'Login User',
+    });
 
     // Then test login
     return request(app.getHttpServer())
@@ -69,6 +69,7 @@ describe('AppController (e2e)', () => {
       .expect((res) => {
         expect(res.body).toHaveProperty('accessToken');
         expect(res.body).toHaveProperty('user');
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         expect(res.body.user.email).toBe(email);
       });
   });
