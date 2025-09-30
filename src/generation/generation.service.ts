@@ -8,9 +8,13 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { LumaAI } from 'lumaai';
+import type { ImageCreateParams } from 'lumaai/resources/generations/image';
+import type { Generation as LumaGeneration } from 'lumaai/resources/generations/generations';
 import type { SanitizedUser } from '../users/types';
 import { R2FilesService } from '../r2files/r2files.service';
 import { R2Service } from '../upload/r2.service';
+import { ProviderGenerateDto } from './dto/base-generate.dto';
 import { UnifiedGenerateDto } from './dto/unified-generate.dto';
 import { UsageService } from '../usage/usage.service';
 
@@ -262,6 +266,24 @@ export class GenerationService {
     }
   }
 
+  async generateForModel(
+    user: SanitizedUser,
+    fallbackModel: string,
+    dto: ProviderGenerateDto,
+  ) {
+    const normalizedModel = dto.model?.trim() || fallbackModel?.trim();
+    if (!normalizedModel) {
+      this.throwBadRequest('Model is required');
+    }
+
+    const mergedDto = {
+      ...dto,
+      model: normalizedModel,
+    } as UnifiedGenerateDto;
+
+    return this.generate(user, mergedDto);
+  }
+
   private async dispatch(
     model: string,
     dto: UnifiedGenerateDto,
@@ -294,6 +316,8 @@ export class GenerationService {
         return this.handleRecraft(dto);
       case 'luma-dream-shaper':
       case 'luma-realistic-vision':
+      case 'luma-photon-1':
+      case 'luma-photon-flash-1':
         return this.handleLuma(dto);
       default:
         this.throwBadRequest('Unsupported model', { model });
@@ -1389,7 +1413,9 @@ export class GenerationService {
     };
   }
 
-  private async handleLuma(dto: UnifiedGenerateDto): Promise<ProviderResult> {
+  private async handleLuma(
+    dto: UnifiedGenerateDto,
+  ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('LUMAAI_API_KEY');
     if (!apiKey) {
       this.logger.error(
@@ -1400,6 +1426,105 @@ export class GenerationService {
       );
     }
 
+    if (
+      dto.model === 'luma-photon-1' ||
+      dto.model === 'luma-photon-flash-1'
+    ) {
+      return this.handleLumaPhoton(dto, apiKey);
+    }
+
+    return this.handleLegacyLuma(dto, apiKey);
+  }
+
+  private async handleLumaPhoton(
+    dto: UnifiedGenerateDto,
+    apiKey: string,
+  ): Promise<ProviderResult> {
+    const luma = new LumaAI({ authToken: apiKey });
+    const normalizedModel = dto.model.replace(/^luma-/, '');
+
+    const payload: ImageCreateParams = {
+      prompt: dto.prompt,
+      model: normalizedModel as ImageCreateParams['model'],
+    };
+
+    const providerOptions = dto.providerOptions ?? {};
+
+    const aspectRatio =
+      providerOptions.aspect_ratio ?? providerOptions.aspectRatio;
+    if (typeof aspectRatio === 'string' && aspectRatio.trim()) {
+      payload.aspect_ratio = aspectRatio.trim() as ImageCreateParams['aspect_ratio'];
+    }
+
+    if (Array.isArray(providerOptions.image_ref)) {
+      payload.image_ref = providerOptions.image_ref as ImageCreateParams['image_ref'];
+    }
+    if (Array.isArray(providerOptions.style_ref)) {
+      payload.style_ref = providerOptions.style_ref as ImageCreateParams['style_ref'];
+    }
+    if (providerOptions.character_ref) {
+      payload.character_ref = providerOptions.character_ref as ImageCreateParams['character_ref'];
+    }
+    if (providerOptions.modify_image_ref) {
+      payload.modify_image_ref = providerOptions.modify_image_ref as ImageCreateParams['modify_image_ref'];
+    }
+    if (typeof providerOptions.format === 'string') {
+      payload.format = providerOptions.format as ImageCreateParams['format'];
+    }
+
+    const callbackUrl =
+      providerOptions.callback_url ?? providerOptions.callbackUrl;
+    if (typeof callbackUrl === 'string' && callbackUrl.trim()) {
+      payload.callback_url = callbackUrl.trim();
+    }
+
+    const generation = await luma.generations.image.create(payload);
+
+    const resolvedGeneration = await this.pollLumaGeneration(
+      luma,
+      generation.id ?? '',
+    );
+    const assetsRecord = resolvedGeneration?.assets ?? {};
+    const assetUrl = assetsRecord?.image;
+
+    if (typeof assetUrl !== 'string' || !assetUrl.trim()) {
+      this.throwBadRequest('Luma generation did not return an image asset');
+    }
+
+    const { dataUrl, mimeType, base64 } = await this.downloadAsDataUrl(
+      assetUrl,
+      { Authorization: `Bearer ${apiKey}` },
+    );
+
+    const asset: GeneratedAsset = {
+      dataUrl,
+      mimeType,
+      base64,
+      remoteUrl: assetUrl,
+    };
+
+    return {
+      provider: 'luma',
+      model: dto.model,
+      clientPayload: {
+        dataUrl,
+        mimeType,
+        generationId: resolvedGeneration?.id ?? null,
+        state: resolvedGeneration?.state ?? null,
+      },
+      assets: [asset],
+      rawResponse: resolvedGeneration,
+      usageMetadata: {
+        generationId: resolvedGeneration?.id ?? null,
+        state: resolvedGeneration?.state ?? null,
+      },
+    };
+  }
+
+  private async handleLegacyLuma(
+    dto: UnifiedGenerateDto,
+    apiKey: string,
+  ): Promise<ProviderResult> {
     const model =
       dto.model === 'luma-realistic-vision'
         ? 'luma-realistic-vision'
@@ -1470,6 +1595,57 @@ export class GenerationService {
       assets,
       rawResponse: resultPayload,
     };
+  }
+
+  private async pollLumaGeneration(
+    luma: LumaAI,
+    id: string,
+  ): Promise<LumaGeneration> {
+    const trimmedId = id?.trim?.();
+    if (!trimmedId) {
+      this.throwBadRequest('Luma generation id is required');
+    }
+
+    const maxAttempts = 60;
+    const delayMs = 2000;
+    let latest: LumaGeneration | undefined;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      latest = await luma.generations.get(trimmedId);
+      const state = String(latest?.state ?? '')
+        .toLowerCase()
+        .trim();
+
+      if (state === 'completed') {
+        return latest;
+      }
+
+      if (state === 'failed') {
+        throw new HttpException(
+          {
+            error: 'Luma generation failed',
+            details: latest,
+          },
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      await this.sleep(delayMs);
+    }
+
+    throw new HttpException(
+      {
+        error: 'Luma generation timed out',
+        details: { id: trimmedId, lastKnown: latest },
+      },
+      HttpStatus.GATEWAY_TIMEOUT,
+    );
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
   }
 
   private async persistResult(
