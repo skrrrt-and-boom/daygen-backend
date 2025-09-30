@@ -21,7 +21,7 @@ export class UsersService {
         authUserId,
         passwordHash: input.passwordHash,
         displayName: input.displayName?.trim() || null,
-        credits: 3, // 3 free credits for new accounts
+        credits: 20, // 20 free credits for new accounts
         role: 'USER',
       },
     });

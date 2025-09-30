@@ -16,7 +16,7 @@ model User {
   authUserId   String        @unique
   passwordHash String
   displayName  String?
-  credits      Int           @default(3)
+  credits      Int           @default(20)
   profileImage String?
   updatedAt    DateTime      @updatedAt
   role         UserRole      @default(USER)
