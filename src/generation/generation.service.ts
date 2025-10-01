@@ -1242,12 +1242,7 @@ export class GenerationService {
     if (steps !== undefined) {
       requestBody.steps = steps;
     }
-    const batchSize = asNumber(
-      providerOptions.batch_size ?? providerOptions.batchSize,
-    );
-    if (batchSize !== undefined) {
-      requestBody.batch_size = batchSize;
-    }
+    
     const aspectRatio = asString(
       providerOptions.aspect_ratio ?? providerOptions.aspectRatio,
     );
@@ -1266,16 +1261,6 @@ export class GenerationService {
     if (negativePrompt) {
       requestBody.negative_prompt = negativePrompt;
     }
-    const numImages = asNumber(providerOptions.num_images ?? providerOptions.n);
-    if (numImages !== undefined) {
-      requestBody.num_images = numImages;
-    }
-    const responseFormat = asString(
-      providerOptions.response_format ?? providerOptions.responseFormat,
-    );
-    if (responseFormat) {
-      requestBody.response_format = responseFormat;
-    }
 
     const sanitizedReveLog = {
       requestedModel: resolvedModel ?? dto.model ?? null,
@@ -1289,8 +1274,6 @@ export class GenerationService {
       guidanceScale: guidanceScale ?? null,
       steps: steps ?? null,
       seed: seed ?? null,
-      batchSize: batchSize ?? null,
-      numImages: numImages ?? null,
       hasNegativePrompt: Boolean(negativePrompt),
       referenceCount: Array.isArray(dto.references) ? dto.references.length : 0,
     };
