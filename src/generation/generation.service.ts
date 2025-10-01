@@ -116,6 +116,34 @@ const GEMINI_API_KEY_CANDIDATES = [
   'VITE_GEMINI_API_KEY',
 ] as const;
 
+const RUNWAY_API_VERSION = '2024-11-06';
+const RUNWAY_POLL_INTERVAL_MS = 6000;
+const RUNWAY_MAX_ATTEMPTS = 120;
+const RUNWAY_MAX_REFERENCES = 3;
+const RUNWAY_ALLOWED_RATIOS = new Set<string>([
+  '1920:1080',
+  '1080:1920',
+  '1024:1024',
+  '1360:768',
+  '1080:1080',
+  '1168:880',
+  '1440:1080',
+  '1080:1440',
+  '1808:768',
+  '2112:912',
+  '1280:720',
+  '720:1280',
+  '720:720',
+  '960:720',
+  '720:960',
+  '1680:720',
+  '1344:768',
+  '768:1344',
+  '1184:864',
+  '864:1184',
+  '1536:672',
+]);
+
 type JsonRecord = Record<string, unknown>;
 
 const isJsonRecord = (value: unknown): value is JsonRecord =>
@@ -699,17 +727,69 @@ export class GenerationService {
       );
     }
 
-    const response = await fetch('https://api.ideogram.ai/api/v1/text2image', {
+    const endpoint = 'https://api.ideogram.ai/v1/ideogram-v3/generate';
+    const form = new FormData();
+    form.set('prompt', dto.prompt);
+
+    const providerOptions = dto.providerOptions ?? {};
+
+    const setStringOption = (keys: string[]) => {
+      for (const key of keys) {
+        const value = providerOptions[key];
+        if (typeof value === 'string' && value.trim()) {
+          form.set(keys[0], value.trim());
+          return;
+        }
+      }
+    };
+
+    const setNumberOption = (keys: string[]) => {
+      for (const key of keys) {
+        const value = providerOptions[key];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          form.set(keys[0], String(value));
+          return;
+        }
+      }
+    };
+
+    setStringOption(['aspect_ratio', 'aspectRatio']);
+    setStringOption(['resolution']);
+    setStringOption(['rendering_speed', 'renderingSpeed']);
+    setStringOption(['magic_prompt', 'magicPrompt']);
+    setStringOption(['style_preset', 'stylePreset']);
+    setStringOption(['style_type', 'styleType']);
+    setStringOption(['negative_prompt', 'negativePrompt']);
+    setNumberOption(['num_images', 'numImages']);
+    setNumberOption(['seed']);
+
+    const styleCodes = providerOptions.style_codes ?? providerOptions.styleCodes;
+    if (Array.isArray(styleCodes)) {
+      for (const code of styleCodes) {
+        if (typeof code === 'string' && code.trim()) {
+          form.append('style_codes', code.trim());
+        }
+      }
+    }
+
+    const colorPalette =
+      providerOptions.color_palette ?? providerOptions.colorPalette;
+    if (colorPalette !== undefined) {
+      const serialized =
+        typeof colorPalette === 'string'
+          ? colorPalette
+          : this.stringifyUnknown(colorPalette);
+      if (serialized.trim()) {
+        form.set('color_palette', serialized.trim());
+      }
+    }
+
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        'Api-Key': apiKey,
       },
-      body: JSON.stringify({
-        prompt: dto.prompt,
-        model: 'ideogram-v3',
-        ...dto.providerOptions,
-      }),
+      body: form,
     });
 
     if (!response.ok) {
@@ -838,58 +918,123 @@ export class GenerationService {
       throw new ServiceUnavailableException('Runway API key not configured');
     }
 
-    const model =
-      dto.model === 'runway-gen4-turbo' ? 'gen4_image_turbo' : 'gen4_image';
-    const response = await fetch(
-      'https://api.dev.runwayml.com/v1/image_generations',
+    const runwayModel = this.resolveRunwayModel(dto.model);
+    const ratio = this.resolveRunwayRatio(
+      dto.providerOptions?.ratio,
+      runwayModel,
+    );
+    const seed = asNumber(dto.providerOptions?.seed);
+    const referenceImages = this.buildRunwayReferenceImages(dto);
+
+    if (runwayModel === 'gen4_image_turbo' && referenceImages.length === 0) {
+      this.throwBadRequest(
+        'Runway Gen-4 Turbo requires at least one reference image.',
+      );
+    }
+
+    const contentModeration = this.resolveRunwayModeration(
+      dto.providerOptions,
+    );
+
+    const requestBody: Record<string, unknown> = {
+      model: runwayModel,
+      promptText: dto.prompt,
+      ratio,
+    };
+
+    if (referenceImages.length > 0) {
+      requestBody.referenceImages = referenceImages;
+    }
+    if (seed !== undefined) {
+      requestBody.seed = seed;
+    }
+    if (contentModeration) {
+      requestBody.contentModeration = contentModeration;
+    }
+
+    const sanitizedLog = {
+      model: runwayModel,
+      ratio,
+      referenceCount: referenceImages.length,
+      hasSeed: seed !== undefined,
+      hasModeration: Boolean(contentModeration),
+      promptPreview: dto.prompt.slice(0, 120),
+    };
+    this.logger.debug('Runway request payload', sanitizedLog);
+
+    const createResponse = await fetch(
+      'https://api.dev.runwayml.com/v1/text_to_image',
       {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'X-Runway-Version': '1.0',
+          'X-Runway-Version': RUNWAY_API_VERSION,
         },
-        body: JSON.stringify({
-          model,
-          prompt: dto.prompt,
-          ratio: dto.providerOptions.ratio ?? '16:9',
-          seed: dto.providerOptions.seed,
-        }),
+        body: JSON.stringify(requestBody),
       },
     );
 
-    const resultPayload = (await response.json()) as unknown;
+    const createPayload = (await this.safeJson(createResponse)) as unknown;
 
-    if (!response.ok) {
-      const details = this.stringifyUnknown(resultPayload);
-      this.logger.error(`Runway API error ${response.status}: ${details}`);
+    if (!createResponse.ok) {
+      const message =
+        this.extractProviderMessage(createPayload) ||
+        `Runway API error: ${createResponse.status}`;
+      this.logger.error('Runway create error', {
+        status: createResponse.status,
+        message,
+        response: createPayload,
+        request: sanitizedLog,
+      });
       throw new HttpException(
-        {
-          error: `Runway API error: ${response.status}`,
-          details: resultPayload,
-        },
-        response.status,
+        { error: message, details: createPayload },
+        createResponse.status,
       );
     }
 
-    const remoteUrl = this.extractRunwayImageUrl(resultPayload);
-    if (!remoteUrl) {
-      this.throwBadRequest('No image URL returned from Runway');
+    const createRecord = optionalJsonRecord(createPayload);
+    const taskId = createRecord ? asString(createRecord['id']) : undefined;
+    if (!taskId) {
+      this.logger.error('Runway create response missing task ID', createPayload);
+      this.throwBadRequest('Runway did not return a task identifier');
     }
 
-    const dataUrl = await this.ensureDataUrl(remoteUrl);
+    const taskPayload = await this.pollRunwayTask(apiKey, taskId);
+    const taskRecord = optionalJsonRecord(taskPayload);
+    const outputs = taskRecord ? asArray(taskRecord['output']) : [];
+    const remoteUrlCandidate = outputs
+      .map((entry) => asString(entry))
+      .find((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+
+    if (!remoteUrlCandidate) {
+      this.logger.error('Runway task completed without output URL', taskPayload);
+      this.throwBadRequest('Runway did not return an output image URL');
+    }
+
+    const dataUrl = await this.ensureDataUrl(remoteUrlCandidate);
     const asset = this.assetFromDataUrl(dataUrl);
+    asset.remoteUrl = remoteUrlCandidate;
 
     return {
       provider: 'runway',
-      model,
+      model: runwayModel,
       clientPayload: {
         dataUrl,
         contentType: asset.mimeType,
-        job: resultPayload,
+        taskId,
+        status: asString(taskRecord?.['status']) ?? null,
+        output: outputs,
       },
       assets: [asset],
-      rawResponse: resultPayload,
+      rawResponse: {
+        create: createPayload,
+        task: taskPayload,
+      },
+      usageMetadata: {
+        taskId,
+        status: asString(taskRecord?.['status']) ?? null,
+      },
     };
   }
 
@@ -1039,14 +1184,13 @@ export class GenerationService {
       prompt: dto.prompt,
     };
 
-    // Note: Reve API doesn't accept model parameter, so we skip it
-    // const resolvedModel = this.resolveReveModel(
-    //   dto.model,
-    //   providerOptions.model,
-    // );
-    // if (resolvedModel) {
-    //   requestBody.model = resolvedModel;
-    // }
+    const resolvedModel = this.resolveReveModel(
+      dto.model,
+      providerOptions.model,
+    );
+    if (resolvedModel) {
+      requestBody.model = resolvedModel;
+    }
 
     const width = asNumber(providerOptions.width);
     if (width !== undefined) {
@@ -1080,7 +1224,13 @@ export class GenerationService {
       providerOptions.aspect_ratio ?? providerOptions.aspectRatio,
     );
     if (aspectRatio) {
-      requestBody.aspect_ratio = aspectRatio;
+      if (width === undefined && height === undefined) {
+        requestBody.aspect_ratio = aspectRatio;
+      } else {
+        this.logger.debug(
+          'Reve payload includes aspect_ratio along with width/height; favouring explicit dimensions.',
+        );
+      }
     }
     const negativePrompt = asString(
       providerOptions.negative_prompt ?? providerOptions.negativePrompt,
@@ -1088,6 +1238,33 @@ export class GenerationService {
     if (negativePrompt) {
       requestBody.negative_prompt = negativePrompt;
     }
+    const numImages = asNumber(
+      providerOptions.num_images ?? providerOptions.n,
+    );
+    if (numImages !== undefined) {
+      requestBody.num_images = numImages;
+    }
+    const responseFormat = asString(
+      providerOptions.response_format ?? providerOptions.responseFormat,
+    );
+    if (responseFormat) {
+      requestBody.response_format = responseFormat;
+    }
+
+    const sanitizedReveLog = {
+      model: resolvedModel ?? dto.model ?? null,
+      width: width ?? null,
+      height: height ?? null,
+      aspectRatio: width === undefined && height === undefined ? aspectRatio ?? null : null,
+      guidanceScale: guidanceScale ?? null,
+      steps: steps ?? null,
+      seed: seed ?? null,
+      batchSize: batchSize ?? null,
+      numImages: numImages ?? null,
+      hasNegativePrompt: Boolean(negativePrompt),
+      referenceCount: Array.isArray(dto.references) ? dto.references.length : 0,
+    };
+    this.logger.debug('Reve request payload', sanitizedReveLog);
 
     const endpoint = `${this.getReveApiBase()}/v1/image/create`;
 
@@ -1096,33 +1273,26 @@ export class GenerationService {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        Accept: 'application/json',
       },
       body: JSON.stringify(requestBody),
     });
 
-    const textPayload = await response.text();
-    let resultPayload: unknown;
-    try {
-      resultPayload = textPayload ? (JSON.parse(textPayload) as unknown) : {};
-    } catch {
-      resultPayload = { raw: textPayload };
-    }
+    const resultPayload = await this.safeJson(response);
 
     if (!response.ok) {
-      const details = this.stringifyUnknown(resultPayload);
-      this.logger.error(`Reve API error ${response.status}: ${details}`);
-      let errorMessage = `Reve API error: ${response.status}`;
-      if (response.status === 404) {
-        errorMessage =
-          'Reve API endpoint not found. Please check your API key and endpoint configuration.';
-      } else if (response.status === 401) {
-        errorMessage =
-          'Reve API authentication failed. Please check your API key.';
-      } else if (response.status === 429) {
-        errorMessage = 'Reve API rate limit exceeded. Please try again later.';
-      }
+      const providerMessage =
+        this.extractProviderMessage(resultPayload) ||
+        `Reve API error: ${response.status}`;
+      this.logger.error('Reve API error', {
+        status: response.status,
+        message: providerMessage,
+        response: resultPayload,
+        request: sanitizedReveLog,
+      });
+
       throw new HttpException(
-        { error: errorMessage, details: resultPayload },
+        { error: providerMessage, details: resultPayload },
         response.status,
       );
     }
@@ -1856,34 +2026,306 @@ export class GenerationService {
     return null;
   }
 
-  private extractRunwayImageUrl(result: unknown): string | null {
-    const resultRecord = optionalJsonRecord(result);
-    if (!resultRecord) {
-      return null;
+  private resolveRunwayModel(model?: string | null): 'gen4_image' | 'gen4_image_turbo' {
+    const normalized = (model ?? '').toString().toLowerCase();
+    if (normalized.includes('turbo')) {
+      return 'gen4_image_turbo';
     }
-    const dataEntries = asArray(resultRecord['data']);
-    if (dataEntries.length > 0) {
-      const firstEntry = optionalJsonRecord(dataEntries[0]);
-      if (firstEntry) {
-        const candidate =
-          asString(firstEntry['image_url']) ?? asString(firstEntry['url']);
-        if (candidate) {
+    return 'gen4_image';
+  }
+
+  private resolveRunwayRatio(value: unknown, model: string): string {
+    const defaultRatio = '1920:1080';
+    if (typeof value === 'string') {
+      const cleaned = value.trim();
+      if (cleaned) {
+        const candidate = cleaned.replace(/x/gi, ':').replace(/\s+/g, '');
+        if (RUNWAY_ALLOWED_RATIOS.has(candidate)) {
           return candidate;
         }
+        this.logger.warn('Runway ratio not supported, falling back to default.', {
+          requested: cleaned,
+        });
       }
     }
-    for (const entry of asArray(resultRecord['output'])) {
-      const entryRecord = optionalJsonRecord(entry);
-      if (!entryRecord) {
-        continue;
+    return defaultRatio;
+  }
+
+  private buildRunwayReferenceImages(
+    dto: UnifiedGenerateDto,
+  ): Array<{ uri: string; tag?: string }> {
+    const providerOptions = dto.providerOptions ?? {};
+    const referenceImages: Array<{ uri: string; tag?: string }> = [];
+
+    const tagCandidatesRaw =
+      providerOptions.reference_image_tags ?? providerOptions.referenceImageTags;
+    const tagCandidates = Array.isArray(tagCandidatesRaw)
+      ? tagCandidatesRaw
+      : [];
+
+    const addReference = (uriCandidate: unknown, tagCandidate?: unknown) => {
+      if (referenceImages.length >= RUNWAY_MAX_REFERENCES) {
+        return;
       }
-      const candidate =
-        asString(entryRecord['image']) ?? asString(entryRecord['url']);
-      if (candidate) {
-        return candidate;
+      const normalizedUri = this.normalizeRunwayReferenceUri(uriCandidate);
+      if (!normalizedUri) {
+        return;
+      }
+      const tag = this.sanitizeRunwayTag(
+        tagCandidate,
+        referenceImages.length,
+      );
+      if (tag) {
+        referenceImages.push({ uri: normalizedUri, tag });
+      } else {
+        referenceImages.push({ uri: normalizedUri });
+      }
+    };
+
+    const directReferences = Array.isArray(dto.references)
+      ? dto.references
+      : [];
+    for (let i = 0; i < directReferences.length; i += 1) {
+      addReference(directReferences[i], tagCandidates[i]);
+    }
+
+    const providerReferenceImages =
+      providerOptions.referenceImages ?? providerOptions.reference_images;
+    if (Array.isArray(providerReferenceImages)) {
+      for (const entry of providerReferenceImages) {
+        if (referenceImages.length >= RUNWAY_MAX_REFERENCES) {
+          break;
+        }
+        if (typeof entry === 'string') {
+          addReference(entry);
+          continue;
+        }
+        const entryRecord = optionalJsonRecord(entry);
+        if (!entryRecord) {
+          continue;
+        }
+        addReference(entryRecord['uri'], entryRecord['tag']);
       }
     }
-    return null;
+
+    return referenceImages;
+  }
+
+  private resolveRunwayModeration(
+    providerOptions?: Record<string, unknown>,
+  ): { publicFigureThreshold: 'auto' | 'low' } | undefined {
+    if (!providerOptions) {
+      return undefined;
+    }
+
+    const moderation = optionalJsonRecord(
+      providerOptions.contentModeration ?? providerOptions.content_moderation,
+    );
+
+    const thresholdCandidate =
+      asString(moderation?.['publicFigureThreshold']) ??
+      asString(moderation?.['public_figure_threshold']) ??
+      asString(providerOptions.publicFigureThreshold) ??
+      asString(providerOptions.public_figure_threshold);
+
+    if (!thresholdCandidate) {
+      return undefined;
+    }
+
+    const normalized = thresholdCandidate.trim().toLowerCase();
+    if (normalized !== 'auto' && normalized !== 'low') {
+      this.logger.warn('Unsupported Runway publicFigureThreshold value', {
+        value: thresholdCandidate,
+      });
+      return undefined;
+    }
+
+    return { publicFigureThreshold: normalized as 'auto' | 'low' };
+  }
+
+  private sanitizeRunwayTag(value: unknown, index: number): string | undefined {
+    const fallback = `ref${index + 1}`;
+    if (typeof value !== 'string') {
+      return fallback;
+    }
+    let normalized = value.trim().replace(/[^A-Za-z0-9_]/g, '');
+    if (!normalized) {
+      return fallback;
+    }
+    if (!/^[A-Za-z]/.test(normalized)) {
+      normalized = `R${normalized}`;
+    }
+    if (normalized.length < 3) {
+      normalized = normalized.padEnd(3, 'x');
+    }
+    if (normalized.length > 16) {
+      normalized = normalized.slice(0, 16);
+    }
+    if (!/^[A-Za-z][A-Za-z0-9_]{2,15}$/.test(normalized)) {
+      return fallback;
+    }
+    return normalized;
+  }
+
+  private normalizeRunwayReferenceUri(value: unknown): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (
+      trimmed.startsWith('http://') ||
+      trimmed.startsWith('https://') ||
+      trimmed.startsWith('data:')
+    ) {
+      return trimmed;
+    }
+    if (isProbablyBase64(trimmed)) {
+      return `data:image/png;base64,${trimmed.replace(/\s+/g, '')}`;
+    }
+    return trimmed;
+  }
+
+  private async pollRunwayTask(apiKey: string, taskId: string) {
+    for (let attempt = 0; attempt < RUNWAY_MAX_ATTEMPTS; attempt += 1) {
+      const response = await fetch(
+        `https://api.dev.runwayml.com/v1/tasks/${taskId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'X-Runway-Version': RUNWAY_API_VERSION,
+            Accept: 'application/json',
+          },
+        },
+      );
+
+      const payload = await this.safeJson(response);
+
+      if (!response.ok) {
+        const providerMessage =
+          this.extractProviderMessage(payload) ||
+          `Runway task error: ${response.status}`;
+        this.logger.error('Runway task polling error', {
+          status: response.status,
+          message: providerMessage,
+          response: payload,
+          taskId,
+          attempt: attempt + 1,
+        });
+        throw new HttpException(
+          { error: providerMessage, details: payload },
+          response.status,
+        );
+      }
+
+      const record = optionalJsonRecord(payload);
+      const status = asString(record?.['status'])?.toUpperCase() ?? '';
+      const progress = asNumber(record?.['progress']);
+
+      this.logger.debug('Runway task poll', {
+        taskId,
+        attempt: attempt + 1,
+        status,
+        progress,
+      });
+
+      if (status === 'SUCCEEDED') {
+        return payload;
+      }
+
+      if (status === 'FAILED' || status === 'CANCELLED') {
+        const failureMessage =
+          asString(record?.['failure']) ??
+          this.extractProviderMessage(payload) ??
+          `Runway task ${status.toLowerCase()}`;
+        throw new HttpException(
+          { error: failureMessage, details: payload },
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      await this.sleep(RUNWAY_POLL_INTERVAL_MS);
+    }
+
+    this.logger.error('Runway task timed out', { taskId });
+    throw new HttpException(
+      { error: 'Runway generation timed out', details: { taskId } },
+      HttpStatus.GATEWAY_TIMEOUT,
+    );
+  }
+
+  private async safeJson(response: globalThis.Response): Promise<unknown> {
+    const contentType = response.headers.get('content-type') ?? '';
+    const isJson =
+      contentType.includes('application/json') || contentType.endsWith('+json');
+    try {
+      if (isJson) {
+        return await response.json();
+      }
+      const text = await response.text();
+      if (!text) {
+        return {};
+      }
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { raw: text };
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  private extractProviderMessage(value: unknown): string | undefined {
+    return this.extractProviderMessageInternal(value, new WeakSet<object>());
+  }
+
+  private extractProviderMessageInternal(
+    value: unknown,
+    seen: WeakSet<object>,
+  ): string | undefined {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed || undefined;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const result = this.extractProviderMessageInternal(entry, seen);
+        if (result) {
+          return result;
+        }
+      }
+      return undefined;
+    }
+    if (!isJsonRecord(value)) {
+      return undefined;
+    }
+    if (seen.has(value)) {
+      return undefined;
+    }
+    seen.add(value);
+
+    const candidateKeys = [
+      'message',
+      'error',
+      'detail',
+      'error_message',
+      'failure',
+      'title',
+      'description',
+      'reason',
+    ] as const;
+
+    for (const key of candidateKeys) {
+      const result = this.extractProviderMessageInternal(value[key], seen);
+      if (result) {
+        return result;
+      }
+    }
+
+    return undefined;
   }
 
   private extractSeedreamImages(result: unknown): string[] {
