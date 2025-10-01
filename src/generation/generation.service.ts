@@ -763,6 +763,13 @@ export class GenerationService {
     setNumberOption(['num_images', 'numImages']);
     setNumberOption(['seed']);
 
+    // Convert aspect ratio from "16:9" format to "16x9" format for Ideogram API
+    if (form.has('aspect_ratio')) {
+      const aspectRatio = form.get('aspect_ratio') as string;
+      const ideogramAspectRatio = aspectRatio.replace(':', 'x');
+      form.set('aspect_ratio', ideogramAspectRatio);
+    }
+
     const styleCodes =
       providerOptions.style_codes ?? providerOptions.styleCodes;
     if (Array.isArray(styleCodes)) {
@@ -786,7 +793,7 @@ export class GenerationService {
     }
 
     if (!form.has('aspect_ratio')) {
-      form.set('aspect_ratio', '1:1');
+      form.set('aspect_ratio', '1x1');
     }
     if (!form.has('rendering_speed')) {
       form.set('rendering_speed', 'DEFAULT');
@@ -1212,69 +1219,72 @@ export class GenerationService {
       prompt: dto.prompt,
     };
 
-    const resolvedModel = this.resolveReveModel(
-      dto.model,
-      providerOptions.model,
-    );
-    if (resolvedModel && resolvedModel !== 'reve-image-1.0') {
-      requestBody.model = resolvedModel;
-    }
+    // Remove model parameter as it might not be supported by Reve API
+    // const resolvedModel = this.resolveReveModel(
+    //   dto.model,
+    //   providerOptions.model,
+    // );
+    // if (resolvedModel && resolvedModel !== 'reve-image-1.0') {
+    //   requestBody.model = resolvedModel;
+    // }
 
-    const width = asNumber(providerOptions.width);
-    if (width !== undefined) {
-      requestBody.width = width;
-    }
-    const height = asNumber(providerOptions.height);
-    if (height !== undefined) {
-      requestBody.height = height;
-    }
-    const seed = asNumber(providerOptions.seed);
-    if (seed !== undefined) {
-      requestBody.seed = seed;
-    }
-    const guidanceScale = asNumber(
-      providerOptions.guidance_scale ?? providerOptions.guidanceScale,
-    );
-    if (guidanceScale !== undefined) {
-      requestBody.guidance_scale = guidanceScale;
-    }
-    const steps = asNumber(providerOptions.steps);
-    if (steps !== undefined) {
-      requestBody.steps = steps;
-    }
+    // Remove width and height as they might not be supported by Reve API
+    // const width = asNumber(providerOptions.width);
+    // if (width !== undefined) {
+    //   requestBody.width = width;
+    // }
+    // const height = asNumber(providerOptions.height);
+    // if (height !== undefined) {
+    //   requestBody.height = height;
+    // }
+    // Remove seed as it might not be supported by Reve API
+    // const seed = asNumber(providerOptions.seed);
+    // if (seed !== undefined) {
+    //   requestBody.seed = seed;
+    // }
+    // Remove guidance_scale and steps as they might not be supported by Reve API
+    // const guidanceScale = asNumber(
+    //   providerOptions.guidance_scale ?? providerOptions.guidanceScale,
+    // );
+    // if (guidanceScale !== undefined) {
+    //   requestBody.guidance_scale = guidanceScale;
+    // }
+    // const steps = asNumber(providerOptions.steps);
+    // if (steps !== undefined) {
+    //   requestBody.steps = steps;
+    // }
     
-    const aspectRatio = asString(
-      providerOptions.aspect_ratio ?? providerOptions.aspectRatio,
-    );
-    if (aspectRatio) {
-      if (width === undefined && height === undefined) {
-        requestBody.aspect_ratio = aspectRatio;
-      } else {
-        this.logger.debug(
-          'Reve payload includes aspect_ratio along with width/height; favouring explicit dimensions.',
-        );
-      }
-    }
-    const negativePrompt = asString(
-      providerOptions.negative_prompt ?? providerOptions.negativePrompt,
-    );
-    if (negativePrompt) {
-      requestBody.negative_prompt = negativePrompt;
-    }
+    // Remove aspect_ratio as it might not be supported by Reve API
+    // const aspectRatio = asString(
+    //   providerOptions.aspect_ratio ?? providerOptions.aspectRatio,
+    // );
+    // if (aspectRatio) {
+    //   if (width === undefined && height === undefined) {
+    //     requestBody.aspect_ratio = aspectRatio;
+    //   } else {
+    //     this.logger.debug(
+    //       'Reve payload includes aspect_ratio along with width/height; favouring explicit dimensions.',
+    //     );
+    //   }
+    // }
+    // Remove negative_prompt as it might not be supported by Reve API
+    // const negativePrompt = asString(
+    //   providerOptions.negative_prompt ?? providerOptions.negativePrompt,
+    // );
+    // if (negativePrompt) {
+    //   requestBody.negative_prompt = negativePrompt;
+    // }
 
     const sanitizedReveLog = {
-      requestedModel: resolvedModel ?? dto.model ?? null,
-      modelInRequest: requestBody.model ?? null,
-      width: width ?? null,
-      height: height ?? null,
-      aspectRatio:
-        width === undefined && height === undefined
-          ? (aspectRatio ?? null)
-          : null,
-      guidanceScale: guidanceScale ?? null,
-      steps: steps ?? null,
-      seed: seed ?? null,
-      hasNegativePrompt: Boolean(negativePrompt),
+      requestedModel: dto.model ?? null,
+      modelInRequest: null, // Removed model parameter
+      width: null, // Removed width parameter
+      height: null, // Removed height parameter
+      aspectRatio: null, // Removed aspect_ratio parameter
+      guidanceScale: null, // Removed guidance_scale parameter
+      steps: null, // Removed steps parameter
+      seed: null, // Removed seed parameter
+      hasNegativePrompt: false, // Removed negative_prompt parameter
       referenceCount: Array.isArray(dto.references) ? dto.references.length : 0,
     };
     this.logger.debug('Reve request payload', sanitizedReveLog);
