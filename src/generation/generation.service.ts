@@ -785,30 +785,53 @@ export class GenerationService {
       }
     }
 
+    if (!form.has('aspect_ratio')) {
+      form.set('aspect_ratio', '1:1');
+    }
+    if (!form.has('rendering_speed')) {
+      form.set('rendering_speed', 'DEFAULT');
+    }
+    if (!form.has('magic_prompt')) {
+      form.set('magic_prompt', 'AUTO');
+    }
+    if (!form.has('num_images')) {
+      form.set('num_images', '1');
+    }
+
+    const sanitizedIdeogramLog = {
+      promptPreview: dto.prompt.slice(0, 120),
+      aspectRatio: form.get('aspect_ratio') ?? null,
+      renderingSpeed: form.get('rendering_speed') ?? null,
+      magicPrompt: form.get('magic_prompt') ?? null,
+      numImages: form.get('num_images') ?? null,
+      hasResolution: form.has('resolution'),
+      hasColorPalette: form.has('color_palette'),
+      styleCodesCount: Array.isArray(styleCodes) ? styleCodes.length : 0,
+    };
+    this.logger.debug('Ideogram request payload', sanitizedIdeogramLog);
+
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Api-Key': apiKey,
+        Accept: 'application/json',
       },
       body: form,
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      this.logger.error(`Ideogram API error ${response.status}: ${errorText}`);
-      let errorMessage = `Ideogram API error: ${response.status}`;
-      if (response.status === 404) {
-        errorMessage =
-          'Ideogram API endpoint not found. Please check your API key and endpoint configuration.';
-      } else if (response.status === 401) {
-        errorMessage =
-          'Ideogram API authentication failed. Please check your API key.';
-      } else if (response.status === 429) {
-        errorMessage =
-          'Ideogram API rate limit exceeded. Please try again later.';
-      }
+      const errorPayload = await this.safeJson(response);
+      const providerMessage =
+        this.extractProviderMessage(errorPayload) ||
+        `Ideogram API error: ${response.status}`;
+      this.logger.error('Ideogram API error', {
+        status: response.status,
+        message: providerMessage,
+        response: errorPayload,
+        request: sanitizedIdeogramLog,
+      });
       throw new HttpException(
-        { error: errorMessage, details: errorText },
+        { error: providerMessage, details: errorPayload },
         response.status,
       );
     }
@@ -1193,7 +1216,7 @@ export class GenerationService {
       dto.model,
       providerOptions.model,
     );
-    if (resolvedModel) {
+    if (resolvedModel && resolvedModel !== 'reve-image-1.0') {
       requestBody.model = resolvedModel;
     }
 
@@ -1255,7 +1278,8 @@ export class GenerationService {
     }
 
     const sanitizedReveLog = {
-      model: resolvedModel ?? dto.model ?? null,
+      requestedModel: resolvedModel ?? dto.model ?? null,
+      modelInRequest: requestBody.model ?? null,
       width: width ?? null,
       height: height ?? null,
       aspectRatio:
