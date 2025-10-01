@@ -34,7 +34,7 @@ export class UsersService {
 
   async findByEmail(email: string): Promise<User | null> {
     const normalizedEmail = normalizeEmailValue(email);
-    return this.prisma.user.findUnique({ 
+    return this.prisma.user.findUnique({
       where: { email: normalizedEmail },
       select: {
         id: true,
@@ -47,7 +47,7 @@ export class UsersService {
         createdAt: true,
         updatedAt: true,
         // Exclude passwordHash for security
-      }
+      },
     }) as Promise<User | null>;
   }
 

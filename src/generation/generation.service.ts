@@ -763,7 +763,8 @@ export class GenerationService {
     setNumberOption(['num_images', 'numImages']);
     setNumberOption(['seed']);
 
-    const styleCodes = providerOptions.style_codes ?? providerOptions.styleCodes;
+    const styleCodes =
+      providerOptions.style_codes ?? providerOptions.styleCodes;
     if (Array.isArray(styleCodes)) {
       for (const code of styleCodes) {
         if (typeof code === 'string' && code.trim()) {
@@ -919,10 +920,7 @@ export class GenerationService {
     }
 
     const runwayModel = this.resolveRunwayModel(dto.model);
-    const ratio = this.resolveRunwayRatio(
-      dto.providerOptions?.ratio,
-      runwayModel,
-    );
+    const ratio = this.resolveRunwayRatio(dto.providerOptions?.ratio);
     const seed = asNumber(dto.providerOptions?.seed);
     const referenceImages = this.buildRunwayReferenceImages(dto);
 
@@ -932,9 +930,7 @@ export class GenerationService {
       );
     }
 
-    const contentModeration = this.resolveRunwayModeration(
-      dto.providerOptions,
-    );
+    const contentModeration = this.resolveRunwayModeration(dto.providerOptions);
 
     const requestBody: Record<string, unknown> = {
       model: runwayModel,
@@ -975,7 +971,7 @@ export class GenerationService {
       },
     );
 
-    const createPayload = (await this.safeJson(createResponse)) as unknown;
+    const createPayload = await this.safeJson(createResponse);
 
     if (!createResponse.ok) {
       const message =
@@ -996,7 +992,10 @@ export class GenerationService {
     const createRecord = optionalJsonRecord(createPayload);
     const taskId = createRecord ? asString(createRecord['id']) : undefined;
     if (!taskId) {
-      this.logger.error('Runway create response missing task ID', createPayload);
+      this.logger.error(
+        'Runway create response missing task ID',
+        createPayload,
+      );
       this.throwBadRequest('Runway did not return a task identifier');
     }
 
@@ -1005,10 +1004,16 @@ export class GenerationService {
     const outputs = taskRecord ? asArray(taskRecord['output']) : [];
     const remoteUrlCandidate = outputs
       .map((entry) => asString(entry))
-      .find((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+      .find(
+        (entry): entry is string =>
+          typeof entry === 'string' && entry.trim().length > 0,
+      );
 
     if (!remoteUrlCandidate) {
-      this.logger.error('Runway task completed without output URL', taskPayload);
+      this.logger.error(
+        'Runway task completed without output URL',
+        taskPayload,
+      );
       this.throwBadRequest('Runway did not return an output image URL');
     }
 
@@ -1238,9 +1243,7 @@ export class GenerationService {
     if (negativePrompt) {
       requestBody.negative_prompt = negativePrompt;
     }
-    const numImages = asNumber(
-      providerOptions.num_images ?? providerOptions.n,
-    );
+    const numImages = asNumber(providerOptions.num_images ?? providerOptions.n);
     if (numImages !== undefined) {
       requestBody.num_images = numImages;
     }
@@ -1255,7 +1258,10 @@ export class GenerationService {
       model: resolvedModel ?? dto.model ?? null,
       width: width ?? null,
       height: height ?? null,
-      aspectRatio: width === undefined && height === undefined ? aspectRatio ?? null : null,
+      aspectRatio:
+        width === undefined && height === undefined
+          ? (aspectRatio ?? null)
+          : null,
       guidanceScale: guidanceScale ?? null,
       steps: steps ?? null,
       seed: seed ?? null,
@@ -1583,9 +1589,7 @@ export class GenerationService {
     };
   }
 
-  private async handleLuma(
-    dto: UnifiedGenerateDto,
-  ): Promise<ProviderResult> {
+  private async handleLuma(dto: UnifiedGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('LUMAAI_API_KEY');
     if (!apiKey) {
       this.logger.error(
@@ -1596,10 +1600,7 @@ export class GenerationService {
       );
     }
 
-    if (
-      dto.model === 'luma-photon-1' ||
-      dto.model === 'luma-photon-flash-1'
-    ) {
+    if (dto.model === 'luma-photon-1' || dto.model === 'luma-photon-flash-1') {
       return this.handleLumaPhoton(dto, apiKey);
     }
 
@@ -1623,20 +1624,25 @@ export class GenerationService {
     const aspectRatio =
       providerOptions.aspect_ratio ?? providerOptions.aspectRatio;
     if (typeof aspectRatio === 'string' && aspectRatio.trim()) {
-      payload.aspect_ratio = aspectRatio.trim() as ImageCreateParams['aspect_ratio'];
+      payload.aspect_ratio =
+        aspectRatio.trim() as ImageCreateParams['aspect_ratio'];
     }
 
     if (Array.isArray(providerOptions.image_ref)) {
-      payload.image_ref = providerOptions.image_ref as ImageCreateParams['image_ref'];
+      payload.image_ref =
+        providerOptions.image_ref as ImageCreateParams['image_ref'];
     }
     if (Array.isArray(providerOptions.style_ref)) {
-      payload.style_ref = providerOptions.style_ref as ImageCreateParams['style_ref'];
+      payload.style_ref =
+        providerOptions.style_ref as ImageCreateParams['style_ref'];
     }
     if (providerOptions.character_ref) {
-      payload.character_ref = providerOptions.character_ref as ImageCreateParams['character_ref'];
+      payload.character_ref =
+        providerOptions.character_ref as ImageCreateParams['character_ref'];
     }
     if (providerOptions.modify_image_ref) {
-      payload.modify_image_ref = providerOptions.modify_image_ref as ImageCreateParams['modify_image_ref'];
+      payload.modify_image_ref =
+        providerOptions.modify_image_ref as ImageCreateParams['modify_image_ref'];
     }
     if (typeof providerOptions.format === 'string') {
       payload.format = providerOptions.format as ImageCreateParams['format'];
@@ -2026,7 +2032,9 @@ export class GenerationService {
     return null;
   }
 
-  private resolveRunwayModel(model?: string | null): 'gen4_image' | 'gen4_image_turbo' {
+  private resolveRunwayModel(
+    model?: string | null,
+  ): 'gen4_image' | 'gen4_image_turbo' {
     const normalized = (model ?? '').toString().toLowerCase();
     if (normalized.includes('turbo')) {
       return 'gen4_image_turbo';
@@ -2034,7 +2042,7 @@ export class GenerationService {
     return 'gen4_image';
   }
 
-  private resolveRunwayRatio(value: unknown, model: string): string {
+  private resolveRunwayRatio(value: unknown): string {
     const defaultRatio = '1920:1080';
     if (typeof value === 'string') {
       const cleaned = value.trim();
@@ -2043,9 +2051,12 @@ export class GenerationService {
         if (RUNWAY_ALLOWED_RATIOS.has(candidate)) {
           return candidate;
         }
-        this.logger.warn('Runway ratio not supported, falling back to default.', {
-          requested: cleaned,
-        });
+        this.logger.warn(
+          'Runway ratio not supported, falling back to default.',
+          {
+            requested: cleaned,
+          },
+        );
       }
     }
     return defaultRatio;
@@ -2058,7 +2069,8 @@ export class GenerationService {
     const referenceImages: Array<{ uri: string; tag?: string }> = [];
 
     const tagCandidatesRaw =
-      providerOptions.reference_image_tags ?? providerOptions.referenceImageTags;
+      providerOptions.reference_image_tags ??
+      providerOptions.referenceImageTags;
     const tagCandidates = Array.isArray(tagCandidatesRaw)
       ? tagCandidatesRaw
       : [];
@@ -2071,10 +2083,7 @@ export class GenerationService {
       if (!normalizedUri) {
         return;
       }
-      const tag = this.sanitizeRunwayTag(
-        tagCandidate,
-        referenceImages.length,
-      );
+      const tag = this.sanitizeRunwayTag(tagCandidate, referenceImages.length);
       if (tag) {
         referenceImages.push({ uri: normalizedUri, tag });
       } else {
@@ -2140,7 +2149,7 @@ export class GenerationService {
       return undefined;
     }
 
-    return { publicFigureThreshold: normalized as 'auto' | 'low' };
+    return { publicFigureThreshold: normalized };
   }
 
   private sanitizeRunwayTag(value: unknown, index: number): string | undefined {
