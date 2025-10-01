@@ -1214,7 +1214,6 @@ export class GenerationService {
       );
     }
 
-    const providerOptions = dto.providerOptions ?? {};
     const requestBody: Record<string, unknown> = {
       prompt: dto.prompt,
     };
@@ -1253,7 +1252,7 @@ export class GenerationService {
     // if (steps !== undefined) {
     //   requestBody.steps = steps;
     // }
-    
+
     // Remove aspect_ratio as it might not be supported by Reve API
     // const aspectRatio = asString(
     //   providerOptions.aspect_ratio ?? providerOptions.aspectRatio,
