@@ -114,5 +114,3 @@ Integrations
 Third-party app integrations
 Zapier/IFTTT support
 API webhooks
-
-I have the working backend in gcloud run and a frontend on this repo: https://github.com/jkb-jaksa/daygen0 on main branch in the newest verions developed by my friend. I have old version on the dominik/first-sync branch and here in the daygen0 directory on my computer. I want you to prepare plan for yourselve to connect the frontend on main branch to the backend. This main frontend have many other features beond what I have in branch so be precise and analise step by step how to connect the main frontend to the features we have on backend.

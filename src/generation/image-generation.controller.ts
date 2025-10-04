@@ -7,6 +7,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { GenerationService } from './generation.service';
+import { CloudTasksService } from '../jobs/cloud-tasks.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
@@ -40,10 +41,13 @@ const LUMA_MODELS = new Set([
 @UseGuards(JwtAuthGuard)
 @Controller('image')
 export class ImageGenerationController {
-  constructor(private readonly generationService: GenerationService) {}
+  constructor(
+    private readonly generationService: GenerationService,
+    private readonly cloudTasksService: CloudTasksService,
+  ) {}
 
   @Post('gemini')
-  generateGemini(
+  async generateGemini(
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
@@ -51,16 +55,29 @@ export class ImageGenerationController {
       dto.model,
       'gemini-2.5-flash-image-preview',
     );
-    return this.generationService.generateForModel(user, model, dto);
+    
+    // Create job instead of direct generation
+    return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
+      prompt: dto.prompt,
+      model,
+      provider: 'gemini',
+      options: dto,
+    });
   }
 
   @Post('flux')
-  generateFlux(
+  async generateFlux(
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
     const model = this.resolveModel(dto.model, 'flux-pro-1.1', FLUX_MODELS);
-    return this.generationService.generateForModel(user, model, dto);
+    
+    return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
+      prompt: dto.prompt,
+      model,
+      provider: 'flux',
+      options: dto,
+    });
   }
 
   @Post('chatgpt')
@@ -73,12 +90,18 @@ export class ImageGenerationController {
   }
 
   @Post('ideogram')
-  generateIdeogram(
+  async generateIdeogram(
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
     const model = this.resolveModel(dto.model, 'ideogram');
-    return this.generationService.generateForModel(user, model, dto);
+    
+    return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
+      prompt: dto.prompt,
+      model,
+      provider: 'ideogram',
+      options: dto,
+    });
   }
 
   @Post('qwen')

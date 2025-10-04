@@ -11,6 +11,7 @@ import { R2FilesModule } from './r2files/r2files.module';
 import { HealthModule } from './health/health.module';
 import { GenerationModule } from './generation/generation.module';
 import { UploadModule } from './upload/upload.module';
+import { JobsModule } from './jobs/jobs.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { UploadModule } from './upload/upload.module';
     HealthModule,
     GenerationModule,
     UploadModule,
+    JobsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

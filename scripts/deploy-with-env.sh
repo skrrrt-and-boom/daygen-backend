@@ -13,6 +13,11 @@ IMAGE_NAME="gcr.io/$PROJECT_ID/$SERVICE_NAME"
 
 echo "🚀 Starting deployment to Google Cloud Run with environment variables..."
 
+# Store Redis settings before loading .env files
+REDIS_HOST_OVERRIDE="$REDIS_HOST"
+REDIS_PORT_OVERRIDE="$REDIS_PORT"
+REDIS_PASSWORD_OVERRIDE="$REDIS_PASSWORD"
+
 # Load environment variables from .env files
 if [ -f .env ]; then
     echo "📋 Loading environment variables from .env..."
@@ -22,6 +27,20 @@ fi
 if [ -f .env.image-services ]; then
     echo "📋 Loading API keys from .env.image-services..."
     export $(cat .env.image-services | grep -v '^#' | xargs)
+fi
+
+# Override Redis settings for production
+if [ ! -z "$REDIS_HOST_OVERRIDE" ]; then
+    echo "🔧 Overriding Redis host to: $REDIS_HOST_OVERRIDE"
+    export REDIS_HOST="$REDIS_HOST_OVERRIDE"
+fi
+if [ ! -z "$REDIS_PORT_OVERRIDE" ]; then
+    echo "🔧 Overriding Redis port to: $REDIS_PORT_OVERRIDE"
+    export REDIS_PORT="$REDIS_PORT_OVERRIDE"
+fi
+if [ ! -z "$REDIS_PASSWORD_OVERRIDE" ]; then
+    echo "🔧 Overriding Redis password"
+    export REDIS_PASSWORD="$REDIS_PASSWORD_OVERRIDE"
 fi
 
 # Check if gcloud is installed and authenticated
@@ -111,6 +130,31 @@ if [ ! -z "$RECRAFT_API_KEY" ]; then
 fi
 if [ ! -z "$LUMAAI_API_KEY" ]; then
     ENV_VARS="$ENV_VARS,LUMAAI_API_KEY=$LUMAAI_API_KEY"
+fi
+
+# Add Google Cloud Tasks configuration
+if [ ! -z "$GOOGLE_CLOUD_PROJECT" ]; then
+    ENV_VARS="$ENV_VARS,GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT"
+fi
+if [ ! -z "$GOOGLE_CLOUD_LOCATION" ]; then
+    ENV_VARS="$ENV_VARS,GOOGLE_CLOUD_LOCATION=$GOOGLE_CLOUD_LOCATION"
+fi
+if [ ! -z "$API_BASE_URL" ]; then
+    ENV_VARS="$ENV_VARS,API_BASE_URL=$API_BASE_URL"
+fi
+if [ ! -z "$INTERNAL_API_KEY" ]; then
+    ENV_VARS="$ENV_VARS,INTERNAL_API_KEY=$INTERNAL_API_KEY"
+fi
+
+# Add Redis configuration
+if [ ! -z "$REDIS_HOST" ]; then
+    ENV_VARS="$ENV_VARS,REDIS_HOST=$REDIS_HOST"
+fi
+if [ ! -z "$REDIS_PORT" ]; then
+    ENV_VARS="$ENV_VARS,REDIS_PORT=$REDIS_PORT"
+fi
+if [ ! -z "$REDIS_PASSWORD" ]; then
+    ENV_VARS="$ENV_VARS,REDIS_PASSWORD=$REDIS_PASSWORD"
 fi
 
 echo "🔧 Environment variables configured:"
