@@ -1,8 +1,8 @@
-import { 
-  Controller, 
-  Post, 
-  Get, 
-  Param, 
+import {
+  Controller,
+  Post,
+  Get,
+  Param,
   Query,
   UseGuards,
   Body,
@@ -34,7 +34,10 @@ export class JobsController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: CreateImageGenerationJobDto,
   ) {
-    return this.cloudTasksService.createImageGenerationJob(user.authUserId, dto);
+    return this.cloudTasksService.createImageGenerationJob(
+      user.authUserId,
+      dto,
+    );
   }
 
   @Post('video-generation')
@@ -42,7 +45,10 @@ export class JobsController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: CreateVideoGenerationJobDto,
   ) {
-    return this.cloudTasksService.createVideoGenerationJob(user.authUserId, dto);
+    return this.cloudTasksService.createVideoGenerationJob(
+      user.authUserId,
+      dto,
+    );
   }
 
   @Post('image-upscale')
@@ -58,7 +64,10 @@ export class JobsController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: CreateBatchGenerationJobDto,
   ) {
-    return this.cloudTasksService.createBatchGenerationJob(user.authUserId, dto);
+    return this.cloudTasksService.createBatchGenerationJob(
+      user.authUserId,
+      dto,
+    );
   }
 
   @Get(':jobId')
@@ -76,6 +85,10 @@ export class JobsController {
     @Query('cursor') cursor?: string,
   ) {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : 20;
-    return this.cloudTasksService.getUserJobs(user.authUserId, parsedLimit, cursor);
+    return this.cloudTasksService.getUserJobs(
+      user.authUserId,
+      parsedLimit,
+      cursor,
+    );
   }
 }

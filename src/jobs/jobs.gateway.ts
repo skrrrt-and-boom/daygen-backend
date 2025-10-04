@@ -46,15 +46,15 @@ export class JobsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('subscribe-jobs')
   handleSubscribeJobs(client: Socket, payload: { userId: string }) {
     const { userId } = payload;
-    
+
     if (!this.userSockets.has(userId)) {
       this.userSockets.set(userId, new Set());
     }
     this.userSockets.get(userId)!.add(client.id);
-    
-    client.join(`user:${userId}`);
+
+    void client.join(`user:${userId}`);
     this.logger.log(`User ${userId} subscribed to job updates`);
-    
+
     // Send confirmation
     client.emit('subscribed', { userId });
   }
@@ -62,15 +62,15 @@ export class JobsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('unsubscribe-jobs')
   handleUnsubscribeJobs(client: Socket, payload: { userId: string }) {
     const { userId } = payload;
-    client.leave(`user:${userId}`);
+    void client.leave(`user:${userId}`);
     this.logger.log(`User ${userId} unsubscribed from job updates`);
-    
+
     // Send confirmation
     client.emit('unsubscribed', { userId });
   }
 
   // Method to broadcast job updates
-  async broadcastJobUpdate(userId: string, jobUpdate: any) {
+  broadcastJobUpdate(userId: string, jobUpdate: Record<string, unknown>) {
     this.server.to(`user:${userId}`).emit('job-update', jobUpdate);
     this.logger.log(`Broadcasted job update to user ${userId}:`, jobUpdate);
   }

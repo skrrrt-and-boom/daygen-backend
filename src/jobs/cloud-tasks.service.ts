@@ -27,21 +27,20 @@ export class CloudTasksService {
     this.client = new CloudTasksClient();
     this.projectId = process.env.GOOGLE_CLOUD_PROJECT || 'daygen-backend';
     this.location = process.env.GOOGLE_CLOUD_LOCATION || 'europe-central2';
-    this.baseUrl = process.env.API_BASE_URL || 'https://daygen-backend-365299591811.europe-central2.run.app';
+    this.baseUrl =
+      process.env.API_BASE_URL ||
+      'https://daygen-backend-365299591811.europe-central2.run.app';
   }
 
-  private async createJob(
-    userId: string,
-    jobType: JobType,
-    data: any,
-  ) {
+  private async createJob(userId: string, jobType: JobType, data: any) {
     // Create job record in database
     const job = await this.prisma.job.create({
       data: {
         userId,
         type: jobType,
         status: JobStatus.PENDING,
-        metadata: data as any,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        metadata: data,
       },
     });
 
@@ -60,14 +59,16 @@ export class CloudTasksService {
         url: `${this.baseUrl}/api/jobs/process`,
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.INTERNAL_API_KEY || 'internal-key'}`,
+          Authorization: `Bearer ${process.env.INTERNAL_API_KEY || 'internal-key'}`,
         },
-        body: Buffer.from(JSON.stringify({
-          jobId: job.id,
-          userId,
-          jobType,
-          ...data,
-        })).toString('base64'),
+        body: Buffer.from(
+          JSON.stringify({
+            jobId: job.id,
+            userId,
+            jobType,
+            ...data,
+          }),
+        ).toString('base64'),
       },
       scheduleTime: {
         seconds: Date.now() / 1000 + 1, // Execute in 1 second
@@ -80,9 +81,14 @@ export class CloudTasksService {
         task,
       });
 
-      this.logger.log(`Created Cloud Task for ${jobType} job ${job.id}: ${response.name}`);
+      this.logger.log(
+        `Created Cloud Task for ${jobType} job ${job.id}: ${response.name}`,
+      );
     } catch (error) {
-      this.logger.error(`Failed to create Cloud Task for ${jobType} job ${job.id}:`, error);
+      this.logger.error(
+        `Failed to create Cloud Task for ${jobType} job ${job.id}:`,
+        error,
+      );
       // Update job status to failed
       await this.prisma.job.update({
         where: { id: job.id },
@@ -111,10 +117,7 @@ export class CloudTasksService {
     return this.createJob(userId, JobType.VIDEO_GENERATION, data);
   }
 
-  async createImageUpscaleJob(
-    userId: string,
-    data: CreateImageUpscaleJobDto,
-  ) {
+  async createImageUpscaleJob(userId: string, data: CreateImageUpscaleJobDto) {
     return this.createJob(userId, JobType.IMAGE_UPSCALE, data);
   }
 
@@ -147,12 +150,8 @@ export class CloudTasksService {
     return job;
   }
 
-  async updateJobProgress(
-    jobId: string,
-    progress: number,
-    status?: JobStatus,
-  ) {
-    const updateData: any = { progress };
+  async updateJobProgress(jobId: string, progress: number, status?: JobStatus) {
+    const updateData: Record<string, unknown> = { progress };
     if (status) updateData.status = status;
     if (progress === 100) updateData.completedAt = new Date();
 

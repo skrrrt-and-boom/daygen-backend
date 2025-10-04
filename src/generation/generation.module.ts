@@ -10,7 +10,13 @@ import { UsageModule } from '../usage/usage.module';
 import { JobsModule } from '../jobs/jobs.module';
 
 @Module({
-  imports: [ConfigModule, AuthModule, R2FilesModule, UsageModule, forwardRef(() => JobsModule)],
+  imports: [
+    ConfigModule,
+    AuthModule,
+    R2FilesModule,
+    UsageModule,
+    forwardRef(() => JobsModule),
+  ],
   controllers: [GenerationController, ImageGenerationController],
   providers: [GenerationService, R2Service],
   exports: [GenerationService],

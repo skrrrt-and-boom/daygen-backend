@@ -4,6 +4,8 @@ import { R2FilesService } from '../r2files/r2files.service';
 import { UsageService } from '../usage/usage.service';
 import { CloudTasksService } from './cloud-tasks.service';
 import { JobStatus, JobType } from '@prisma/client';
+import type { SanitizedUser } from '../users/types';
+// import type { ProviderGenerateDto } from '../generation/types';
 
 @Controller('jobs')
 export class TaskProcessorController {
@@ -18,7 +20,7 @@ export class TaskProcessorController {
 
   @Post('process')
   async processTask(
-    @Body() body: any,
+    @Body() body: Record<string, unknown>,
     @Headers('authorization') auth: string,
   ) {
     // Verify internal API key
@@ -28,13 +30,25 @@ export class TaskProcessorController {
       throw new Error('Unauthorized');
     }
 
-    const { jobId, userId, jobType, ...jobData } = body;
+    const jobId = body.jobId as string;
+    const userId = body.userId as string;
+    const jobType = body.jobType as JobType;
+    const jobData = { ...body };
+    delete jobData.jobId;
+    delete jobData.userId;
+    delete jobData.jobType;
 
-    this.logger.log(`Processing ${jobType} Cloud Task for job ${jobId} for user ${userId}`);
+    this.logger.log(
+      `Processing ${jobType} Cloud Task for job ${jobId} for user ${userId}`,
+    );
 
     try {
       // Update status to processing
-      await this.cloudTasksService.updateJobProgress(jobId, 0, JobStatus.PROCESSING);
+      await this.cloudTasksService.updateJobProgress(
+        jobId,
+        0,
+        JobStatus.PROCESSING,
+      );
 
       // Route to appropriate handler based on job type
       switch (jobType) {
@@ -51,24 +65,32 @@ export class TaskProcessorController {
           await this.processBatchGeneration(jobId, userId, jobData);
           break;
         default:
-          throw new Error(`Unknown job type: ${jobType}`);
+          throw new Error(`Unknown job type: ${String(jobType)}`);
       }
 
       this.logger.log(`Successfully completed ${jobType} job ${jobId}`);
-
     } catch (error) {
-      this.logger.error(`${jobType} job ${jobId} failed:`, error);
-      await this.cloudTasksService.failJob(jobId, error.message);
+      this.logger.error(`${String(jobType)} job ${jobId} failed:`, error);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      await this.cloudTasksService.failJob(jobId, errorMessage);
       throw error;
     }
   }
 
-  private async processImageGeneration(jobId: string, userId: string, data: any) {
-    const { prompt, model, provider, options } = data;
+  private async processImageGeneration(
+    jobId: string,
+    userId: string,
+    data: Record<string, unknown>,
+  ) {
+    const prompt = data.prompt as string;
+    const model = data.model as string;
+    const provider = data.provider as string;
+    const options = (data.options as Record<string, unknown>) || {};
 
     // Check credits
     const hasCredits = await this.usageService.checkCredits(
-      { authUserId: userId } as any,
+      { authUserId: userId } as SanitizedUser,
       1,
     );
 
@@ -81,12 +103,15 @@ export class TaskProcessorController {
 
     // Generate image
     const result = await this.generationService.generateForModel(
-      { authUserId: userId } as any,
+      { authUserId: userId } as SanitizedUser,
       model,
-      { prompt, model, provider, ...options },
+      { prompt, model, provider, ...options } as any,
     );
 
-    this.logger.log(`Generation result for job ${jobId}:`, JSON.stringify(result, null, 2));
+    this.logger.log(
+      `Generation result for job ${jobId}:`,
+      JSON.stringify(result, null, 2),
+    );
 
     // Update progress
     await this.cloudTasksService.updateJobProgress(jobId, 75);
@@ -96,16 +121,23 @@ export class TaskProcessorController {
     let mimeType: string;
 
     if (result && typeof result === 'object') {
+      const resultObj = result as Record<string, unknown>;
       // Handle different result structures
-      if ('dataUrl' in result) {
-        fileUrl = (result as any).dataUrl;
-        mimeType = (result as any).contentType || 'image/jpeg';
-      } else if ('assets' in result && Array.isArray((result as any).assets) && (result as any).assets.length > 0) {
-        fileUrl = (result as any).assets[0].remoteUrl || (result as any).assets[0].dataUrl;
-        mimeType = (result as any).assets[0].mimeType || 'image/jpeg';
-      } else if ('remoteUrl' in result) {
-        fileUrl = (result as any).remoteUrl;
-        mimeType = (result as any).mimeType || 'image/jpeg';
+      if ('dataUrl' in resultObj) {
+        fileUrl = resultObj.dataUrl as string;
+        mimeType = (resultObj.contentType as string) || 'image/jpeg';
+      } else if (
+        'assets' in resultObj &&
+        Array.isArray(resultObj.assets) &&
+        resultObj.assets.length > 0
+      ) {
+        const firstAsset = resultObj.assets[0] as Record<string, unknown>;
+        fileUrl =
+          (firstAsset.remoteUrl as string) || (firstAsset.dataUrl as string);
+        mimeType = (firstAsset.mimeType as string) || 'image/jpeg';
+      } else if ('remoteUrl' in resultObj) {
+        fileUrl = resultObj.remoteUrl as string;
+        mimeType = (resultObj.mimeType as string) || 'image/jpeg';
       } else {
         // Fallback: try to extract URL from any string property
         const resultStr = JSON.stringify(result);
@@ -132,20 +164,35 @@ export class TaskProcessorController {
 
     // Record usage
     await this.usageService.recordGeneration(
-      { authUserId: userId } as any,
-      { provider, model, prompt, cost: 1 },
+      { authUserId: userId } as SanitizedUser,
+      {
+        provider,
+        model,
+        prompt,
+        cost: 1,
+      },
     );
 
     // Complete job
     await this.cloudTasksService.completeJob(jobId, r2File.fileUrl);
   }
 
-  private async processVideoGeneration(jobId: string, userId: string, data: any) {
-    const { prompt, model, provider, options, imageUrls } = data;
+  private async processVideoGeneration(
+    jobId: string,
+    userId: string,
+    data: Record<string, unknown>,
+  ) {
+    const prompt = data.prompt as string;
+    const model = data.model as string;
+    const provider = data.provider as string;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const options = data.options as Record<string, unknown> | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const imageUrls = data.imageUrls as string[] | undefined;
 
     // Check credits (video generation costs more)
     const hasCredits = await this.usageService.checkCredits(
-      { authUserId: userId } as any,
+      { authUserId: userId } as SanitizedUser,
       5, // Video generation costs 5 credits
     );
 
@@ -159,7 +206,7 @@ export class TaskProcessorController {
     // TODO: Implement video generation logic
     // This would call a video generation service
     // For now, we'll simulate the process
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate processing
+    await new Promise((resolve) => setTimeout(resolve, 2000)); // Simulate processing
 
     // Update progress
     await this.cloudTasksService.updateJobProgress(jobId, 75);
@@ -169,20 +216,35 @@ export class TaskProcessorController {
 
     // Record usage
     await this.usageService.recordGeneration(
-      { authUserId: userId } as any,
-      { provider, model, prompt, cost: 5 },
+      { authUserId: userId } as SanitizedUser,
+      {
+        provider,
+        model,
+        prompt,
+        cost: 5,
+      },
     );
 
     // Complete job
     await this.cloudTasksService.completeJob(jobId, videoUrl);
   }
 
-  private async processImageUpscale(jobId: string, userId: string, data: any) {
-    const { imageUrl, model, provider, scale, options } = data;
+  private async processImageUpscale(
+    jobId: string,
+    userId: string,
+    data: Record<string, unknown>,
+  ) {
+    const imageUrl = data.imageUrl as string;
+    const model = data.model as string;
+    const provider = data.provider as string;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const scale = data.scale as number | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const options = data.options as Record<string, unknown> | undefined;
 
     // Check credits
     const hasCredits = await this.usageService.checkCredits(
-      { authUserId: userId } as any,
+      { authUserId: userId } as SanitizedUser,
       2, // Upscaling costs 2 credits
     );
 
@@ -196,7 +258,7 @@ export class TaskProcessorController {
     // TODO: Implement image upscaling logic
     // This would call an upscaling service
     // For now, we'll simulate the process
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate processing
+    await new Promise((resolve) => setTimeout(resolve, 1000)); // Simulate processing
 
     // Update progress
     await this.cloudTasksService.updateJobProgress(jobId, 75);
@@ -206,21 +268,34 @@ export class TaskProcessorController {
 
     // Record usage
     await this.usageService.recordGeneration(
-      { authUserId: userId } as any,
-      { provider, model, prompt: `Upscale ${imageUrl}`, cost: 2 },
+      { authUserId: userId } as SanitizedUser,
+      {
+        provider,
+        model,
+        prompt: `Upscale ${imageUrl}`,
+        cost: 2,
+      },
     );
 
     // Complete job
     await this.cloudTasksService.completeJob(jobId, upscaledUrl);
   }
 
-  private async processBatchGeneration(jobId: string, userId: string, data: any) {
-    const { prompts, model, provider, batchSize = 5, options } = data;
+  private async processBatchGeneration(
+    jobId: string,
+    userId: string,
+    data: Record<string, unknown>,
+  ) {
+    const prompts = data.prompts as string[];
+    const model = data.model as string;
+    const provider = data.provider as string;
+    const batchSize = (data.batchSize as number) || 5;
+    const options = (data.options as Record<string, unknown>) || {};
 
     // Check credits (batch generation costs more)
     const totalCost = prompts.length * 1; // 1 credit per image
     const hasCredits = await this.usageService.checkCredits(
-      { authUserId: userId } as any,
+      { authUserId: userId } as SanitizedUser,
       totalCost,
     );
 
@@ -237,15 +312,20 @@ export class TaskProcessorController {
     // Process prompts in batches
     for (let i = 0; i < prompts.length; i += batchSize) {
       const batch = prompts.slice(i, i + batchSize);
-      
+
       // Process each prompt in the batch
       for (const prompt of batch) {
         try {
           // Generate image
           const result = await this.generationService.generateForModel(
-            { authUserId: userId } as any,
+            { authUserId: userId } as SanitizedUser,
             model,
-            { prompt, model, provider, ...options },
+            {
+              prompt,
+              model,
+              provider,
+              ...options,
+            } as any,
           );
 
           // Extract file URL from result
@@ -253,15 +333,23 @@ export class TaskProcessorController {
           let mimeType: string;
 
           if (result && typeof result === 'object') {
-            if ('dataUrl' in result) {
-              fileUrl = (result as any).dataUrl;
-              mimeType = (result as any).contentType || 'image/jpeg';
-            } else if ('assets' in result && Array.isArray((result as any).assets) && (result as any).assets.length > 0) {
-              fileUrl = (result as any).assets[0].remoteUrl || (result as any).assets[0].dataUrl;
-              mimeType = (result as any).assets[0].mimeType || 'image/jpeg';
-            } else if ('remoteUrl' in result) {
-              fileUrl = (result as any).remoteUrl;
-              mimeType = (result as any).mimeType || 'image/jpeg';
+            const resultObj = result as Record<string, unknown>;
+            if ('dataUrl' in resultObj) {
+              fileUrl = resultObj.dataUrl as string;
+              mimeType = (resultObj.contentType as string) || 'image/jpeg';
+            } else if (
+              'assets' in resultObj &&
+              Array.isArray(resultObj.assets) &&
+              resultObj.assets.length > 0
+            ) {
+              const firstAsset = resultObj.assets[0] as Record<string, unknown>;
+              fileUrl =
+                (firstAsset.remoteUrl as string) ||
+                (firstAsset.dataUrl as string);
+              mimeType = (firstAsset.mimeType as string) || 'image/jpeg';
+            } else if ('remoteUrl' in resultObj) {
+              fileUrl = resultObj.remoteUrl as string;
+              mimeType = (resultObj.mimeType as string) || 'image/jpeg';
             } else {
               // Fallback: try to extract URL from any string property
               const resultStr = JSON.stringify(result);
@@ -270,7 +358,9 @@ export class TaskProcessorController {
                 fileUrl = urlMatch[0];
                 mimeType = 'image/jpeg';
               } else {
-                this.logger.error(`Cannot extract file URL from batch result: ${resultStr}`);
+                this.logger.error(
+                  `Cannot extract file URL from batch result: ${resultStr}`,
+                );
                 continue; // Skip this prompt and continue with others
               }
             }
@@ -292,12 +382,14 @@ export class TaskProcessorController {
 
           // Record usage
           await this.usageService.recordGeneration(
-            { authUserId: userId } as any,
+            { authUserId: userId } as SanitizedUser,
             { provider, model, prompt, cost: 1 },
           );
-
         } catch (error) {
-          this.logger.error(`Failed to process prompt "${prompt}" in batch:`, error);
+          this.logger.error(
+            `Failed to process prompt "${prompt}" in batch:`,
+            error,
+          );
           // Continue with other prompts
         }
       }

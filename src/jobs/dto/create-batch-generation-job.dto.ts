@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsObject, IsArray, IsNumber } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsObject,
+  IsArray,
+  IsNumber,
+} from 'class-validator';
 
 export class CreateBatchGenerationJobDto {
   @IsArray()

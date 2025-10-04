@@ -55,7 +55,7 @@ export class ImageGenerationController {
       dto.model,
       'gemini-2.5-flash-image-preview',
     );
-    
+
     // Create job instead of direct generation
     return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
       prompt: dto.prompt,
@@ -71,7 +71,7 @@ export class ImageGenerationController {
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
     const model = this.resolveModel(dto.model, 'flux-pro-1.1', FLUX_MODELS);
-    
+
     return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
       prompt: dto.prompt,
       model,
@@ -95,7 +95,7 @@ export class ImageGenerationController {
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
     const model = this.resolveModel(dto.model, 'ideogram');
-    
+
     return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
       prompt: dto.prompt,
       model,
