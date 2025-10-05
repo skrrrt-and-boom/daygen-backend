@@ -1,17 +1,29 @@
 -- Disable RLS on all tables to allow backend service access
 -- This migration ensures that the backend can access all tables without RLS restrictions
 
--- Disable RLS on User table
-ALTER TABLE "User" DISABLE ROW LEVEL SECURITY;
-
--- Disable RLS on UsageEvent table  
-ALTER TABLE "UsageEvent" DISABLE ROW LEVEL SECURITY;
-
--- Disable RLS on R2File table
-ALTER TABLE "R2File" DISABLE ROW LEVEL SECURITY;
-
--- Disable RLS on Job table
-ALTER TABLE "Job" DISABLE ROW LEVEL SECURITY;
+-- Only disable RLS if tables exist
+DO $$
+BEGIN
+    -- Disable RLS on User table if it exists
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'User' AND table_schema = 'public') THEN
+        ALTER TABLE "User" DISABLE ROW LEVEL SECURITY;
+    END IF;
+    
+    -- Disable RLS on UsageEvent table if it exists
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'UsageEvent' AND table_schema = 'public') THEN
+        ALTER TABLE "UsageEvent" DISABLE ROW LEVEL SECURITY;
+    END IF;
+    
+    -- Disable RLS on R2File table if it exists
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'R2File' AND table_schema = 'public') THEN
+        ALTER TABLE "R2File" DISABLE ROW LEVEL SECURITY;
+    END IF;
+    
+    -- Disable RLS on Job table if it exists
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Job' AND table_schema = 'public') THEN
+        ALTER TABLE "Job" DISABLE ROW LEVEL SECURITY;
+    END IF;
+END $$;
 
 -- Disable RLS on _prisma_migrations table (if it exists and has RLS enabled)
 DO $$
