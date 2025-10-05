@@ -71,6 +71,63 @@ jobs:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -c 'CREATE DATABASE daygen_test;'
 
+      - name: Setup Supabase auth schema for testing
+        env:
+          PGPASSWORD: postgres
+        run: |
+          # Create auth schema and mock functions for testing
+          psql -h localhost -U postgres -d daygen -c "
+            CREATE SCHEMA IF NOT EXISTS auth;
+            
+            -- Create mock auth.uid() function that returns a test UUID
+            CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS \$\$
+            BEGIN
+              RETURN '00000000-0000-0000-0000-000000000000'::uuid;
+            END;
+            \$\$ LANGUAGE plpgsql SECURITY DEFINER;
+            
+            -- Create mock auth.role() function that returns 'service_role'
+            CREATE OR REPLACE FUNCTION auth.role() RETURNS text AS \$\$
+            BEGIN
+              RETURN 'service_role';
+            END;
+            \$\$ LANGUAGE plpgsql SECURITY DEFINER;
+            
+            -- Create service_role if it doesn't exist
+            DO \$\$
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+                CREATE ROLE service_role;
+              END IF;
+            END
+            \$\$;
+          "
+          
+          # Apply same setup to test database
+          psql -h localhost -U postgres -d daygen_test -c "
+            CREATE SCHEMA IF NOT EXISTS auth;
+            
+            CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS \$\$
+            BEGIN
+              RETURN '00000000-0000-0000-0000-000000000000'::uuid;
+            END;
+            \$\$ LANGUAGE plpgsql SECURITY DEFINER;
+            
+            CREATE OR REPLACE FUNCTION auth.role() RETURNS text AS \$\$
+            BEGIN
+              RETURN 'service_role';
+            END;
+            \$\$ LANGUAGE plpgsql SECURITY DEFINER;
+            
+            DO \$\$
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+                CREATE ROLE service_role;
+              END IF;
+            END
+            \$\$;
+          "
+
       - name: Generate Prisma client
         run: npx prisma generate
 
