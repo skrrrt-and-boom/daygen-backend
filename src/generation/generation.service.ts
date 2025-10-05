@@ -280,6 +280,29 @@ export class GenerationService {
       this.logger.log(
         `Generation completed successfully for user ${user.authUserId}`,
       );
+
+      // Return a consistent structure for the frontend
+      const clientPayload = providerResult.clientPayload as Record<
+        string,
+        unknown
+      >;
+      const firstAsset = providerResult.assets[0];
+
+      if (firstAsset) {
+        return {
+          ...clientPayload,
+          // Ensure frontend can find the image data
+          imageUrl:
+            clientPayload.dataUrl || firstAsset.dataUrl || firstAsset.remoteUrl,
+          url:
+            clientPayload.dataUrl || firstAsset.dataUrl || firstAsset.remoteUrl,
+          dataUrl: clientPayload.dataUrl || firstAsset.dataUrl,
+          remoteUrl: firstAsset.remoteUrl,
+          mimeType: clientPayload.contentType || 'image/jpeg',
+          contentType: clientPayload.contentType || 'image/jpeg',
+        };
+      }
+
       return providerResult.clientPayload;
     } catch (error) {
       this.logger.error(
