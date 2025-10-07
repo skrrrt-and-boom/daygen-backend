@@ -233,7 +233,7 @@ export class TaskProcessorController {
     }
 
     // Save to R2
-    const r2File = await this.r2FilesService.create(user.id, {
+    const r2File = await this.r2FilesService.create(user.authUserId, {
       fileName: `generated-${Date.now()}.png`,
       fileUrl,
       mimeType,
