@@ -71,8 +71,27 @@ export class TaskProcessorController {
       this.logger.log(`Successfully completed ${jobType} job ${jobId}`);
     } catch (error) {
       this.logger.error(`${String(jobType)} job ${jobId} failed:`, error);
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      
+      // Extract more detailed error information
+      let errorMessage = 'Unknown error';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        // If it's an HttpException, extract more details
+        if ('getResponse' in error && typeof error.getResponse === 'function') {
+          const response = error.getResponse();
+          if (typeof response === 'object' && response !== null) {
+            const responseObj = response as Record<string, unknown>;
+            if ('error' in responseObj) {
+              errorMessage = `${error.message}: ${String(responseObj.error)}`;
+            }
+            if ('details' in responseObj) {
+              errorMessage += ` (Details: ${String(responseObj.details)})`;
+            }
+          }
+        }
+      }
+      
       await this.cloudTasksService.failJob(jobId, errorMessage);
       throw error;
     }
@@ -88,9 +107,37 @@ export class TaskProcessorController {
     const provider = data.provider as string;
     const options = (data.options as Record<string, unknown>) || {};
 
+    // Validate required fields
+    if (!prompt?.trim()) {
+      throw new Error('Prompt is required');
+    }
+    if (!model?.trim()) {
+      throw new Error('Model is required');
+    }
+    if (!provider?.trim()) {
+      throw new Error('Provider is required');
+    }
+
+    // Map queue model names to generation service model names
+    const mappedModel = this.mapQueueModelToGenerationModel(model, provider);
+
+    this.logger.log(`Processing image generation with model: ${mappedModel}, provider: ${provider}`, {
+      jobId,
+      userId,
+      originalModel: model,
+      mappedModel,
+      provider,
+    });
+
+    // Look up user to get authUserId
+    const user = await this.cloudTasksService.getUserByAuthId(userId);
+    if (!user) {
+      throw new Error(`User not found: ${userId}`);
+    }
+
     // Check credits
     const hasCredits = await this.usageService.checkCredits(
-      { authUserId: userId } as SanitizedUser,
+      { authUserId: user.authUserId } as SanitizedUser,
       1,
     );
 
@@ -101,12 +148,44 @@ export class TaskProcessorController {
     // Update progress
     await this.cloudTasksService.updateJobProgress(jobId, 25);
 
-    // Generate image
-    const result = await this.generationService.generateForModel(
-      { authUserId: userId } as SanitizedUser,
-      model,
-      { prompt, model, provider, ...options } as any,
-    );
+    // Generate image with retry logic for transient failures
+    let result;
+    let lastError;
+    const maxRetries = 3;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        result = await this.generationService.generateForModel(
+          { authUserId: user.authUserId } as SanitizedUser,
+          mappedModel,
+          { prompt, model: mappedModel, provider, ...options } as any,
+        );
+        break; // Success, exit retry loop
+      } catch (error) {
+        lastError = error;
+        
+        // Check if this is a retryable error
+        const isRetryable = this.isRetryableError(error);
+        
+        if (attempt === maxRetries || !isRetryable) {
+          throw error; // Don't retry on last attempt or non-retryable errors
+        }
+        
+        this.logger.warn(`Generation attempt ${attempt} failed, retrying...`, {
+          jobId,
+          attempt,
+          error: error instanceof Error ? error.message : String(error),
+          isRetryable,
+        });
+        
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+      }
+    }
+
+    if (!result) {
+      throw lastError || new Error('Generation failed after all retry attempts');
+    }
 
     this.logger.log(
       `Generation result for job ${jobId}:`,
@@ -154,7 +233,7 @@ export class TaskProcessorController {
     }
 
     // Save to R2
-    const r2File = await this.r2FilesService.create(userId, {
+    const r2File = await this.r2FilesService.create(user.id, {
       fileName: `generated-${Date.now()}.png`,
       fileUrl,
       mimeType,
@@ -164,7 +243,7 @@ export class TaskProcessorController {
 
     // Record usage
     await this.usageService.recordGeneration(
-      { authUserId: userId } as SanitizedUser,
+      { authUserId: user.authUserId } as SanitizedUser,
       {
         provider,
         model,
@@ -402,5 +481,77 @@ export class TaskProcessorController {
     // Complete job with results
     const resultUrl = JSON.stringify({ results, count: results.length });
     await this.cloudTasksService.completeJob(jobId, resultUrl);
+  }
+
+  private mapQueueModelToGenerationModel(model: string, provider: string): string {
+    // Map common model variations to the expected generation service models
+    const modelMappings: Record<string, string> = {
+      // Gemini models
+      'gemini-2.5-flash-image': 'gemini-2.5-flash-image-preview',
+      
+      // Flux models
+      'flux-1.1': 'flux-pro-1.1',
+      'flux-pro-1.1': 'flux-pro-1.1',
+      'flux-pro-1.1-ultra': 'flux-pro-1.1-ultra',
+      'flux-kontext-pro': 'flux-kontext-pro',
+      'flux-kontext-max': 'flux-kontext-max',
+      'flux-pro': 'flux-pro',
+      'flux-dev': 'flux-dev',
+      
+      // Reve models
+      'reve-image': 'reve-image',
+      'reve-image-1.0': 'reve-image-1.0',
+      'reve-v1': 'reve-v1',
+      
+      // Recraft models
+      'recraft': 'recraft-v3',
+      'recraft-v2': 'recraft-v2',
+      'recraft-v3': 'recraft-v3',
+      
+      // Luma models
+      'luma-photon-1': 'luma-photon-1',
+      'luma-photon-flash-1': 'luma-photon-flash-1',
+      'luma-dream-shaper': 'luma-dream-shaper',
+      'luma-realistic-vision': 'luma-realistic-vision',
+      
+      // Other models
+      'ideogram': 'ideogram',
+      'qwen-image': 'qwen-image',
+      'runway-gen4': 'runway-gen4',
+      'runway-gen4-turbo': 'runway-gen4-turbo',
+      'chatgpt-image': 'chatgpt-image',
+      'seedream-3.0': 'seedream-3.0',
+    };
+
+    return modelMappings[model] || model;
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    if (error instanceof Error) {
+      const message = error.message.toLowerCase();
+      
+      // Check for retryable error patterns
+      const retryablePatterns = [
+        'timeout',
+        'network',
+        'connection',
+        'rate limit',
+        'too many requests',
+        'service unavailable',
+        'internal server error',
+        'bad gateway',
+        'gateway timeout',
+        'temporary',
+        'retry',
+        '429', // HTTP 429 Too Many Requests
+        '502', // HTTP 502 Bad Gateway
+        '503', // HTTP 503 Service Unavailable
+        '504', // HTTP 504 Gateway Timeout
+      ];
+      
+      return retryablePatterns.some(pattern => message.includes(pattern));
+    }
+    
+    return false;
   }
 }

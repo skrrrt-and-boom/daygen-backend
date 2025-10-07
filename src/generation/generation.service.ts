@@ -576,9 +576,34 @@ export class GenerationService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      this.logger.error(`Gemini API error ${response.status}: ${errorText}`);
+      this.logger.error(`Gemini API error ${response.status}: ${errorText}`, {
+        status: response.status,
+        statusText: response.statusText,
+        url: endpoint,
+        requestPayload: requestPayload,
+        errorResponse: errorText,
+      });
+      
+      // Try to parse error response for more details
+      let errorDetails = errorText;
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.error?.message) {
+          errorDetails = errorJson.error.message;
+        } else if (errorJson.message) {
+          errorDetails = errorJson.message;
+        }
+      } catch {
+        // Keep original error text if parsing fails
+      }
+      
       throw new HttpException(
-        { error: `Gemini API error: ${response.status}`, details: errorText },
+        { 
+          error: `Gemini API error: ${response.status}`, 
+          details: errorDetails,
+          status: response.status,
+          statusText: response.statusText,
+        },
         response.status,
       );
     }

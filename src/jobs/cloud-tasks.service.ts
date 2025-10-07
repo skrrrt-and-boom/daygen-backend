@@ -224,4 +224,15 @@ export class CloudTasksService {
       hasNextPage,
     };
   }
+
+  async getUserByAuthId(authUserId: string) {
+    return this.prisma.user.findUnique({
+      where: { authUserId },
+      select: {
+        id: true,
+        authUserId: true,
+        email: true,
+      },
+    });
+  }
 }
