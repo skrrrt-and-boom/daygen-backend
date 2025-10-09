@@ -355,7 +355,8 @@ export class JobProcessingService {
             generationDto,
           );
 
-          const { fileUrl, mimeType, r2FileId } = this.extractResultAsset(result);
+          const { fileUrl, mimeType, r2FileId } =
+            this.extractResultAsset(result);
 
           let r2File = r2FileId
             ? await this.r2FilesService.findById(userId, r2FileId)
@@ -420,13 +421,11 @@ export class JobProcessingService {
     let mimeType: string | undefined;
     let r2FileId: string | undefined;
 
-    const applyCandidate = (
-      candidate?: {
-        url?: string;
-        mime?: string;
-        r2Id?: string;
-      },
-    ) => {
+    const applyCandidate = (candidate?: {
+      url?: string;
+      mime?: string;
+      r2Id?: string;
+    }) => {
       if (!candidate) {
         return;
       }
@@ -479,7 +478,7 @@ export class JobProcessingService {
       Array.isArray(resultObj.assets) &&
       resultObj.assets.length > 0
     ) {
-      const firstAsset = resultObj.assets[0];
+      const firstAsset = resultObj.assets[0] as unknown;
       if (firstAsset && typeof firstAsset === 'object') {
         extractFromAsset(firstAsset as Record<string, unknown>);
       }
@@ -490,9 +489,7 @@ export class JobProcessingService {
         pickKey(resultObj, 'r2FileUrl') ??
         pickKey(resultObj, 'remoteUrl') ??
         pickKey(resultObj, 'dataUrl'),
-      mime:
-        pickKey(resultObj, 'mimeType') ??
-        pickKey(resultObj, 'contentType'),
+      mime: pickKey(resultObj, 'mimeType') ?? pickKey(resultObj, 'contentType'),
       r2Id: pickKey(resultObj, 'r2FileId'),
     });
 

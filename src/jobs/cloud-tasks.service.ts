@@ -47,11 +47,7 @@ export class CloudTasksService {
       'https://daygen-backend-365299591811.europe-central2.run.app';
   }
 
-  private async createJob(
-    userId: string,
-    jobType: JobType,
-    data: unknown,
-  ) {
+  private async createJob(userId: string, jobType: JobType, data: unknown) {
     const serializedData = this.serializeJobData(data);
 
     const job = await this.prisma.job.create({

@@ -96,13 +96,7 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    return this.enqueueImageJob(
-      user,
-      dto,
-      'flux',
-      'flux-pro-1.1',
-      FLUX_MODELS,
-    );
+    return this.enqueueImageJob(user, dto, 'flux', 'flux-pro-1.1', FLUX_MODELS);
   }
 
   @Post('chatgpt')
@@ -110,12 +104,7 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    return this.enqueueImageJob(
-      user,
-      dto,
-      'openai',
-      'chatgpt-image',
-    );
+    return this.enqueueImageJob(user, dto, 'openai', 'chatgpt-image');
   }
 
   @Post('ideogram')

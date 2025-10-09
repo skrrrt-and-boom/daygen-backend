@@ -24,8 +24,7 @@ describe('AppController (e2e)', () => {
       .get('/health')
       .expect(200)
       .expect((res) => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        expect(res.body.status).toBe('ok');
+        expect(res.body).toHaveProperty('status', 'ok');
       });
   });
 
@@ -42,8 +41,10 @@ describe('AppController (e2e)', () => {
       .expect((res) => {
         expect(res.body).toHaveProperty('accessToken');
         expect(res.body).toHaveProperty('user');
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        expect(res.body.user.email).toBe(`test${timestamp}@example.com`);
+        expect(res.body).toHaveProperty(
+          'user.email',
+          `test${timestamp}@example.com`,
+        );
       });
   });
 
@@ -69,8 +70,7 @@ describe('AppController (e2e)', () => {
       .expect((res) => {
         expect(res.body).toHaveProperty('accessToken');
         expect(res.body).toHaveProperty('user');
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        expect(res.body.user.email).toBe(email);
+        expect(res.body).toHaveProperty('user.email', email);
       });
   });
 

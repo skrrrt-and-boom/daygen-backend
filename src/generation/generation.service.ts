@@ -598,10 +598,17 @@ export class GenerationService {
       // Try to parse error response for more details
       let errorDetails = errorText;
       try {
-        const errorJson = JSON.parse(errorText);
-        if (errorJson.error?.message) {
-          errorDetails = errorJson.error.message;
-        } else if (errorJson.message) {
+        const errorJson = JSON.parse(errorText) as Record<string, unknown>;
+        if (
+          errorJson.error &&
+          typeof errorJson.error === 'object' &&
+          errorJson.error !== null
+        ) {
+          const errorObj = errorJson.error as Record<string, unknown>;
+          if (typeof errorObj.message === 'string') {
+            errorDetails = errorObj.message;
+          }
+        } else if (typeof errorJson.message === 'string') {
           errorDetails = errorJson.message;
         }
       } catch {
@@ -706,7 +713,9 @@ export class GenerationService {
           rawUrl: fileUri ?? undefined,
           fileId:
             fileId ??
-            (fileUri ? this.normalizeGeminiFilePath(fileUri) ?? undefined : undefined),
+            (fileUri
+              ? (this.normalizeGeminiFilePath(fileUri) ?? undefined)
+              : undefined),
           mimeType: fileMime,
         });
       }
@@ -725,7 +734,7 @@ export class GenerationService {
           url: mediaUri ?? undefined,
           rawUrl: mediaUri ?? undefined,
           fileId: mediaUri
-            ? this.normalizeGeminiFilePath(mediaUri) ?? undefined
+            ? (this.normalizeGeminiFilePath(mediaUri) ?? undefined)
             : undefined,
           mimeType: mediaMime,
         });
@@ -781,7 +790,9 @@ export class GenerationService {
         rawUrl: fileUri ?? undefined,
         fileId:
           fileId ??
-          (fileUri ? this.normalizeGeminiFilePath(fileUri) ?? undefined : undefined),
+          (fileUri
+            ? (this.normalizeGeminiFilePath(fileUri) ?? undefined)
+            : undefined),
         mimeType: fileMime,
       });
     }
@@ -812,7 +823,9 @@ export class GenerationService {
         rawUrl: imageUri ?? undefined,
         fileId:
           imageFileId ??
-          (imageUri ? this.normalizeGeminiFilePath(imageUri) ?? undefined : undefined),
+          (imageUri
+            ? (this.normalizeGeminiFilePath(imageUri) ?? undefined)
+            : undefined),
         mimeType: imageMime,
       });
     }
@@ -833,7 +846,8 @@ export class GenerationService {
           base64 = asset.base64;
           mimeType = asset.mimeType ?? mimeType;
           dataUrl = asset.dataUrl;
-          remoteUrl = asset.remoteUrl ?? remoteUrl ?? candidate.url ?? undefined;
+          remoteUrl =
+            asset.remoteUrl ?? remoteUrl ?? candidate.url ?? undefined;
           break;
         }
       }
@@ -2174,9 +2188,8 @@ export class GenerationService {
       );
     }
 
-    const contentTypeHeader = response.headers
-      .get('content-type')
-      ?.toLowerCase() ?? '';
+    const contentTypeHeader =
+      response.headers.get('content-type')?.toLowerCase() ?? '';
 
     if (contentTypeHeader.includes('json')) {
       const text = await response.text();
@@ -2928,10 +2941,10 @@ export class GenerationService {
     const fileReference =
       candidate.fileId ??
       (candidate.url
-        ? this.normalizeGeminiFilePath(candidate.url) ?? undefined
+        ? (this.normalizeGeminiFilePath(candidate.url) ?? undefined)
         : undefined) ??
       (candidate.rawUrl
-        ? this.normalizeGeminiFilePath(candidate.rawUrl) ?? undefined
+        ? (this.normalizeGeminiFilePath(candidate.rawUrl) ?? undefined)
         : undefined);
 
     if (fileReference) {
@@ -2940,10 +2953,7 @@ export class GenerationService {
         apiKey,
       );
       if (downloaded) {
-        if (
-          candidate.mimeType &&
-          downloaded.mimeType !== candidate.mimeType
-        ) {
+        if (candidate.mimeType && downloaded.mimeType !== candidate.mimeType) {
           downloaded.mimeType = candidate.mimeType;
           downloaded.dataUrl = `data:${candidate.mimeType};base64,${downloaded.base64}`;
         }
@@ -2983,15 +2993,9 @@ export class GenerationService {
         resolvedUrl = this.convertGsUriToHttps(url) ?? url;
       }
 
-      const directAsset = await this.fetchGeminiBinary(
-        resolvedUrl,
-        apiKey,
-      );
+      const directAsset = await this.fetchGeminiBinary(resolvedUrl, apiKey);
       if (directAsset) {
-        if (
-          candidate.mimeType &&
-          directAsset.mimeType !== candidate.mimeType
-        ) {
+        if (candidate.mimeType && directAsset.mimeType !== candidate.mimeType) {
           directAsset.mimeType = candidate.mimeType;
           directAsset.dataUrl = `data:${candidate.mimeType};base64,${directAsset.base64}`;
         }
@@ -3326,8 +3330,7 @@ export class GenerationService {
 
     const effectiveUrl = this.maybeAttachGeminiApiKey(url, apiKey);
     const visitSet = visited ?? new Set<string>();
-    const visitKey =
-      this.normalizeGeminiFilePath(effectiveUrl) ?? effectiveUrl;
+    const visitKey = this.normalizeGeminiFilePath(effectiveUrl) ?? effectiveUrl;
     if (visitSet.has(visitKey)) {
       return null;
     }
@@ -3436,8 +3439,7 @@ export class GenerationService {
 
       const arrayBuffer = await response.arrayBuffer();
       const base64 = Buffer.from(arrayBuffer).toString('base64');
-      const mimeType =
-        rawContentType.split(';')[0]?.trim() || 'image/png';
+      const mimeType = rawContentType.split(';')[0]?.trim() || 'image/png';
 
       return {
         dataUrl: `data:${mimeType};base64,${base64}`,
