@@ -60,15 +60,14 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
+Procent of job done in generation
 User Management
+Payments (stripe)
 User profiles and settings
-Credit system integration
 Usage tracking and limits
-Image Generation
-Multiple AI model support
 Batch generation
 Image editing tools
-R2 File Management
+R2 File Management (for asets like showcases)
 File organization (folders/tags)
 Bulk operations
 File sharing and permissions

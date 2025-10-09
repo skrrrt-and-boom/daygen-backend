@@ -11,6 +11,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
 import { ProviderGenerateDto } from './dto/base-generate.dto';
+import { GenerationService } from './generation.service';
 
 const requestValidationPipe = new ValidationPipe({
   whitelist: true,
@@ -42,6 +43,7 @@ const LUMA_MODELS = new Set([
 export class ImageGenerationController {
   constructor(
     private readonly cloudTasksService: CloudTasksService,
+    private readonly generationService: GenerationService,
   ) {}
 
   @Post('gemini')
@@ -49,6 +51,38 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
+    if (!this.shouldQueueGemini(dto)) {
+      const requestedModel = this.resolveModel(
+        dto.model,
+        'gemini-2.5-flash-image-preview',
+      );
+      const normalizedModel =
+        requestedModel === 'gemini-2.5-flash-image'
+          ? 'gemini-2.5-flash-image-preview'
+          : requestedModel;
+
+      if (normalizedModel !== 'gemini-2.5-flash-image-preview') {
+        throw new BadRequestException(
+          `Unsupported Gemini model: ${requestedModel}`,
+        );
+      }
+
+      const providerOptions = { ...(dto.providerOptions ?? {}) };
+      delete providerOptions.useQueue;
+      delete providerOptions.queue;
+      delete providerOptions.forceQueue;
+
+      return this.generationService.generateForModel(
+        user,
+        'gemini-2.5-flash-image-preview',
+        {
+          ...dto,
+          model: normalizedModel,
+          providerOptions,
+        },
+      );
+    }
+
     return this.enqueueImageJob(
       user,
       dto,
@@ -190,5 +224,22 @@ export class ImageGenerationController {
       provider,
       options: dto,
     });
+  }
+
+  private shouldQueueGemini(dto: ProviderGenerateDto): boolean {
+    const rawOptions = dto.providerOptions ?? {};
+    const queueFlags = [
+      rawOptions.useQueue,
+      rawOptions.queue,
+      rawOptions.forceQueue,
+    ];
+
+    for (const flag of queueFlags) {
+      if (typeof flag === 'boolean') {
+        return flag;
+      }
+    }
+
+    return false;
   }
 }
