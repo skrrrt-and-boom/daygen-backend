@@ -6,7 +6,6 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
-import { GenerationService } from './generation.service';
 import { CloudTasksService } from '../jobs/cloud-tasks.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -42,7 +41,6 @@ const LUMA_MODELS = new Set([
 @Controller('image')
 export class ImageGenerationController {
   constructor(
-    private readonly generationService: GenerationService,
     private readonly cloudTasksService: CloudTasksService,
   ) {}
 
@@ -51,18 +49,12 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(
-      dto.model,
+    return this.enqueueImageJob(
+      user,
+      dto,
+      'gemini',
       'gemini-2.5-flash-image-preview',
     );
-
-    // Create job instead of direct generation
-    return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
-      prompt: dto.prompt,
-      model,
-      provider: 'gemini',
-      options: dto,
-    });
   }
 
   @Post('flux')
@@ -70,14 +62,13 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'flux-pro-1.1', FLUX_MODELS);
-
-    return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
-      prompt: dto.prompt,
-      model,
-      provider: 'flux',
-      options: dto,
-    });
+    return this.enqueueImageJob(
+      user,
+      dto,
+      'flux',
+      'flux-pro-1.1',
+      FLUX_MODELS,
+    );
   }
 
   @Post('chatgpt')
@@ -85,8 +76,12 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'chatgpt-image');
-    return this.generationService.generateForModel(user, model, dto);
+    return this.enqueueImageJob(
+      user,
+      dto,
+      'openai',
+      'chatgpt-image',
+    );
   }
 
   @Post('ideogram')
@@ -94,14 +89,7 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'ideogram');
-
-    return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
-      prompt: dto.prompt,
-      model,
-      provider: 'ideogram',
-      options: dto,
-    });
+    return this.enqueueImageJob(user, dto, 'ideogram', 'ideogram');
   }
 
   @Post('qwen')
@@ -109,8 +97,7 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'qwen-image');
-    return this.generationService.generateForModel(user, model, dto);
+    return this.enqueueImageJob(user, dto, 'qwen', 'qwen-image');
   }
 
   @Post('runway')
@@ -118,8 +105,13 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'runway-gen4', RUNWAY_MODELS);
-    return this.generationService.generateForModel(user, model, dto);
+    return this.enqueueImageJob(
+      user,
+      dto,
+      'runway',
+      'runway-gen4',
+      RUNWAY_MODELS,
+    );
   }
 
   @Post('seedream')
@@ -127,8 +119,7 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'seedream-3.0');
-    return this.generationService.generateForModel(user, model, dto);
+    return this.enqueueImageJob(user, dto, 'seedream', 'seedream-3.0');
   }
 
   @Post('reve')
@@ -136,8 +127,7 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'reve-image');
-    return this.generationService.generateForModel(user, model, dto);
+    return this.enqueueImageJob(user, dto, 'reve', 'reve-image');
   }
 
   @Post('recraft')
@@ -145,8 +135,13 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'recraft-v3', RECRAFT_MODELS);
-    return this.generationService.generateForModel(user, model, dto);
+    return this.enqueueImageJob(
+      user,
+      dto,
+      'recraft',
+      'recraft-v3',
+      RECRAFT_MODELS,
+    );
   }
 
   @Post('luma')
@@ -154,8 +149,13 @@ export class ImageGenerationController {
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    const model = this.resolveModel(dto.model, 'luma-photon-1', LUMA_MODELS);
-    return this.generationService.generateForModel(user, model, dto);
+    return this.enqueueImageJob(
+      user,
+      dto,
+      'luma',
+      'luma-photon-1',
+      LUMA_MODELS,
+    );
   }
 
   private resolveModel(
@@ -173,5 +173,22 @@ export class ImageGenerationController {
     }
 
     return candidate;
+  }
+
+  private enqueueImageJob(
+    user: SanitizedUser,
+    dto: ProviderGenerateDto,
+    provider: string,
+    fallbackModel: string,
+    allowedModels?: Set<string>,
+  ) {
+    const model = this.resolveModel(dto.model, fallbackModel, allowedModels);
+
+    return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
+      prompt: dto.prompt,
+      model,
+      provider,
+      options: dto,
+    });
   }
 }
