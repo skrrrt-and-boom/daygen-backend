@@ -23,6 +23,8 @@ interface GeneratedAsset {
   mimeType: string;
   base64: string;
   remoteUrl?: string;
+  r2FileId?: string;
+  r2FileUrl?: string;
 }
 
 interface ProviderResult {
@@ -1934,8 +1936,10 @@ export class GenerationService {
           );
 
           // Create R2File record
-          const fileName = `image-${Date.now()}.${mimeType.split('/')[1] || 'png'}`;
-          await this.r2FilesService.create(user.authUserId, {
+          const fileName = `image-${Date.now()}.${
+            mimeType.split('/')[1] || 'png'
+          }`;
+          const r2File = await this.r2FilesService.create(user.authUserId, {
             fileName,
             fileUrl: publicUrl,
             fileSize: Math.round((base64Data.length * 3) / 4),
@@ -1946,11 +1950,14 @@ export class GenerationService {
 
           // Update the asset URL to use R2 URL
           asset.dataUrl = publicUrl;
+          asset.remoteUrl = publicUrl;
+          asset.r2FileId = r2File.id;
+          asset.r2FileUrl = r2File.fileUrl;
 
-          // Update clientPayload with R2 URL for consistency
-          this.updateClientPayloadWithR2Url(
+          // Update clientPayload with R2 metadata for consistency
+          this.updateClientPayloadWithR2Info(
             providerResult.clientPayload,
-            publicUrl,
+            r2File,
           );
         }
       } catch (error) {
@@ -1960,15 +1967,16 @@ export class GenerationService {
     }
   }
 
-  private updateClientPayloadWithR2Url(
+  private updateClientPayloadWithR2Info(
     clientPayload: unknown,
-    r2Url: string,
+    r2File: { id: string; fileUrl: string },
   ): void {
     if (!clientPayload || typeof clientPayload !== 'object') {
       return;
     }
 
     const payload = clientPayload as Record<string, unknown>;
+    const r2Url = r2File.fileUrl;
 
     // Update common URL fields
     if (payload.dataUrl) {
@@ -1988,6 +1996,10 @@ export class GenerationService {
     if (Array.isArray(payload.images)) {
       payload.images = [r2Url];
     }
+
+    // Attach metadata so downstream consumers can avoid duplicate persistence
+    payload.r2FileId = r2File.id;
+    payload.r2FileUrl = r2Url;
   }
 
   private normalizeInlineImage(

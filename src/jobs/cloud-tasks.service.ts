@@ -240,15 +240,35 @@ export class CloudTasksService {
     this.logger.log(`Updated job ${jobId} progress to ${progress}%`);
   }
 
-  async completeJob(jobId: string, resultUrl: string) {
+  async completeJob(
+    jobId: string,
+    resultUrl: string,
+    extraMetadata?: Record<string, unknown>,
+  ) {
+    const updateData: Prisma.JobUpdateInput = {
+      status: JobStatus.COMPLETED,
+      progress: 100,
+      resultUrl,
+      completedAt: new Date(),
+    };
+
+    if (extraMetadata && Object.keys(extraMetadata).length > 0) {
+      const existing = await this.prisma.job.findUnique({
+        where: { id: jobId },
+        select: { metadata: true },
+      });
+
+      const mergedMetadata = {
+        ...this.normalizeJobMetadata(existing?.metadata),
+        ...extraMetadata,
+      };
+
+      updateData.metadata = mergedMetadata as Prisma.InputJsonValue;
+    }
+
     await this.prisma.job.update({
       where: { id: jobId },
-      data: {
-        status: JobStatus.COMPLETED,
-        progress: 100,
-        resultUrl,
-        completedAt: new Date(),
-      },
+      data: updateData,
     });
 
     this.logger.log(`Completed job ${jobId} with result: ${resultUrl}`);
@@ -311,5 +331,15 @@ export class CloudTasksService {
         email: true,
       },
     });
+  }
+
+  private normalizeJobMetadata(
+    metadata: Prisma.JsonValue | null | undefined,
+  ): Record<string, unknown> {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      return {};
+    }
+
+    return metadata as Record<string, unknown>;
   }
 }

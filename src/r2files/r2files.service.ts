@@ -68,6 +68,32 @@ export class R2FilesService {
   }
 
   async create(ownerAuthId: string, dto: CreateR2FileDto) {
+    if (dto.fileUrl?.trim()) {
+      const existing = await this.prisma.r2File.findFirst({
+        where: {
+          ownerAuthId,
+          fileUrl: dto.fileUrl,
+        },
+      });
+
+      if (existing) {
+        const updated = await this.prisma.r2File.update({
+          where: { id: existing.id },
+          data: {
+            fileName: dto.fileName,
+            fileSize: dto.fileSize,
+            mimeType: dto.mimeType,
+            prompt: dto.prompt,
+            model: dto.model,
+            deletedAt: null,
+            updatedAt: new Date(),
+          },
+        });
+
+        return this.toResponse(updated);
+      }
+    }
+
     const file = await this.prisma.r2File.create({
       data: {
         id: randomUUID(),
@@ -83,6 +109,14 @@ export class R2FilesService {
     });
 
     return this.toResponse(file);
+  }
+
+  async findById(ownerAuthId: string, id: string) {
+    const file = await this.prisma.r2File.findFirst({
+      where: { id, ownerAuthId, deletedAt: null },
+    });
+
+    return file ? this.toResponse(file) : null;
   }
 
   async remove(ownerAuthId: string, id: string) {
