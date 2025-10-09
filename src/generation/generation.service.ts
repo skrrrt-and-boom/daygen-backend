@@ -125,6 +125,8 @@ const GEMINI_API_KEY_CANDIDATES = [
   'VITE_GEMINI_API_KEY',
 ] as const;
 
+const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+
 const RUNWAY_API_VERSION = '2024-11-06';
 const RUNWAY_POLL_INTERVAL_MS = 6000;
 const RUNWAY_MAX_ATTEMPTS = 120;
@@ -639,10 +641,18 @@ export class GenerationService {
         ? this.normalizeGeminiUri(candidate.url)
         : undefined;
       const resolvedUrl = normalizedUrl ?? candidate.url;
+      let resolvedFileId = candidate.fileId;
+      if (!resolvedFileId && resolvedUrl) {
+        resolvedFileId = this.normalizeGeminiFilePath(resolvedUrl) ?? undefined;
+      }
+      if (!resolvedFileId && candidate.rawUrl) {
+        resolvedFileId =
+          this.normalizeGeminiFilePath(candidate.rawUrl) ?? undefined;
+      }
       if (!resolvedUrl && !candidate.fileId) {
         return;
       }
-      const key = `${resolvedUrl ?? ''}|${candidate.fileId ?? ''}`;
+      const key = `${resolvedUrl ?? ''}|${resolvedFileId ?? ''}`;
       if (remoteCandidateKeys.has(key)) {
         return;
       }
@@ -650,7 +660,7 @@ export class GenerationService {
       const entry: GeminiRemoteCandidate = {
         url: resolvedUrl,
         rawUrl: candidate.rawUrl ?? candidate.url ?? resolvedUrl,
-        fileId: candidate.fileId,
+        fileId: resolvedFileId,
         mimeType: candidate.mimeType,
       };
       remoteCandidates.push(entry);
@@ -694,7 +704,9 @@ export class GenerationService {
         pushRemoteCandidate({
           url: fileUri ?? undefined,
           rawUrl: fileUri ?? undefined,
-          fileId,
+          fileId:
+            fileId ??
+            (fileUri ? this.normalizeGeminiFilePath(fileUri) ?? undefined : undefined),
           mimeType: fileMime,
         });
       }
@@ -712,6 +724,9 @@ export class GenerationService {
         pushRemoteCandidate({
           url: mediaUri ?? undefined,
           rawUrl: mediaUri ?? undefined,
+          fileId: mediaUri
+            ? this.normalizeGeminiFilePath(mediaUri) ?? undefined
+            : undefined,
           mimeType: mediaMime,
         });
       }
@@ -729,6 +744,7 @@ export class GenerationService {
         pushRemoteCandidate({
           url: genericUrl,
           rawUrl: genericUrl,
+          fileId: this.normalizeGeminiFilePath(genericUrl) ?? undefined,
           mimeType: partMime,
         });
       }
@@ -763,7 +779,9 @@ export class GenerationService {
       pushRemoteCandidate({
         url: fileUri ?? undefined,
         rawUrl: fileUri ?? undefined,
-        fileId,
+        fileId:
+          fileId ??
+          (fileUri ? this.normalizeGeminiFilePath(fileUri) ?? undefined : undefined),
         mimeType: fileMime,
       });
     }
@@ -792,14 +810,20 @@ export class GenerationService {
       pushRemoteCandidate({
         url: imageUri ?? undefined,
         rawUrl: imageUri ?? undefined,
-        fileId: imageFileId,
+        fileId:
+          imageFileId ??
+          (imageUri ? this.normalizeGeminiFilePath(imageUri) ?? undefined : undefined),
         mimeType: imageMime,
       });
     }
 
     const fallbackCandidates = this.collectImageCandidates(responsePayload);
     for (const candidate of fallbackCandidates) {
-      pushRemoteCandidate({ url: candidate, rawUrl: candidate });
+      pushRemoteCandidate({
+        url: candidate,
+        rawUrl: candidate,
+        fileId: this.normalizeGeminiFilePath(candidate) ?? undefined,
+      });
     }
 
     if (!base64) {
@@ -2150,10 +2174,64 @@ export class GenerationService {
       );
     }
 
+    const contentTypeHeader = response.headers
+      .get('content-type')
+      ?.toLowerCase() ?? '';
+
+    if (contentTypeHeader.includes('json')) {
+      const text = await response.text();
+      let payload: unknown = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        payload = null;
+      }
+
+      const payloadRecord = optionalJsonRecord(payload);
+      if (payloadRecord) {
+        const inlineRecord =
+          optionalJsonRecord(payloadRecord['inlineData']) ??
+          optionalJsonRecord(payloadRecord['inline_data']);
+        const base64 =
+          asString(inlineRecord?.['data']) ??
+          asString(payloadRecord['data']) ??
+          asString(payloadRecord['base64']);
+        const mimeType =
+          asString(inlineRecord?.['mimeType']) ??
+          asString(payloadRecord['mimeType']) ??
+          'image/png';
+
+        if (base64) {
+          return {
+            dataUrl: `data:${mimeType};base64,${base64}`,
+            mimeType,
+            base64,
+          };
+        }
+
+        for (const candidate of this.collectImageCandidates(payloadRecord)) {
+          if (candidate.startsWith('data:')) {
+            return this.assetFromDataUrl(candidate);
+          }
+        }
+      }
+
+      throw new HttpException(
+        {
+          error: 'Failed to extract image data from response',
+          details: payload ?? text.slice(0, 2000),
+        },
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const base64 = buffer.toString('base64');
-    const mimeType = response.headers.get('content-type') || 'image/png';
+    const mimeType =
+      contentTypeHeader.split(';')[0]?.trim() ||
+      response.headers.get('content-type') ||
+      'image/png';
     return {
       dataUrl: `data:${mimeType};base64,${base64}`,
       mimeType,
@@ -2847,54 +2925,101 @@ export class GenerationService {
       };
     }
 
-    if (candidate.url && candidate.url.startsWith('http')) {
-      const urlWithKey =
-        apiKey && candidate.url.includes('google')
-          ? this.appendApiKeyQuery(candidate.url, apiKey)
-          : candidate.url;
-      try {
-        const ensured = await this.ensureDataUrl(
-          urlWithKey,
-          this.getGeminiDownloadHeaders(urlWithKey, apiKey),
-        );
-        const asset = this.assetFromDataUrl(ensured);
-        if (candidate.mimeType && asset.mimeType !== candidate.mimeType) {
-          asset.mimeType = candidate.mimeType;
-          asset.dataUrl = `data:${candidate.mimeType};base64,${asset.base64}`;
-        }
-        return {
-          ...asset,
-          remoteUrl: urlWithKey,
-        };
-      } catch (error) {
-        this.logger.debug('Failed to download Gemini asset via URL', {
-          url: candidate.url,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    const fileReference =
+      candidate.fileId ??
+      (candidate.url
+        ? this.normalizeGeminiFilePath(candidate.url) ?? undefined
+        : undefined) ??
+      (candidate.rawUrl
+        ? this.normalizeGeminiFilePath(candidate.rawUrl) ?? undefined
+        : undefined);
 
-    if (candidate.fileId) {
+    if (fileReference) {
       const downloaded = await this.downloadGeminiFileById(
-        candidate.fileId,
+        fileReference,
         apiKey,
       );
       if (downloaded) {
-        const asset = this.assetFromDataUrl(downloaded.dataUrl);
-        const effectiveMime =
-          candidate.mimeType ??
-          downloaded.mimeType ??
-          asset.mimeType ??
-          'image/png';
-        if (asset.mimeType !== effectiveMime) {
-          asset.mimeType = effectiveMime;
-          asset.dataUrl = `data:${effectiveMime};base64,${asset.base64}`;
+        if (
+          candidate.mimeType &&
+          downloaded.mimeType !== candidate.mimeType
+        ) {
+          downloaded.mimeType = candidate.mimeType;
+          downloaded.dataUrl = `data:${candidate.mimeType};base64,${downloaded.base64}`;
         }
+        if (!downloaded.remoteUrl) {
+          downloaded.remoteUrl = candidate.url ?? candidate.rawUrl;
+        }
+        return downloaded;
+      }
+    }
+
+    const urlsToTry = new Set<string>();
+    const registerUrl = (value?: string) => {
+      if (!value) {
+        return;
+      }
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return;
+      }
+      urlsToTry.add(trimmed);
+    };
+
+    registerUrl(candidate.url);
+    registerUrl(candidate.rawUrl);
+
+    for (const url of urlsToTry) {
+      if (url.startsWith('data:')) {
+        const asset = this.assetFromDataUrl(url);
         return {
           ...asset,
-          remoteUrl:
-            downloaded.remoteUrl ?? candidate.url ?? candidate.rawUrl,
+          remoteUrl: candidate.rawUrl ?? candidate.url ?? url,
         };
+      }
+
+      let resolvedUrl = url;
+      if (url.startsWith('gs://')) {
+        resolvedUrl = this.convertGsUriToHttps(url) ?? url;
+      }
+
+      const directAsset = await this.fetchGeminiBinary(
+        resolvedUrl,
+        apiKey,
+      );
+      if (directAsset) {
+        if (
+          candidate.mimeType &&
+          directAsset.mimeType !== candidate.mimeType
+        ) {
+          directAsset.mimeType = candidate.mimeType;
+          directAsset.dataUrl = `data:${candidate.mimeType};base64,${directAsset.base64}`;
+        }
+        if (!directAsset.remoteUrl) {
+          directAsset.remoteUrl = resolvedUrl;
+        }
+        return directAsset;
+      }
+
+      const derivedReference = this.normalizeGeminiFilePath(resolvedUrl);
+      if (derivedReference) {
+        const downloaded = await this.downloadGeminiFileById(
+          derivedReference,
+          apiKey,
+        );
+        if (downloaded) {
+          if (
+            candidate.mimeType &&
+            downloaded.mimeType !== candidate.mimeType
+          ) {
+            downloaded.mimeType = candidate.mimeType;
+            downloaded.dataUrl = `data:${candidate.mimeType};base64,${downloaded.base64}`;
+          }
+          if (!downloaded.remoteUrl) {
+            downloaded.remoteUrl = resolvedUrl;
+          }
+          return downloaded;
+        }
       }
     }
 
@@ -2904,110 +3029,229 @@ export class GenerationService {
   private async downloadGeminiFileById(
     fileId: string,
     apiKey: string,
-  ): Promise<{ dataUrl: string; mimeType?: string; base64: string; remoteUrl?: string } | null> {
-    const filePath = this.buildGeminiFilePath(fileId);
-    if (!filePath) {
-      return null;
+    visited = new Set<string>(),
+  ): Promise<GeneratedAsset | null> {
+    const normalizedPath = this.normalizeGeminiFilePath(fileId);
+    if (!normalizedPath) {
+      const directUrl = this.maybeAttachGeminiApiKey(fileId, apiKey);
+      return this.fetchGeminiBinary(directUrl, apiKey, visited);
     }
 
-    const baseEndpoint = `https://generativelanguage.googleapis.com/v1beta/${filePath}`;
-    const directDownloadEndpoint = this.appendApiKeyQuery(
+    if (visited.has(normalizedPath)) {
+      return null;
+    }
+    visited.add(normalizedPath);
+
+    const baseEndpoint = `${GEMINI_API_BASE_URL}/${normalizedPath}`;
+
+    const attemptDownload = async (url: string) => {
+      if (visited.has(url)) {
+        return null;
+      }
+      visited.add(url);
+      const asset = await this.fetchGeminiBinary(url, apiKey, visited);
+      return asset;
+    };
+
+    const altMediaUrl = this.maybeAttachGeminiApiKey(
+      `${baseEndpoint}?alt=media`,
+      apiKey,
+    );
+    const altAsset = await attemptDownload(altMediaUrl);
+    if (altAsset) {
+      if (!altAsset.remoteUrl) {
+        altAsset.remoteUrl = altMediaUrl;
+      }
+      return altAsset;
+    }
+
+    const downloadUrl = this.maybeAttachGeminiApiKey(
       `${baseEndpoint}:download`,
       apiKey,
     );
-
-    try {
-      const directDownload = await this.downloadAsDataUrl(
-        directDownloadEndpoint,
-        this.getGeminiDownloadHeaders(directDownloadEndpoint, apiKey),
-      );
-      return {
-        ...directDownload,
-        remoteUrl: directDownloadEndpoint,
-      };
-    } catch (error) {
-      this.logger.debug('Gemini direct download failed, attempting metadata', {
-        fileId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    const downloadAsset = await attemptDownload(downloadUrl);
+    if (downloadAsset) {
+      if (!downloadAsset.remoteUrl) {
+        downloadAsset.remoteUrl = downloadUrl;
+      }
+      return downloadAsset;
     }
 
-    try {
-      const metadataEndpoint = this.appendApiKeyQuery(baseEndpoint, apiKey);
-      const metadataResponse = await fetch(metadataEndpoint, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.getGeminiDownloadHeaders(metadataEndpoint, apiKey) ?? {}),
-        },
-      });
-
-      if (!metadataResponse.ok) {
-        const body = await metadataResponse.text().catch(() => '');
-        this.logger.debug('Gemini metadata request failed', {
-          fileId,
-          status: metadataResponse.status,
-          body,
+    const metadataUrl = this.maybeAttachGeminiApiKey(baseEndpoint, apiKey);
+    if (!visited.has(metadataUrl)) {
+      visited.add(metadataUrl);
+      try {
+        const headers =
+          this.getGeminiDownloadHeaders(metadataUrl, apiKey) ?? {};
+        const metadataResponse = await fetch(metadataUrl, {
+          method: 'GET',
+          headers: { accept: 'application/json', ...headers },
         });
-        return null;
+
+        if (metadataResponse.ok) {
+          const text = await metadataResponse.text();
+          let metadataPayload: unknown = null;
+          try {
+            metadataPayload = text ? JSON.parse(text) : null;
+          } catch {
+            metadataPayload = null;
+          }
+
+          const metadataRecord = optionalJsonRecord(metadataPayload);
+          if (metadataRecord) {
+            const inlineRecord =
+              optionalJsonRecord(metadataRecord['inlineData']) ??
+              optionalJsonRecord(metadataRecord['inline_data']);
+            const inlineBase64 =
+              asString(inlineRecord?.['data']) ??
+              asString(metadataRecord['data']);
+            const inlineMime =
+              asString(inlineRecord?.['mimeType']) ??
+              asString(metadataRecord['mimeType']) ??
+              'image/png';
+
+            if (inlineBase64) {
+              return {
+                dataUrl: `data:${inlineMime};base64,${inlineBase64}`,
+                mimeType: inlineMime,
+                base64: inlineBase64,
+                remoteUrl: metadataUrl,
+              };
+            }
+
+            const candidateStrings = new Set<string>();
+            const pushCandidate = (value?: string) => {
+              if (value && value.trim()) {
+                candidateStrings.add(value.trim());
+              }
+            };
+
+            pushCandidate(asString(metadataRecord['downloadUri']));
+            pushCandidate(asString(metadataRecord['uri']));
+            pushCandidate(asString(metadataRecord['fileUri']));
+            pushCandidate(asString(metadataRecord['signedUri']));
+            pushCandidate(asString(metadataRecord['signedUrl']));
+            pushCandidate(asString(metadataRecord['gcsUri']));
+
+            const generationOutput = optionalJsonRecord(
+              metadataRecord['generationOutput'],
+            );
+            if (generationOutput) {
+              for (const imageEntry of asArray(
+                generationOutput['images'] ??
+                  generationOutput['generatedImages'],
+              )) {
+                if (typeof imageEntry === 'string') {
+                  pushCandidate(imageEntry);
+                  continue;
+                }
+                const imageRecord = optionalJsonRecord(imageEntry);
+                if (!imageRecord) {
+                  continue;
+                }
+                pushCandidate(asString(imageRecord['downloadUri']));
+                pushCandidate(asString(imageRecord['uri']));
+                pushCandidate(asString(imageRecord['imageUri']));
+                pushCandidate(asString(imageRecord['fileUri']));
+                pushCandidate(asString(imageRecord['signedUri']));
+                pushCandidate(asString(imageRecord['gcsUri']));
+              }
+            }
+
+            for (const candidate of this.collectImageCandidates(
+              metadataRecord,
+            )) {
+              pushCandidate(candidate);
+            }
+
+            for (const candidate of candidateStrings) {
+              const normalizedCandidate =
+                this.normalizeGeminiFilePath(candidate);
+              if (normalizedCandidate && visited.has(normalizedCandidate)) {
+                continue;
+              }
+              if (!normalizedCandidate && visited.has(candidate)) {
+                continue;
+              }
+
+              if (candidate.startsWith('data:')) {
+                const asset = this.assetFromDataUrl(candidate);
+                return { ...asset, remoteUrl: candidate };
+              }
+
+              if (candidate.startsWith('gs://')) {
+                const converted = this.convertGsUriToHttps(candidate);
+                if (converted) {
+                  const asset = await this.fetchGeminiBinary(
+                    converted,
+                    apiKey,
+                    visited,
+                  );
+                  if (asset) {
+                    return asset;
+                  }
+                }
+                continue;
+              }
+
+              if (
+                candidate.includes('generativelanguage.googleapis.com') ||
+                candidate.startsWith('files/')
+              ) {
+                const nested = await this.downloadGeminiFileById(
+                  candidate,
+                  apiKey,
+                  visited,
+                );
+                if (nested) {
+                  return nested;
+                }
+                continue;
+              }
+
+              const directAsset = await this.fetchGeminiBinary(
+                candidate,
+                apiKey,
+                visited,
+              );
+              if (directAsset) {
+                return directAsset;
+              }
+            }
+          }
+        } else {
+          this.logger.debug('Gemini metadata request failed', {
+            fileId: normalizedPath,
+            status: metadataResponse.status,
+          });
+        }
+      } catch (error) {
+        this.logger.debug('Gemini metadata fetch failed', {
+          fileId: normalizedPath,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
-
-      const metadata = (await metadataResponse.json().catch(() => null)) as
-        | Record<string, unknown>
-        | null;
-      if (!metadata) {
-        return null;
-      }
-
-      const downloadUri =
-        asString(metadata['downloadUri']) ??
-        asString(metadata['uri']) ??
-        asString(metadata['fileUri']) ??
-        undefined;
-      if (!downloadUri) {
-        return null;
-      }
-
-      const resolvedDownload = this.appendApiKeyQuery(downloadUri, apiKey);
-      const downloadHeaders = this.getGeminiDownloadHeaders(
-        resolvedDownload,
-        apiKey,
-      );
-
-      const downloaded = await this.downloadAsDataUrl(
-        resolvedDownload,
-        downloadHeaders,
-      );
-
-      return {
-        dataUrl: downloaded.dataUrl,
-        mimeType:
-          downloaded.mimeType ??
-          asString(metadata['mimeType']) ??
-          asString(metadata['contentType']) ??
-          'image/png',
-        base64: downloaded.base64,
-        remoteUrl: resolvedDownload,
-      };
-    } catch (error) {
-      this.logger.debug('Gemini metadata download failed', {
-        fileId,
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
 
     return null;
   }
 
   private buildGeminiFilePath(fileId: string): string {
+    const normalized = this.normalizeGeminiFilePath(fileId);
+    if (normalized) {
+      return normalized
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/');
+    }
     const trimmed = fileId.trim();
     if (!trimmed) {
       return '';
     }
-    const withPrefix = trimmed.startsWith('files/')
+    const fallback = trimmed.startsWith('files/')
       ? trimmed
       : `files/${trimmed}`;
-    return withPrefix
+    return fallback
       .split('/')
       .map((segment) => encodeURIComponent(segment))
       .join('/');
@@ -3026,6 +3270,26 @@ export class GenerationService {
     } catch {
       const separator = url.includes('?') ? '&' : '?';
       return `${url}${separator}key=${encodeURIComponent(apiKey)}`;
+    }
+  }
+
+  private maybeAttachGeminiApiKey(url: string, apiKey: string): string {
+    if (!apiKey || !url) {
+      return url;
+    }
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname;
+      if (
+        host.includes('googleapis.com') ||
+        host.includes('googleusercontent.com') ||
+        host.includes('storage.googleapis.com')
+      ) {
+        return this.appendApiKeyQuery(url, apiKey);
+      }
+      return url;
+    } catch {
+      return url;
     }
   }
 
@@ -3049,6 +3313,186 @@ export class GenerationService {
       return undefined;
     }
     return undefined;
+  }
+
+  private async fetchGeminiBinary(
+    url: string,
+    apiKey: string,
+    visited?: Set<string>,
+  ): Promise<GeneratedAsset | null> {
+    if (!url) {
+      return null;
+    }
+
+    const effectiveUrl = this.maybeAttachGeminiApiKey(url, apiKey);
+    const visitSet = visited ?? new Set<string>();
+    const visitKey =
+      this.normalizeGeminiFilePath(effectiveUrl) ?? effectiveUrl;
+    if (visitSet.has(visitKey)) {
+      return null;
+    }
+    visitSet.add(visitKey);
+
+    try {
+      const headers =
+        this.getGeminiDownloadHeaders(effectiveUrl, apiKey) ?? undefined;
+      const response = await fetch(effectiveUrl, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const rawContentType = response.headers.get('content-type') ?? '';
+      const contentType = rawContentType.toLowerCase();
+
+      if (contentType.includes('json')) {
+        const text = await response.text();
+        let payload: unknown = null;
+        try {
+          payload = text ? JSON.parse(text) : null;
+        } catch {
+          payload = null;
+        }
+
+        const record = optionalJsonRecord(payload);
+        if (record) {
+          const inlineRecord =
+            optionalJsonRecord(record['inlineData']) ??
+            optionalJsonRecord(record['inline_data']);
+          const base64 =
+            asString(inlineRecord?.['data']) ??
+            asString(record['data']) ??
+            asString(record['base64']);
+          const mimeType =
+            asString(inlineRecord?.['mimeType']) ??
+            asString(record['mimeType']) ??
+            'image/png';
+          if (base64) {
+            return {
+              dataUrl: `data:${mimeType};base64,${base64}`,
+              mimeType,
+              base64,
+              remoteUrl: effectiveUrl,
+            };
+          }
+
+          const candidates = this.collectImageCandidates(record);
+          for (const candidate of candidates) {
+            if (!candidate) {
+              continue;
+            }
+
+            if (candidate.startsWith('data:')) {
+              const asset = this.assetFromDataUrl(candidate);
+              return { ...asset, remoteUrl: effectiveUrl };
+            }
+
+            if (candidate.startsWith('gs://')) {
+              const converted = this.convertGsUriToHttps(candidate);
+              if (converted) {
+                const nested = await this.fetchGeminiBinary(
+                  converted,
+                  apiKey,
+                  visitSet,
+                );
+                if (nested) {
+                  return nested;
+                }
+              }
+              continue;
+            }
+
+            if (
+              candidate.includes('generativelanguage.googleapis.com') ||
+              candidate.startsWith('files/')
+            ) {
+              const nested = await this.downloadGeminiFileById(
+                candidate,
+                apiKey,
+                visitSet,
+              );
+              if (nested) {
+                return nested;
+              }
+              continue;
+            }
+
+            const direct = await this.fetchGeminiBinary(
+              candidate,
+              apiKey,
+              visitSet,
+            );
+            if (direct) {
+              return direct;
+            }
+          }
+        }
+
+        return null;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
+      const mimeType =
+        rawContentType.split(';')[0]?.trim() || 'image/png';
+
+      return {
+        dataUrl: `data:${mimeType};base64,${base64}`,
+        mimeType,
+        base64,
+        remoteUrl: effectiveUrl,
+      };
+    } catch (error) {
+      this.logger.debug('Gemini fetch failed', {
+        url: effectiveUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  private normalizeGeminiFilePath(reference: string): string | null {
+    if (!reference) {
+      return null;
+    }
+    let working = reference.trim();
+    if (!working) {
+      return null;
+    }
+
+    if (working.startsWith('http://') || working.startsWith('https://')) {
+      try {
+        const parsed = new URL(working);
+        working = parsed.pathname;
+      } catch {
+        return null;
+      }
+    }
+
+    working = working.replace(/^\/+/, '');
+    const filesIndex = working.indexOf('files/');
+    if (filesIndex >= 0) {
+      working = working.slice(filesIndex);
+    }
+
+    working = working.replace(/\?.*$/, '');
+    const colonIndex = working.indexOf(':');
+    if (colonIndex >= 0) {
+      working = working.slice(0, colonIndex);
+    }
+
+    if (!working.startsWith('files/')) {
+      if (/^[a-z0-9\-_]+$/i.test(working)) {
+        working = `files/${working}`;
+      } else {
+        return null;
+      }
+    }
+
+    return working || null;
   }
 
   private convertGsUriToHttps(uri: string): string | undefined {
