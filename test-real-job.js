@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Test script to verify the queue system works in production
+ * Test script to create a real job and test the queue system
  */
 
 const axios = require('axios');
 
-async function testProductionQueue() {
-  const baseURL = 'https://daygen-backend-365299591811.europe-central2.run.app/api';
+async function testRealJob() {
+  const baseURL = 'http://localhost:3000/api';
   
   try {
-    console.log('🧪 Testing production queue system...');
+    console.log('🧪 Testing real job creation and processing...');
     
     // 1. Create a test user
     console.log('1. Creating test user...');
@@ -24,7 +24,7 @@ async function testProductionQueue() {
     console.log('✅ User created, token:', token.substring(0, 20) + '...');
 
     // 2. Create a real job
-    console.log('\n2. Creating image generation job...');
+    console.log('\n2. Creating real image generation job...');
     const jobResponse = await axios.post(`${baseURL}/jobs/image-generation`, {
       prompt: 'A beautiful sunset over mountains',
       model: 'flux-1.1',
@@ -45,8 +45,8 @@ async function testProductionQueue() {
 
     // 4. Wait and check status multiple times
     console.log('\n4. Monitoring job progress...');
-    for (let i = 0; i < 15; i++) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       try {
         const statusResponse = await axios.get(`${baseURL}/jobs/${jobId}`, {
@@ -75,7 +75,7 @@ async function testProductionQueue() {
     });
     console.log('Final status:', finalStatus.data);
 
-    console.log('\n🎉 Production queue test completed!');
+    console.log('\n🎉 Real job test completed!');
 
   } catch (error) {
     console.error('❌ Test failed:', error.response?.data || error.message);
@@ -83,7 +83,7 @@ async function testProductionQueue() {
 }
 
 if (require.main === module) {
-  testProductionQueue();
+  testRealJob();
 }
 
-module.exports = { testProductionQueue };
+module.exports = { testRealJob };

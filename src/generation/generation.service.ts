@@ -583,7 +583,7 @@ export class GenerationService {
         requestPayload: requestPayload,
         errorResponse: errorText,
       });
-      
+
       // Try to parse error response for more details
       let errorDetails = errorText;
       try {
@@ -596,10 +596,10 @@ export class GenerationService {
       } catch {
         // Keep original error text if parsing fails
       }
-      
+
       throw new HttpException(
-        { 
-          error: `Gemini API error: ${response.status}`, 
+        {
+          error: `Gemini API error: ${response.status}`,
           details: errorDetails,
           status: response.status,
           statusText: response.statusText,

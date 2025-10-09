@@ -7,6 +7,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { GenerationModule } from '../generation/generation.module';
 import { R2FilesModule } from '../r2files/r2files.module';
 import { UsageModule } from '../usage/usage.module';
+import { JobProcessingService } from './job-processing.service';
 
 @Module({
   imports: [
@@ -15,8 +16,8 @@ import { UsageModule } from '../usage/usage.module';
     R2FilesModule,
     UsageModule,
   ],
-  providers: [CloudTasksService, JobsGateway],
+  providers: [CloudTasksService, JobProcessingService, JobsGateway],
   controllers: [JobsController, TaskProcessorController],
-  exports: [CloudTasksService, JobsGateway],
+  exports: [CloudTasksService, JobProcessingService, JobsGateway],
 })
 export class JobsModule {}

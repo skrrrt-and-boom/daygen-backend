@@ -1,19 +1,28 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  Optional,
+  forwardRef,
+} from '@nestjs/common';
 import { CloudTasksClient } from '@google-cloud/tasks';
 import { PrismaService } from '../prisma/prisma.service';
-import { JobStatus, JobType } from '@prisma/client';
+import { JobStatus, JobType, Prisma } from '@prisma/client';
 import { CreateImageGenerationJobDto } from './dto/create-image-generation-job.dto';
 import { CreateVideoGenerationJobDto } from './dto/create-video-generation-job.dto';
 import { CreateImageUpscaleJobDto } from './dto/create-image-upscale-job.dto';
 import { CreateBatchGenerationJobDto } from './dto/create-batch-generation-job.dto';
+import { JobProcessingService } from './job-processing.service';
+import type { ProcessJobPayload } from './job-processing.service';
 
 @Injectable()
 export class CloudTasksService {
   private readonly logger = new Logger(CloudTasksService.name);
-  private readonly client: CloudTasksClient;
+  private readonly client: CloudTasksClient | null;
   private readonly projectId: string;
   private readonly location: string;
   private readonly baseUrl: string;
+  private readonly useCloudTasks: boolean;
 
   // Queue names for different job types
   private readonly queueNames = {
@@ -23,8 +32,14 @@ export class CloudTasksService {
     [JobType.BATCH_GENERATION]: 'batch-generation-queue',
   };
 
-  constructor(private prisma: PrismaService) {
-    this.client = new CloudTasksClient();
+  constructor(
+    private prisma: PrismaService,
+    @Optional()
+    @Inject(forwardRef(() => JobProcessingService))
+    private readonly jobProcessingService?: JobProcessingService,
+  ) {
+    this.useCloudTasks = process.env.ENABLE_CLOUD_TASKS === 'true';
+    this.client = this.useCloudTasks ? new CloudTasksClient() : null;
     this.projectId = process.env.GOOGLE_CLOUD_PROJECT || 'daygen-backend';
     this.location = process.env.GOOGLE_CLOUD_LOCATION || 'europe-central2';
     this.baseUrl =
@@ -32,21 +47,86 @@ export class CloudTasksService {
       'https://daygen-backend-365299591811.europe-central2.run.app';
   }
 
-  private async createJob(userId: string, jobType: JobType, data: any) {
-    // Create job record in database
+  private async createJob(
+    userId: string,
+    jobType: JobType,
+    data: unknown,
+  ) {
+    const serializedData = this.serializeJobData(data);
+
     const job = await this.prisma.job.create({
       data: {
         userId,
         type: jobType,
         status: JobStatus.PENDING,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        metadata: data,
+        metadata: serializedData as Prisma.InputJsonValue,
       },
     });
 
     this.logger.log(`Created ${jobType} job ${job.id} for user ${userId}`);
 
-    // Create Cloud Task
+    if (this.useCloudTasks && this.client) {
+      await this.enqueueCloudTask(job.id, userId, jobType, serializedData);
+    } else {
+      this.logger.log(
+        `Cloud Tasks disabled; processing ${jobType} job ${job.id} locally`,
+      );
+
+      const processor = this.jobProcessingService;
+
+      if (!processor) {
+        this.logger.error(
+          'JobProcessingService is not available; marking job as failed.',
+        );
+        await this.failJob(job.id, 'Local job processor unavailable');
+      } else {
+        const payload: ProcessJobPayload = {
+          jobId: job.id,
+          userId,
+          jobType,
+          data: serializedData,
+        };
+
+        setImmediate(() => {
+          void processor.processJob(payload).catch((error) => {
+            this.logger.error(
+              `Inline processing failed for job ${job.id}:`,
+              error,
+            );
+          });
+        });
+      }
+    }
+
+    return { jobId: job.id };
+  }
+
+  private serializeJobData(input: unknown): Record<string, unknown> {
+    if (!input || typeof input !== 'object') {
+      return {};
+    }
+
+    try {
+      return JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+    } catch (error) {
+      this.logger.warn(
+        'Failed to serialize job metadata, falling back to empty object',
+        error,
+      );
+      return {};
+    }
+  }
+
+  private async enqueueCloudTask(
+    jobId: string,
+    userId: string,
+    jobType: JobType,
+    data: Record<string, unknown>,
+  ) {
+    if (!this.client) {
+      throw new Error('Cloud Tasks client not initialised');
+    }
+
     const queuePath = this.client.queuePath(
       this.projectId,
       this.location,
@@ -63,7 +143,7 @@ export class CloudTasksService {
         },
         body: Buffer.from(
           JSON.stringify({
-            jobId: job.id,
+            jobId,
             userId,
             jobType,
             ...data,
@@ -71,7 +151,7 @@ export class CloudTasksService {
         ).toString('base64'),
       },
       scheduleTime: {
-        seconds: Date.now() / 1000 + 1, // Execute in 1 second
+        seconds: Date.now() / 1000 + 1,
       },
     };
 
@@ -82,16 +162,15 @@ export class CloudTasksService {
       });
 
       this.logger.log(
-        `Created Cloud Task for ${jobType} job ${job.id}: ${response.name}`,
+        `Created Cloud Task for ${jobType} job ${jobId}: ${response.name}`,
       );
     } catch (error) {
       this.logger.error(
-        `Failed to create Cloud Task for ${jobType} job ${job.id}:`,
+        `Failed to create Cloud Task for ${jobType} job ${jobId}:`,
         error,
       );
-      // Update job status to failed
       await this.prisma.job.update({
-        where: { id: job.id },
+        where: { id: jobId },
         data: {
           status: JobStatus.FAILED,
           error: 'Failed to create Cloud Task',
@@ -99,8 +178,6 @@ export class CloudTasksService {
       });
       throw error;
     }
-
-    return { jobId: job.id };
   }
 
   async createImageGenerationJob(
