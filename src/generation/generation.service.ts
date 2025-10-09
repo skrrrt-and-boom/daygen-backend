@@ -27,6 +27,13 @@ interface GeneratedAsset {
   r2FileUrl?: string;
 }
 
+interface GeminiRemoteCandidate {
+  url?: string;
+  rawUrl?: string;
+  fileId?: string;
+  mimeType?: string;
+}
+
 interface ProviderResult {
   provider: string;
   model: string;
@@ -621,15 +628,34 @@ export class GenerationService {
 
     let base64: string | undefined;
     let mimeType: string | undefined;
+    let dataUrl: string | undefined;
     let remoteUrl: string | undefined;
 
-    const registerRemoteCandidate = (candidate?: string) => {
-      if (remoteUrl) {
+    const remoteCandidates: GeminiRemoteCandidate[] = [];
+    const remoteCandidateKeys = new Set<string>();
+
+    const pushRemoteCandidate = (candidate: GeminiRemoteCandidate) => {
+      const normalizedUrl = candidate.url
+        ? this.normalizeGeminiUri(candidate.url)
+        : undefined;
+      const resolvedUrl = normalizedUrl ?? candidate.url;
+      if (!resolvedUrl && !candidate.fileId) {
         return;
       }
-      const normalized = this.normalizeGeminiUri(candidate);
-      if (normalized) {
-        remoteUrl = normalized;
+      const key = `${resolvedUrl ?? ''}|${candidate.fileId ?? ''}`;
+      if (remoteCandidateKeys.has(key)) {
+        return;
+      }
+      remoteCandidateKeys.add(key);
+      const entry: GeminiRemoteCandidate = {
+        url: resolvedUrl,
+        rawUrl: candidate.rawUrl ?? candidate.url ?? resolvedUrl,
+        fileId: candidate.fileId,
+        mimeType: candidate.mimeType,
+      };
+      remoteCandidates.push(entry);
+      if (!remoteUrl && entry.url) {
+        remoteUrl = entry.url;
       }
     };
 
@@ -653,28 +679,59 @@ export class GenerationService {
 
       const fileData = optionalJsonRecord(partRecord['fileData']);
       if (fileData) {
-        registerRemoteCandidate(
+        const fileUri =
           asString(fileData['fileUri']) ??
-            asString(fileData['uri']) ??
-            asString(fileData['url']),
-        );
+          asString(fileData['uri']) ??
+          asString(fileData['url']);
+        const fileId =
+          asString(fileData['fileId']) ??
+          asString(fileData['id']) ??
+          asString(fileData['name']);
+        const fileMime =
+          asString(fileData['mimeType']) ??
+          asString(fileData['contentType']) ??
+          undefined;
+        pushRemoteCandidate({
+          url: fileUri ?? undefined,
+          rawUrl: fileUri ?? undefined,
+          fileId,
+          mimeType: fileMime,
+        });
       }
 
       const mediaRecord = optionalJsonRecord(partRecord['media']);
       if (mediaRecord) {
-        registerRemoteCandidate(
+        const mediaUri =
           asString(mediaRecord['mediaUri']) ??
-            asString(mediaRecord['uri']) ??
-            asString(mediaRecord['url']),
-        );
+          asString(mediaRecord['uri']) ??
+          asString(mediaRecord['url']);
+        const mediaMime =
+          asString(mediaRecord['mimeType']) ??
+          asString(mediaRecord['contentType']) ??
+          undefined;
+        pushRemoteCandidate({
+          url: mediaUri ?? undefined,
+          rawUrl: mediaUri ?? undefined,
+          mimeType: mediaMime,
+        });
       }
 
-      registerRemoteCandidate(
+      const genericUrl =
         asString(partRecord['url']) ??
-          asString(partRecord['uri']) ??
-          asString(partRecord['signedUrl']) ??
-          asString(partRecord['imageUrl']),
-      );
+        asString(partRecord['uri']) ??
+        asString(partRecord['signedUrl']) ??
+        asString(partRecord['imageUrl']);
+      if (genericUrl) {
+        const partMime =
+          asString(partRecord['mimeType']) ??
+          asString(partRecord['contentType']) ??
+          undefined;
+        pushRemoteCandidate({
+          url: genericUrl,
+          rawUrl: genericUrl,
+          mimeType: partMime,
+        });
+      }
 
       if (!base64) {
         const dataCandidate = asString(partRecord['data']);
@@ -685,43 +742,77 @@ export class GenerationService {
       }
     }
 
-    let dataUrl: string | undefined;
+    const responseFiles = asArray(resultRecord['files']);
+    for (const fileEntry of responseFiles) {
+      const fileRecord = optionalJsonRecord(fileEntry);
+      if (!fileRecord) {
+        continue;
+      }
+      const fileUri =
+        asString(fileRecord['uri']) ??
+        asString(fileRecord['fileUri']) ??
+        asString(fileRecord['url']);
+      const fileId =
+        asString(fileRecord['name']) ??
+        asString(fileRecord['fileId']) ??
+        asString(fileRecord['id']);
+      const fileMime =
+        asString(fileRecord['mimeType']) ??
+        asString(fileRecord['contentType']) ??
+        undefined;
+      pushRemoteCandidate({
+        url: fileUri ?? undefined,
+        rawUrl: fileUri ?? undefined,
+        fileId,
+        mimeType: fileMime,
+      });
+    }
 
-    if (!base64 && remoteUrl) {
-      const ensured = await this.ensureDataUrl(remoteUrl);
-      const asset = this.assetFromDataUrl(ensured);
-      base64 = asset.base64;
-      mimeType = asset.mimeType;
-      dataUrl = asset.dataUrl;
+    const generatedImages = asArray(
+      resultRecord['generatedImages'] ?? resultRecord['generated_images'],
+    );
+    for (const imageEntry of generatedImages) {
+      const imageRecord = optionalJsonRecord(imageEntry);
+      if (!imageRecord) {
+        continue;
+      }
+      const imageUri =
+        asString(imageRecord['downloadUri']) ??
+        asString(imageRecord['uri']) ??
+        asString(imageRecord['imageUri']) ??
+        asString(imageRecord['url']);
+      const imageFileId =
+        asString(imageRecord['fileId']) ??
+        asString(imageRecord['name']) ??
+        asString(imageRecord['id']);
+      const imageMime =
+        asString(imageRecord['mimeType']) ??
+        asString(imageRecord['contentType']) ??
+        undefined;
+      pushRemoteCandidate({
+        url: imageUri ?? undefined,
+        rawUrl: imageUri ?? undefined,
+        fileId: imageFileId,
+        mimeType: imageMime,
+      });
+    }
+
+    const fallbackCandidates = this.collectImageCandidates(responsePayload);
+    for (const candidate of fallbackCandidates) {
+      pushRemoteCandidate({ url: candidate, rawUrl: candidate });
     }
 
     if (!base64) {
-      const fallbackCandidates = this.collectImageCandidates(responsePayload);
-      for (const candidate of fallbackCandidates) {
-        if (!base64 && candidate.startsWith('data:')) {
-          const asset = this.assetFromDataUrl(candidate);
+      for (const candidate of remoteCandidates) {
+        const asset = await this.tryResolveGeminiCandidate(candidate, apiKey);
+        if (asset) {
           base64 = asset.base64;
-          mimeType = asset.mimeType;
+          mimeType = asset.mimeType ?? mimeType;
           dataUrl = asset.dataUrl;
+          remoteUrl = asset.remoteUrl ?? remoteUrl ?? candidate.url ?? undefined;
           break;
         }
       }
-      if (!base64 && !remoteUrl) {
-        const remoteFallback = fallbackCandidates.find(
-          (candidate) => !candidate.startsWith('data:'),
-        );
-        if (remoteFallback) {
-          registerRemoteCandidate(remoteFallback);
-        }
-      }
-    }
-
-    if (!base64 && remoteUrl) {
-      const ensured = await this.ensureDataUrl(remoteUrl);
-      const asset = this.assetFromDataUrl(ensured);
-      base64 = asset.base64;
-      mimeType = asset.mimeType;
-      dataUrl = asset.dataUrl;
     }
 
     if (!base64) {
@@ -2029,14 +2120,17 @@ export class GenerationService {
     };
   }
 
-  private async ensureDataUrl(source: string): Promise<string> {
+  private async ensureDataUrl(
+    source: string,
+    headers?: Record<string, string>,
+  ): Promise<string> {
     if (source.startsWith('data:')) {
       return source;
     }
     const normalized = source.startsWith('gs://')
       ? (this.convertGsUriToHttps(source) ?? source)
       : source;
-    const { dataUrl } = await this.downloadAsDataUrl(normalized);
+    const { dataUrl } = await this.downloadAsDataUrl(normalized, headers);
     return dataUrl;
   }
 
@@ -2739,6 +2833,222 @@ export class GenerationService {
       return this.convertGsUriToHttps(trimmed) ?? trimmed;
     }
     return trimmed;
+  }
+
+  private async tryResolveGeminiCandidate(
+    candidate: GeminiRemoteCandidate,
+    apiKey: string,
+  ): Promise<GeneratedAsset | null> {
+    if (candidate.url?.startsWith('data:')) {
+      const asset = this.assetFromDataUrl(candidate.url);
+      return {
+        ...asset,
+        remoteUrl: candidate.rawUrl ?? candidate.url,
+      };
+    }
+
+    if (candidate.url && candidate.url.startsWith('http')) {
+      const urlWithKey =
+        apiKey && candidate.url.includes('google')
+          ? this.appendApiKeyQuery(candidate.url, apiKey)
+          : candidate.url;
+      try {
+        const ensured = await this.ensureDataUrl(
+          urlWithKey,
+          this.getGeminiDownloadHeaders(urlWithKey, apiKey),
+        );
+        const asset = this.assetFromDataUrl(ensured);
+        if (candidate.mimeType && asset.mimeType !== candidate.mimeType) {
+          asset.mimeType = candidate.mimeType;
+          asset.dataUrl = `data:${candidate.mimeType};base64,${asset.base64}`;
+        }
+        return {
+          ...asset,
+          remoteUrl: urlWithKey,
+        };
+      } catch (error) {
+        this.logger.debug('Failed to download Gemini asset via URL', {
+          url: candidate.url,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (candidate.fileId) {
+      const downloaded = await this.downloadGeminiFileById(
+        candidate.fileId,
+        apiKey,
+      );
+      if (downloaded) {
+        const asset = this.assetFromDataUrl(downloaded.dataUrl);
+        const effectiveMime =
+          candidate.mimeType ??
+          downloaded.mimeType ??
+          asset.mimeType ??
+          'image/png';
+        if (asset.mimeType !== effectiveMime) {
+          asset.mimeType = effectiveMime;
+          asset.dataUrl = `data:${effectiveMime};base64,${asset.base64}`;
+        }
+        return {
+          ...asset,
+          remoteUrl:
+            downloaded.remoteUrl ?? candidate.url ?? candidate.rawUrl,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private async downloadGeminiFileById(
+    fileId: string,
+    apiKey: string,
+  ): Promise<{ dataUrl: string; mimeType?: string; base64: string; remoteUrl?: string } | null> {
+    const filePath = this.buildGeminiFilePath(fileId);
+    if (!filePath) {
+      return null;
+    }
+
+    const baseEndpoint = `https://generativelanguage.googleapis.com/v1beta/${filePath}`;
+    const directDownloadEndpoint = this.appendApiKeyQuery(
+      `${baseEndpoint}:download`,
+      apiKey,
+    );
+
+    try {
+      const directDownload = await this.downloadAsDataUrl(
+        directDownloadEndpoint,
+        this.getGeminiDownloadHeaders(directDownloadEndpoint, apiKey),
+      );
+      return {
+        ...directDownload,
+        remoteUrl: directDownloadEndpoint,
+      };
+    } catch (error) {
+      this.logger.debug('Gemini direct download failed, attempting metadata', {
+        fileId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    try {
+      const metadataEndpoint = this.appendApiKeyQuery(baseEndpoint, apiKey);
+      const metadataResponse = await fetch(metadataEndpoint, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.getGeminiDownloadHeaders(metadataEndpoint, apiKey) ?? {}),
+        },
+      });
+
+      if (!metadataResponse.ok) {
+        const body = await metadataResponse.text().catch(() => '');
+        this.logger.debug('Gemini metadata request failed', {
+          fileId,
+          status: metadataResponse.status,
+          body,
+        });
+        return null;
+      }
+
+      const metadata = (await metadataResponse.json().catch(() => null)) as
+        | Record<string, unknown>
+        | null;
+      if (!metadata) {
+        return null;
+      }
+
+      const downloadUri =
+        asString(metadata['downloadUri']) ??
+        asString(metadata['uri']) ??
+        asString(metadata['fileUri']) ??
+        undefined;
+      if (!downloadUri) {
+        return null;
+      }
+
+      const resolvedDownload = this.appendApiKeyQuery(downloadUri, apiKey);
+      const downloadHeaders = this.getGeminiDownloadHeaders(
+        resolvedDownload,
+        apiKey,
+      );
+
+      const downloaded = await this.downloadAsDataUrl(
+        resolvedDownload,
+        downloadHeaders,
+      );
+
+      return {
+        dataUrl: downloaded.dataUrl,
+        mimeType:
+          downloaded.mimeType ??
+          asString(metadata['mimeType']) ??
+          asString(metadata['contentType']) ??
+          'image/png',
+        base64: downloaded.base64,
+        remoteUrl: resolvedDownload,
+      };
+    } catch (error) {
+      this.logger.debug('Gemini metadata download failed', {
+        fileId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return null;
+  }
+
+  private buildGeminiFilePath(fileId: string): string {
+    const trimmed = fileId.trim();
+    if (!trimmed) {
+      return '';
+    }
+    const withPrefix = trimmed.startsWith('files/')
+      ? trimmed
+      : `files/${trimmed}`;
+    return withPrefix
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+  }
+
+  private appendApiKeyQuery(url: string, apiKey: string): string {
+    if (!apiKey) {
+      return url;
+    }
+    try {
+      const parsed = new URL(url);
+      if (!parsed.searchParams.has('key')) {
+        parsed.searchParams.set('key', apiKey);
+      }
+      return parsed.toString();
+    } catch {
+      const separator = url.includes('?') ? '&' : '?';
+      return `${url}${separator}key=${encodeURIComponent(apiKey)}`;
+    }
+  }
+
+  private getGeminiDownloadHeaders(
+    url: string,
+    apiKey: string,
+  ): Record<string, string> | undefined {
+    if (!apiKey) {
+      return undefined;
+    }
+    try {
+      const host = new URL(url).hostname;
+      if (
+        host.includes('googleapis.com') ||
+        host.includes('googleusercontent.com') ||
+        host.includes('storage.googleapis.com')
+      ) {
+        return { 'x-goog-api-key': apiKey };
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
   }
 
   private convertGsUriToHttps(uri: string): string | undefined {

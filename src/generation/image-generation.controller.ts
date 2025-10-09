@@ -240,6 +240,13 @@ export class ImageGenerationController {
       }
     }
 
-    return false;
+    const inlineFlags = [rawOptions.useInline, rawOptions.inline];
+    for (const flag of inlineFlags) {
+      if (typeof flag === 'boolean') {
+        return !flag;
+      }
+    }
+
+    return true;
   }
 }
