@@ -28,8 +28,27 @@ jobs:
           echo "🔄 Creating database backup..."
           echo "Backup file: ${backup_file}"
           
+          # Debug: Check if DATABASE_URL is set (without exposing the full URL)
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ DATABASE_URL environment variable is not set"
+            exit 1
+          else
+            echo "✅ DATABASE_URL is set (length: ${#DATABASE_URL})"
+            # Show just the host part for debugging
+            echo "Database host: $(echo $DATABASE_URL | cut -d'@' -f2 | cut -d':' -f1)"
+          fi
+          
           # Create backup
-          pg_dump "$DATABASE_URL" > "backups/${backup_file}"
+          echo "🔍 Running pg_dump command..."
+          pg_dump "$DATABASE_URL" > "backups/${backup_file}" 2>&1
+          pg_dump_exit_code=$?
+          
+          if [ $pg_dump_exit_code -ne 0 ]; then
+            echo "❌ pg_dump failed with exit code: $pg_dump_exit_code"
+            echo "Error output:"
+            cat "backups/${backup_file}" 2>/dev/null || echo "No output file created"
+            exit 1
+          fi
           
           # Check if backup was created successfully
           if [ -f "backups/${backup_file}" ]; then
