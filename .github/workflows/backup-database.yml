@@ -1,0 +1,63 @@
+name: Daily Database Backup
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:  # Manual trigger button
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-15
+      
+      - name: Create database backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          mkdir -p backups
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          backup_file="daygen_backup_${timestamp}.sql"
+          
+          echo "🔄 Creating database backup..."
+          echo "Backup file: ${backup_file}"
+          
+          # Create backup
+          pg_dump "$DATABASE_URL" > "backups/${backup_file}"
+          
+          # Check if backup was created successfully
+          if [ -f "backups/${backup_file}" ]; then
+            echo "✅ Backup created successfully"
+            ls -la "backups/${backup_file}"
+          else
+            echo "❌ Backup creation failed"
+            exit 1
+          fi
+          
+          # Compress backup
+          echo "🗜️ Compressing backup..."
+          gzip "backups/${backup_file}"
+          
+          echo "✅ Backup compressed: backups/${backup_file}.gz"
+          ls -la "backups/${backup_file}.gz"
+      
+      - name: Upload backup to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-backup-${{ github.run_number }}
+          path: backups/
+          retention-days: 30
+      
+      - name: Create backup summary
+        run: |
+          echo "## 📊 Backup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backup File**: daygen_backup_$(date +%Y%m%d_%H%M%S).sql.gz" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: $(du -h backups/*.gz | awk '{print $1}')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY

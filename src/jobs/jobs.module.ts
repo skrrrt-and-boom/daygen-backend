@@ -8,6 +8,9 @@ import { GenerationModule } from '../generation/generation.module';
 import { R2FilesModule } from '../r2files/r2files.module';
 import { UsageModule } from '../usage/usage.module';
 import { JobProcessingService } from './job-processing.service';
+import { LoggerService } from '../common/logger.service';
+import { MetricsService } from '../common/metrics.service';
+import { RequestContextService } from '../common/request-context.service';
 
 @Module({
   imports: [
@@ -16,8 +19,22 @@ import { JobProcessingService } from './job-processing.service';
     R2FilesModule,
     UsageModule,
   ],
-  providers: [CloudTasksService, JobProcessingService, JobsGateway],
+  providers: [
+    CloudTasksService,
+    JobProcessingService,
+    JobsGateway,
+    LoggerService,
+    MetricsService,
+    RequestContextService,
+  ],
   controllers: [JobsController, TaskProcessorController],
-  exports: [CloudTasksService, JobProcessingService, JobsGateway],
+  exports: [
+    CloudTasksService,
+    JobProcessingService,
+    JobsGateway,
+    LoggerService,
+    MetricsService,
+    RequestContextService,
+  ],
 })
 export class JobsModule {}

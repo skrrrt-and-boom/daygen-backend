@@ -55,7 +55,7 @@ Done looks like
 	•	A red dashboard tells you before customers do.
 	•	CI green-check proves the whole path works, not just unit pieces.
 
-
+   npm run debug:queue
 
 📋 NEXT DEVELOPMENT PLAN
 

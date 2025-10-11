@@ -4,6 +4,9 @@ import { GenerationService } from '../generation/generation.service';
 import { R2FilesService } from '../r2files/r2files.service';
 import { UsageService } from '../usage/usage.service';
 import { CloudTasksService } from './cloud-tasks.service';
+import { LoggerService } from '../common/logger.service';
+import { MetricsService } from '../common/metrics.service';
+import { RequestContextService } from '../common/request-context.service';
 import type { SanitizedUser } from '../users/types';
 import type { ProviderGenerateDto } from '../generation/dto/base-generate.dto';
 
@@ -22,16 +25,34 @@ export class JobProcessingService {
     private readonly generationService: GenerationService,
     private readonly r2FilesService: R2FilesService,
     private readonly usageService: UsageService,
+    private readonly structuredLogger: LoggerService,
+    private readonly metricsService: MetricsService,
+    private readonly requestContext: RequestContextService,
     @Inject(forwardRef(() => CloudTasksService))
     private readonly cloudTasksService: CloudTasksService,
   ) {}
 
   async processJob(payload: ProcessJobPayload) {
     const { jobId, userId, jobType, data } = payload;
+    const startTime = Date.now();
+    const requestId = this.requestContext.getRequestId();
 
-    this.logger.log(
-      `Dispatching ${jobType} job ${jobId} for user ${userId} (inline processing)`,
-    );
+    // Set context for this job
+    this.requestContext.setContext('jobId', jobId);
+    this.requestContext.setContext('userId', userId);
+    this.requestContext.setContext('jobType', jobType);
+
+    this.structuredLogger.logJobEvent('job_started', {
+      jobId,
+      userId,
+      jobType,
+      requestId,
+      processingMode: 'inline',
+    });
+
+    // Record metrics
+    const provider = (data.provider as string) || 'unknown';
+    this.metricsService.recordJobStart(jobType, provider);
 
     await this.cloudTasksService.updateJobProgress(
       jobId,
@@ -57,9 +78,37 @@ export class JobProcessingService {
           throw new Error(`Unknown job type: ${String(jobType)}`);
       }
 
+      const duration = (Date.now() - startTime) / 1000;
+      this.structuredLogger.logJobEvent('job_completed', {
+        jobId,
+        userId,
+        jobType,
+        requestId,
+        duration,
+      });
+
+      this.metricsService.recordJobComplete(jobType, provider, duration);
       this.logger.log(`Successfully completed ${jobType} job ${jobId}`);
     } catch (error) {
-      this.logger.error(`${String(jobType)} job ${jobId} failed:`, error);
+      const duration = (Date.now() - startTime) / 1000;
+      const errorType =
+        error instanceof Error ? error.constructor.name : 'UnknownError';
+
+      this.structuredLogger.logError(error as Error, {
+        jobId,
+        userId,
+        jobType,
+        requestId,
+        duration,
+        errorType,
+      });
+
+      this.metricsService.recordJobError(
+        jobType,
+        provider,
+        errorType,
+        duration,
+      );
 
       let errorMessage = 'Unknown error';
       if (error instanceof Error) {

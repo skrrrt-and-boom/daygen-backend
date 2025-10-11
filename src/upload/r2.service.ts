@@ -119,14 +119,13 @@ export class R2Service {
     });
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
       const uploadUrl = await getSignedUrl(this.s3Client, command, {
         expiresIn: 3600, // 1 hour
       });
 
       const publicUrl = `${this.publicUrl}/${key}`;
 
-      return { uploadUrl: uploadUrl as string, publicUrl };
+      return { uploadUrl: uploadUrl, publicUrl };
     } catch (error) {
       throw new Error(`Failed to generate presigned URL: ${error}`);
     }
