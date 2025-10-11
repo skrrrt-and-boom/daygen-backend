@@ -114,19 +114,24 @@ export class JobProcessingService {
       if (error instanceof Error) {
         errorMessage = error.message;
 
-        const getResponse = (error as { getResponse?: () => unknown })
-          .getResponse;
-        if (typeof getResponse === 'function') {
-          const response = getResponse();
-          if (typeof response === 'object' && response !== null) {
-            const responseObj = response as Record<string, unknown>;
-            if ('error' in responseObj) {
-              errorMessage = `${error.message}: ${String(responseObj.error)}`;
-            }
-            if ('details' in responseObj) {
-              errorMessage += ` (Details: ${String(responseObj.details)})`;
+        try {
+          const getResponse = (error as { getResponse?: () => unknown })
+            ?.getResponse;
+          if (typeof getResponse === 'function') {
+            const response = getResponse();
+            if (typeof response === 'object' && response !== null) {
+              const responseObj = response as Record<string, unknown>;
+              if ('error' in responseObj) {
+                errorMessage = `${error.message}: ${String(responseObj.error)}`;
+              }
+              if ('details' in responseObj) {
+                errorMessage += ` (Details: ${String(responseObj.details)})`;
+              }
             }
           }
+        } catch (responseError) {
+          // If getResponse fails, just use the original error message
+          this.logger.warn('Failed to extract response from error', responseError);
         }
       }
 
