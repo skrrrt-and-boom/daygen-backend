@@ -29,7 +29,10 @@ export class MetricsService implements OnModuleInit {
         collectDefaultMetrics({ register });
         MetricsService.defaultMetricsCollected = true;
       } catch (error) {
-        console.warn('Failed to collect default metrics:', error instanceof Error ? error.message : 'Unknown error');
+        console.warn(
+          'Failed to collect default metrics:',
+          error instanceof Error ? error.message : 'Unknown error',
+        );
       }
     }
   }

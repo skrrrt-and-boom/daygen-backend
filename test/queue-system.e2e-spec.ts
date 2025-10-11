@@ -32,8 +32,12 @@ describe('Queue System (e2e)', () => {
         name: 'Test User',
       });
 
-    authToken = signupResponse.body.accessToken;
-    testUserId = signupResponse.body.user.authUserId;
+    const signupBody = signupResponse.body as {
+      accessToken: string;
+      user: { authUserId: string };
+    };
+    authToken = signupBody.accessToken;
+    testUserId = signupBody.user.authUserId;
   });
 
   afterAll(async () => {
@@ -63,7 +67,7 @@ describe('Queue System (e2e)', () => {
         .expect(201);
 
       expect(response.body).toHaveProperty('jobId');
-      expect(typeof response.body.jobId).toBe('string');
+      expect(typeof (response.body as { jobId: string }).jobId).toBe('string');
     });
 
     it('should track job status through processing', async () => {
@@ -80,7 +84,8 @@ describe('Queue System (e2e)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send(jobData);
 
-      const jobId = createResponse.body.jobId;
+      const createBody = createResponse.body as { jobId: string };
+      const jobId = createBody.jobId;
 
       // Check initial status
       const statusResponse = await request(app.getHttpServer())
@@ -88,8 +93,12 @@ describe('Queue System (e2e)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .expect(200);
 
-      expect(['PENDING', 'PROCESSING']).toContain(statusResponse.body.status);
-      expect(statusResponse.body.progress).toBeGreaterThanOrEqual(0);
+      const statusBody = statusResponse.body as {
+        status: string;
+        progress: number;
+      };
+      expect(['PENDING', 'PROCESSING']).toContain(statusBody.status);
+      expect(statusBody.progress).toBeGreaterThanOrEqual(0);
     });
 
     it('should handle job failures gracefully', async () => {

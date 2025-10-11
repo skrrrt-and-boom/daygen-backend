@@ -12,14 +12,14 @@ export class QueueHealthController {
   ) {}
 
   @Get()
-  async getQueueHealth() {
+  getQueueHealth() {
     try {
       const health = {
         status: 'healthy',
         timestamp: new Date().toISOString(),
         cloudTasksEnabled: process.env.ENABLE_CLOUD_TASKS === 'true',
-        queues: await this.getQueueStatuses(),
-        processingStats: await this.getProcessingStats(),
+        queues: this.getQueueStatuses(),
+        processingStats: this.getProcessingStats(),
       };
 
       this.logger.log('Queue health check completed', health);

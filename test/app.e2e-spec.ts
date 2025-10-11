@@ -24,7 +24,7 @@ describe('AppController (e2e)', () => {
       .get('/health')
       .expect(200)
       .expect((res) => {
-        expect(res.body).toHaveProperty('status', 'ok');
+        expect((res.body as { status: string }).status).toBe('ok');
       });
   });
 
@@ -41,8 +41,7 @@ describe('AppController (e2e)', () => {
       .expect((res) => {
         expect(res.body).toHaveProperty('accessToken');
         expect(res.body).toHaveProperty('user');
-        expect(res.body).toHaveProperty(
-          'user.email',
+        expect((res.body as { user: { email: string } }).user.email).toBe(
           `test${timestamp}@example.com`,
         );
       });
@@ -70,7 +69,9 @@ describe('AppController (e2e)', () => {
       .expect((res) => {
         expect(res.body).toHaveProperty('accessToken');
         expect(res.body).toHaveProperty('user');
-        expect(res.body).toHaveProperty('user.email', email);
+        expect((res.body as { user: { email: string } }).user.email).toBe(
+          email,
+        );
       });
   });
 
