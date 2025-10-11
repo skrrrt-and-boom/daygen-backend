@@ -60,7 +60,6 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
-Procent of job done in generation
 User Management
 Payments (stripe)
 User profiles and settings

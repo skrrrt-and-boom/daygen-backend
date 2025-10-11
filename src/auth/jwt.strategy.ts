@@ -28,9 +28,7 @@ const jwtFromRequest: JwtFromRequestFunction = (req: Request) => {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(private readonly usersService: UsersService) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     super({
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- passport-jwt expects a function here
       jwtFromRequest,
       ignoreExpiration: false,
       secretOrKey: jwtSecret,
