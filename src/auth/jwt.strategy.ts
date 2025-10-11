@@ -7,7 +7,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import {
   Strategy,
   type JwtFromRequestFunction,
-  type StrategyOptions,
+  type StrategyOptionsWithoutRequest,
 } from 'passport-jwt';
 import type { Request } from 'express';
 import { UsersService } from '../users/users.service';
@@ -32,7 +32,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest,
       ignoreExpiration: false,
       secretOrKey: jwtSecret,
-    } as StrategyOptions);
+    } as StrategyOptionsWithoutRequest);
   }
 
   async validate(payload: JwtPayload) {
