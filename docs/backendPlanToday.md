@@ -1,25 +1,10 @@
-
-queue long-running jobs with BullMQ/SQS and send status via webhooks or WebSockets; polling from the frontend will collapse under heavy load.
-
-1) Use a queue for long jobs; push status via events (no polling loops)
-
-Plainly: If a job may take > a second (transcription, upscales, multi-step generation), enqueue it (BullMQ on Redis or SQS). Let a worker do the heavy lifting. Tell the frontend progress via webhooks or WebSockets. Avoid “Are we done yet?” polling from the browser.
-
-Why: Polling hammers the server and collapses under load. Queues smooth spikes, retry failures, and let you scale workers separately.
-
-Done looks like
-	•	POST /jobs returns { jobId } immediately.
-	•	A worker (separate process) consumes from BullMQ/SQS.
-	•	Clients get updates either by:
-	•	WebSocket: subscribe to job:{jobId} channel, or
-	•	Webhook: we call the client’s URL with { status, progress, resultUrl }.
-	•	Final results live in object storage; job record holds status and link.
+BACKUP COMMAND: npm run backup:manual 
 
 ---
 
 harden usage accounting: automated resets/top-ups, Stripe or internal billing hooks, rate-limits per provider, admin dashboards.
 
-3) Solid usage + billing controls
+1) Solid usage + billing controls
 
 Plainly: Track how much each user/team/provider is using, enforce limits, and automate resets/payments.
 
