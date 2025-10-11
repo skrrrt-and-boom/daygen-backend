@@ -4,6 +4,59 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+async function cleanupEmptyBackups() {
+  const backupDir = './backups';
+  if (!fs.existsSync(backupDir)) return;
+  
+  const files = fs.readdirSync(backupDir);
+  let cleanedCount = 0;
+  
+  files.forEach(file => {
+    if (file.endsWith('.sql') && !file.endsWith('.gz')) {
+      const filePath = path.join(backupDir, file);
+      const stats = fs.statSync(filePath);
+      if (stats.size === 0) {
+        console.log('🧹 Cleaning up empty backup file:', file);
+        fs.unlinkSync(filePath);
+        cleanedCount++;
+      }
+    }
+  });
+  
+  if (cleanedCount > 0) {
+    console.log(`✅ Cleaned up ${cleanedCount} empty backup file(s)`);
+  }
+}
+
+async function checkPostgreSQLVersion() {
+  return new Promise((resolve, reject) => {
+    exec('pg_dump --version', (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`PostgreSQL client not found: ${error.message}`));
+        return;
+      }
+      
+      const version = stdout.trim();
+      console.log('🔍 PostgreSQL client version:', version);
+      
+      // Check if version is 17.x (recommended)
+      const versionMatch = version.match(/pg_dump \(PostgreSQL\) (\d+)\./);
+      if (versionMatch) {
+        const majorVersion = parseInt(versionMatch[1]);
+        if (majorVersion < 14) {
+          console.warn('⚠️  Warning: PostgreSQL version', majorVersion, 'is quite old. Consider upgrading to version 17.');
+        } else if (majorVersion >= 17) {
+          console.log('✅ PostgreSQL version', majorVersion, 'is recommended');
+        }
+        resolve(version);
+      } else {
+        console.warn('⚠️  Could not parse PostgreSQL version, continuing anyway...');
+        resolve(version);
+      }
+    });
+  });
+}
+
 async function backupDatabase() {
   const dbUrl = process.env.DATABASE_URL;
   const backupDir = './backups';
@@ -15,6 +68,20 @@ async function backupDatabase() {
   if (!dbUrl) {
     console.error('❌ DATABASE_URL environment variable not set');
     console.log('Please set DATABASE_URL in your .env file or environment');
+    process.exit(1);
+  }
+
+  // Clean up any existing empty backup files
+  await cleanupEmptyBackups();
+
+  // Check PostgreSQL version first
+  try {
+    await checkPostgreSQLVersion();
+  } catch (error) {
+    console.error('❌ PostgreSQL version check failed:', error.message);
+    console.log('💡 Make sure PostgreSQL client is installed and in PATH');
+    console.log('   On macOS: brew install postgresql@17');
+    console.log('   Then: export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"');
     process.exit(1);
   }
 
@@ -34,6 +101,17 @@ async function backupDatabase() {
       if (error) {
         console.error('❌ Backup failed:', error.message);
         if (stderr) console.error('Error details:', stderr);
+        
+        // Check for common error patterns and provide helpful messages
+        if (stderr.includes('server version') && stderr.includes('pg_dump version')) {
+          console.log('💡 This is a PostgreSQL version mismatch error.');
+          console.log('   Solution: Use PostgreSQL 17 client');
+          console.log('   Run: export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"');
+        } else if (stderr.includes('connection to server')) {
+          console.log('💡 This is a database connection error.');
+          console.log('   Check your DATABASE_URL and network connection.');
+        }
+        
         process.exit(1);
       }
       
@@ -70,6 +148,8 @@ async function backupDatabase() {
           });
         } else {
           console.error('❌ Backup file is empty');
+          console.log('🧹 Cleaning up empty backup file...');
+          fs.unlinkSync(backupPath);
           process.exit(1);
         }
       } else {
@@ -93,9 +173,21 @@ Options:
 Environment Variables:
   DATABASE_URL   PostgreSQL connection string (required)
 
+Features:
+  ✅ PostgreSQL version checking
+  ✅ Automatic empty file cleanup
+  ✅ Enhanced error messages
+  ✅ Compression with gzip
+  ✅ File size reporting
+
 Examples:
   DATABASE_URL="postgresql://..." node scripts/backup-database.js
   npm run backup:db
+
+Requirements:
+  - PostgreSQL client (version 17 recommended)
+  - On macOS: brew install postgresql@17
+  - Add to PATH: export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
 `);
   process.exit(0);
 }
