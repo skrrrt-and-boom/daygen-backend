@@ -18,7 +18,11 @@ jobs:
       - name: Setup PostgreSQL client
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          # Install PostgreSQL 17 client to match server version
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
 
       # DATABASE_URL is provided via job-level env above
       
@@ -49,6 +53,13 @@ jobs:
             echo "⚠️ Using direct connection - may have IPv6 issues"
             echo "💡 Consider using Supavisor connection string for better compatibility"
           fi
+          
+          # Use PostgreSQL 17 binaries
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          
+          # Verify PostgreSQL version
+          echo "🔍 PostgreSQL client version:"
+          pg_dump --version
           
           # Connectivity check
           echo "🔎 Testing DB connectivity..."
