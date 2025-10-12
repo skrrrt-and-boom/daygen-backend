@@ -3,13 +3,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateLocalUserInput, SanitizedUser } from './types';
 import { User } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { R2Service } from '../upload/r2.service';
 
 const normalizeEmailValue = (email: string): string =>
   email.trim().toLowerCase();
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly r2Service: R2Service,
+  ) {}
 
   async createLocalUser(input: CreateLocalUserInput): Promise<User> {
     const authUserId = randomUUID();
@@ -90,6 +94,62 @@ export class UsersService {
     });
 
     return this.toSanitizedUser(user);
+  }
+
+  async uploadProfilePicture(
+    authUserId: string,
+    base64Data: string,
+    mimeType?: string,
+  ): Promise<SanitizedUser> {
+    // Get current user to check for existing profile image
+    const currentUser = await this.findByAuthUserId(authUserId);
+
+    // Delete old profile picture from R2 if exists
+    if (currentUser.profileImage) {
+      try {
+        await this.r2Service.deleteFile(currentUser.profileImage);
+      } catch (error) {
+        console.error('Failed to delete old profile picture:', error);
+        // Continue even if deletion fails
+      }
+    }
+
+    // Upload new profile picture to R2
+    const profileImageUrl = await this.r2Service.uploadBase64Image(
+      base64Data,
+      mimeType || 'image/png',
+      'profile-pictures',
+    );
+
+    // Update user record with new profile image URL
+    const updatedUser = await this.prisma.user.update({
+      where: { authUserId },
+      data: { profileImage: profileImageUrl },
+    });
+
+    return this.toSanitizedUser(updatedUser);
+  }
+
+  async removeProfilePicture(authUserId: string): Promise<SanitizedUser> {
+    const currentUser = await this.findByAuthUserId(authUserId);
+
+    // Delete profile picture from R2 if exists
+    if (currentUser.profileImage) {
+      try {
+        await this.r2Service.deleteFile(currentUser.profileImage);
+      } catch (error) {
+        console.error('Failed to delete profile picture from R2:', error);
+        // Continue even if deletion fails
+      }
+    }
+
+    // Update user record to remove profile image
+    const updatedUser = await this.prisma.user.update({
+      where: { authUserId },
+      data: { profileImage: null },
+    });
+
+    return this.toSanitizedUser(updatedUser);
   }
 
   async updatePassword(userId: string, passwordHash: string): Promise<void> {

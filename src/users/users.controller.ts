@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -30,5 +30,24 @@ export class UsersController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.usersService.updateProfile(user.authUserId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('me/profile-picture')
+  async uploadProfilePicture(
+    @CurrentUser() user: SanitizedUser,
+    @Body() body: { base64Data: string; mimeType?: string },
+  ) {
+    return this.usersService.uploadProfilePicture(
+      user.authUserId,
+      body.base64Data,
+      body.mimeType,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('me/remove-profile-picture')
+  async removeProfilePicture(@CurrentUser() user: SanitizedUser) {
+    return this.usersService.removeProfilePicture(user.authUserId);
   }
 }
