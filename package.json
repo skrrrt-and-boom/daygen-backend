@@ -25,6 +25,7 @@
     "backup:users": "node scripts/export-users.js",
     "backup:full": "npm run backup:db && npm run backup:users",
     "backup:manual": "npm run backup:full && git add backups/ && git commit -m 'Database backup $(date)' && git push",
+    "backup:check-connection": "node scripts/get-supavisor-connection.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev",
