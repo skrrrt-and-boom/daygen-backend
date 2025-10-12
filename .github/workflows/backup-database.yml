@@ -8,6 +8,9 @@ on:
 jobs:
   backup:
     runs-on: ubuntu-latest
+    environment: production
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -16,10 +19,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
+
+      # DATABASE_URL is provided via job-level env above
       
       - name: Create database backup
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           mkdir -p backups
           timestamp=$(date +%Y%m%d_%H%M%S)
@@ -38,26 +41,61 @@ jobs:
             echo "Database host: $(echo $DATABASE_URL | cut -d'@' -f2 | cut -d':' -f1)"
           fi
           
+          # Connectivity check
+          echo "🔎 Testing DB connectivity..."
+          set +e
+          psql "$DATABASE_URL" -Atc "SELECT current_database(), current_user, version();" > /tmp/psql_check.txt 2>&1
+          psql_exit=$?
+          set -e
+          if [ $psql_exit -ne 0 ]; then
+            echo "❌ psql connectivity check failed (exit $psql_exit)"
+            echo "psql output:" && head -n 200 /tmp/psql_check.txt
+            exit 1
+          else
+            echo "✅ psql connectivity OK"
+            echo "psql output:" && head -n 5 /tmp/psql_check.txt
+          fi
+
           # Create backup
           echo "🔍 Running pg_dump command..."
+          # Temporarily disable exit-on-error to capture pg_dump failure details
+          set +e
           pg_dump "$DATABASE_URL" > "backups/${backup_file}" 2>&1
           pg_dump_exit_code=$?
+          set -e
           
           if [ $pg_dump_exit_code -ne 0 ]; then
             echo "❌ pg_dump failed with exit code: $pg_dump_exit_code"
-            echo "Error output:"
-            cat "backups/${backup_file}" 2>/dev/null || echo "No output file created"
+            echo "Error output (first 120 lines):"
+            if [ -f "backups/${backup_file}" ]; then
+              head -n 120 "backups/${backup_file}"
+            else
+              echo "No output file created"
+            fi
             exit 1
           fi
           
           # Check if backup was created successfully
-          if [ -f "backups/${backup_file}" ]; then
-            echo "✅ Backup created successfully"
-            ls -la "backups/${backup_file}"
-          else
+          if [ ! -f "backups/${backup_file}" ]; then
             echo "❌ Backup creation failed"
             exit 1
           fi
+
+          # Ensure file is not empty and appears to contain SQL
+          if [ ! -s "backups/${backup_file}" ]; then
+            echo "❌ Backup file is empty"
+            exit 1
+          fi
+
+          if ! grep -Eq '^(CREATE|COPY) ' "backups/${backup_file}"; then
+            echo "❌ Backup content looks suspicious (no CREATE/COPY statements found)"
+            echo "Showing first 40 lines for debugging:"
+            head -n 40 "backups/${backup_file}"
+            exit 1
+          fi
+
+          echo "✅ Backup created successfully"
+          ls -la "backups/${backup_file}"
           
           # Compress backup
           echo "🗜️ Compressing backup..."
@@ -75,8 +113,9 @@ jobs:
       
       - name: Create backup summary
         run: |
+          latest=$(ls -t backups/*.gz | head -n1)
           echo "## 📊 Backup Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Date**: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Backup File**: daygen_backup_$(date +%Y%m%d_%H%M%S).sql.gz" >> $GITHUB_STEP_SUMMARY
-          echo "- **Size**: $(du -h backups/*.gz | awk '{print $1}')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backup File**: $(basename "$latest")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: $(du -h "$latest" | awk '{print $1}')" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
