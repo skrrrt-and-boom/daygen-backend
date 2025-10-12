@@ -51,7 +51,11 @@ npm run backup:manual
 
 ### Environment Variables
 ```bash
+# Use Supavisor (pooler) connection for IPv4 compatibility
 DATABASE_URL="postgresql://postgres.kxrxsydlhfkkmvwypcqm:Tltcjvkeik93@aws-1-eu-central-1.pooler.supabase.com:6543/postgres"
+
+# ❌ Avoid direct connection (IPv6 issues on GitHub Actions)
+# DATABASE_URL="postgresql://postgres.kxrxsydlhfkkmvwypcqm:Tltcjvkeik93@db.kxrxsydlhfkkmvwypcqm.supabase.co:5432/postgres"
 ```
 
 ### GitHub Secrets
@@ -141,6 +145,16 @@ du -h backups/*
    - Check DATABASE_URL is correct
    - Verify database connection
    - Check PostgreSQL client version
+
+5. **IPv6 connection issues (Network is unreachable)**
+   ```bash
+   # Use Supavisor connection string instead of direct connection
+   # Get from: Supabase Dashboard > Settings > Database > Connection Pooling
+   DATABASE_URL="postgresql://...@aws-1-eu-central-1.pooler.supabase.com:6543/postgres"
+   
+   # Check if IP is banned
+   supabase network-bans get --project-ref <your-project-ref>
+   ```
 
 ### Getting Help
 - Check GitHub Actions logs for automated backups

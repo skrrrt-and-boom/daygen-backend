@@ -94,6 +94,15 @@ async function backupDatabase() {
   console.log('🔄 Creating database backup...');
   console.log('📄 Backup file:', backupFile);
   
+  // Check if using Supavisor (pooler) connection for better IPv4 compatibility
+  if (dbUrl.includes('pooler.supabase.com')) {
+    console.log('✅ Using Supavisor connection pooler (IPv4 compatible)');
+  } else if (dbUrl.includes('supabase.co')) {
+    console.log('⚠️ Using direct Supabase connection - may have IPv6 issues');
+    console.log('💡 Consider using Supavisor connection string for better compatibility');
+    console.log('   Get it from: Supabase Dashboard > Settings > Database > Connection Pooling');
+  }
+  
     // Create backup
     const command = `pg_dump "${dbUrl}" > "${backupPath}"`;
     
@@ -107,9 +116,13 @@ async function backupDatabase() {
           console.log('💡 This is a PostgreSQL version mismatch error.');
           console.log('   Solution: Use PostgreSQL 17 client');
           console.log('   Run: export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"');
-        } else if (stderr.includes('connection to server')) {
+        } else if (stderr.includes('connection to server') || stderr.includes('Network is unreachable')) {
           console.log('💡 This is a database connection error.');
-          console.log('   Check your DATABASE_URL and network connection.');
+          console.log('   Common solutions:');
+          console.log('   1. Use Supavisor connection string (pooler.supabase.com)');
+          console.log('   2. Check if your IP is banned: supabase network-bans get --project-ref <ref>');
+          console.log('   3. Verify DATABASE_URL is correct');
+          console.log('   4. Check network connectivity');
         }
         
         process.exit(1);

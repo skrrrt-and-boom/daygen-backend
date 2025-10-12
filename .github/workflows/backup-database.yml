@@ -38,7 +38,16 @@ jobs:
           else
             echo "✅ DATABASE_URL is set (length: ${#DATABASE_URL})"
             # Show just the host part for debugging
-            echo "Database host: $(echo $DATABASE_URL | cut -d'@' -f2 | cut -d':' -f1)"
+            db_host=$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/?]+).*|\1|')
+            echo "Database host: ${db_host}"
+          fi
+          
+          # Check if we're using Supavisor (pooler) connection
+          if echo "$DATABASE_URL" | grep -q "pooler.supabase.com"; then
+            echo "✅ Using Supavisor connection pooler (IPv4 compatible)"
+          else
+            echo "⚠️ Using direct connection - may have IPv6 issues"
+            echo "💡 Consider using Supavisor connection string for better compatibility"
           fi
           
           # Connectivity check
@@ -50,6 +59,11 @@ jobs:
           if [ $psql_exit -ne 0 ]; then
             echo "❌ psql connectivity check failed (exit $psql_exit)"
             echo "psql output:" && head -n 200 /tmp/psql_check.txt
+            echo ""
+            echo "💡 Troubleshooting tips:"
+            echo "   - Ensure DATABASE_URL uses Supavisor (pooler.supabase.com)"
+            echo "   - Check if your IP is banned: supabase network-bans get --project-ref <ref>"
+            echo "   - Verify database credentials are correct"
             exit 1
           else
             echo "✅ psql connectivity OK"
