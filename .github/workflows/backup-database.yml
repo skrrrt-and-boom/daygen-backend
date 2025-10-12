@@ -38,7 +38,17 @@ jobs:
           else
             echo "✅ DATABASE_URL is set (length: ${#DATABASE_URL})"
             # Show just the host part for debugging
-            echo "Database host: $(echo $DATABASE_URL | cut -d'@' -f2 | cut -d':' -f1)"
+            db_host=$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/?]+).*|\1|')
+            echo "Database host: ${db_host}"
+          fi
+          
+          # Force IPv4 to avoid runner IPv6 issues
+          ipv4=$(getent ahostsv4 "$db_host" | awk 'NR==1{print $1}')
+          if [ -n "$ipv4" ]; then
+            export PGHOSTADDR="$ipv4"
+            echo "📡 Using IPv4 address: $PGHOSTADDR"
+          else
+            echo "⚠️ Could not resolve IPv4 for $db_host; continuing without forcing IPv4"
           fi
           
           # Connectivity check
