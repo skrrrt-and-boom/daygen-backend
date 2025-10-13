@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
+import { SupabaseAuthService } from './supabase-auth.service';
 import { AuthController } from './auth.controller';
 import { UsersModule } from '../users/users.module';
+import { SupabaseModule } from '../supabase/supabase.module';
 import { JwtStrategy } from './jwt.strategy';
 import { AdminGuard } from './admin.guard';
 
@@ -12,6 +14,7 @@ const jwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
 @Module({
   imports: [
     UsersModule,
+    SupabaseModule,
     PassportModule,
     JwtModule.register({
       secret: jwtSecret,
@@ -19,7 +22,7 @@ const jwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, AdminGuard],
-  exports: [AuthService, AdminGuard],
+  providers: [AuthService, SupabaseAuthService, JwtStrategy, AdminGuard],
+  exports: [AuthService, SupabaseAuthService, AdminGuard],
 })
 export class AuthModule {}

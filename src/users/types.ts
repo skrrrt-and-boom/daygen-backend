@@ -1,6 +1,5 @@
 export interface CreateLocalUserInput {
   email: string;
-  passwordHash: string;
   displayName?: string;
 }
 

@@ -30,53 +30,13 @@ export class AuthService {
   ) {}
 
   async signUp(dto: SignUpDto): Promise<AuthResult> {
-    const existing = await this.usersService.findByEmailWithSecret(dto.email);
-    if (existing) {
-      throw new ConflictException('Email is already registered');
-    }
-
-    const passwordHash = await bcrypt.hash(dto.password, 12);
-    let user: User;
-    try {
-      user = await this.usersService.createLocalUser({
-        email: dto.email,
-        passwordHash,
-        displayName: dto.displayName,
-      });
-    } catch (error) {
-      if (
-        error instanceof PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException('Email is already registered');
-      }
-      throw error;
-    }
-
-    const safeUser = this.usersService.toSanitizedUser(user);
-    const token = await this.buildToken(safeUser);
-
-    return { accessToken: token, user: safeUser };
+    // This method is deprecated - use Supabase Auth instead
+    throw new BadRequestException('Please use /api/auth/supabase/signup instead');
   }
 
   async login(dto: LoginDto): Promise<AuthResult> {
-    const user = await this.usersService.findByEmailWithSecret(dto.email);
-    if (!user) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
-
-    const passwordMatches = await bcrypt.compare(
-      dto.password,
-      user.passwordHash,
-    );
-    if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
-
-    const safeUser = this.usersService.toSanitizedUser(user);
-    const token = await this.buildToken(safeUser);
-
-    return { accessToken: token, user: safeUser };
+    // This method is deprecated - use Supabase Auth instead
+    throw new BadRequestException('Please use /api/auth/supabase/login instead');
   }
 
   async getProfile(userId: string): Promise<SanitizedUser> {

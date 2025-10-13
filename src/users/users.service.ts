@@ -21,9 +21,9 @@ export class UsersService {
 
     return this.prisma.user.create({
       data: {
+        id: authUserId, // Use authUserId as the primary key
         email: normalizedEmail,
         authUserId,
-        passwordHash: input.passwordHash,
         displayName: input.displayName?.trim() || null,
         credits: 20, // 20 free credits for new accounts
         role: 'USER',
@@ -153,10 +153,8 @@ export class UsersService {
   }
 
   async updatePassword(userId: string, passwordHash: string): Promise<void> {
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash },
-    });
+    // This method is deprecated - password management is now handled by Supabase Auth
+    throw new Error('Password updates are now handled by Supabase Auth');
   }
 
   toSanitizedUser(user: User): SanitizedUser {

@@ -10,11 +10,10 @@ datasource db {
 }
 
 model User {
-  id           String        @id @default(cuid())
+  id           String        @id // This will be the Supabase auth.users.id (UUID)
   email        String        @unique
   createdAt    DateTime      @default(now())
-  authUserId   String        @unique
-  passwordHash String
+  authUserId   String        @unique // Same as id, for backward compatibility
   displayName  String?
   credits      Int           @default(20)
   profileImage String?

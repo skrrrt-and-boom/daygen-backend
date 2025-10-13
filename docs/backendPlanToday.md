@@ -1,6 +1,3 @@
-BACKUP COMMAND: npm run backup:manual 
-
----
 
 harden usage accounting: automated resets/top-ups, Stripe or internal billing hooks, rate-limits per provider, admin dashboards.
 
@@ -45,11 +42,12 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
+email auth
+Clear fast queues (dubbling usage event in supabase)
 User Management
 Payments (stripe)
 User profiles and settings
 Usage tracking and limits
-Batch generation
 Image editing tools
 R2 File Management (for asets like showcases)
 File organization (folders/tags)
