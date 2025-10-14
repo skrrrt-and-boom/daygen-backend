@@ -8,6 +8,11 @@ echo "Please enter your Supabase project details:"
 read -p "Supabase Anon Key: " SUPABASE_ANON_KEY
 read -p "Supabase Service Role Key: " SUPABASE_SERVICE_ROLE_KEY
 
+# Get Google OAuth credentials
+echo "Please enter your Google OAuth credentials:"
+read -p "Google Client ID: " GOOGLE_CLIENT_ID
+read -p "Google Client Secret: " GOOGLE_CLIENT_SECRET
+
 # Create .env file with real Supabase configuration
 cat > .env << EOF
 # Database Configuration
@@ -19,6 +24,10 @@ SHADOW_DATABASE_URL="postgresql://postgres.kxrxsydlhfkkmvwypcqm:Tltcjvkeik93@db.
 SUPABASE_URL="https://kxrxsydlhfkkmvwypcqm.supabase.co"
 SUPABASE_ANON_KEY="${SUPABASE_ANON_KEY}"
 SUPABASE_SERVICE_ROLE_KEY="${SUPABASE_SERVICE_ROLE_KEY}"
+
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET}"
 
 # JWT Secret (for backward compatibility)
 JWT_SECRET="your-super-secure-jwt-secret-here"

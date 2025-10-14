@@ -1,14 +1,46 @@
-import { Body, Controller, Get, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, Query, UseGuards, Headers } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from './types';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AdminGuard } from '../auth/admin.guard';
+import { SupabaseService } from '../supabase/supabase.service';
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly supabaseService: SupabaseService,
+  ) {}
+
+  @Post('me')
+  async createUserProfile(
+    @Headers('authorization') authorization: string,
+    @Body() body: { email: string; displayName?: string; authUserId: string },
+  ) {
+    const token = authorization?.replace('Bearer ', '');
+    if (!token) {
+      throw new Error('No token provided');
+    }
+
+    // Verify the token with Supabase
+    const { data: { user }, error } = await this.supabaseService.getClient().auth.getUser(token);
+    if (error || !user) {
+      throw new Error('Invalid or expired token');
+    }
+
+    // Create user profile in our database
+    try {
+      const profile = await this.supabaseService.createUserProfile(user, {
+        displayName: body.displayName,
+      });
+      return profile;
+    } catch (error) {
+      console.error('Error creating user profile:', error);
+      throw new Error('Failed to create user profile');
+    }
+  }
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
