@@ -32,10 +32,9 @@ export class UsersController {
 
     // Create user profile in our database
     try {
-      const profile = await this.supabaseService.createUserProfile(user, {
+      return this.usersService.upsertFromSupabaseUser(user, {
         displayName: body.displayName,
       });
-      return profile;
     } catch (error) {
       console.error('Error creating user profile:', error);
       throw new Error('Failed to create user profile');

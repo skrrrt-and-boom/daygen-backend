@@ -101,13 +101,6 @@ export class AuthController {
     // Verify the token and get user info
     const user = await this.supabaseAuthService.getProfile(accessToken);
     
-    // Ensure user profile is created in our database
-    try {
-      await this.supabaseAuthService.ensureUserProfile(user);
-    } catch (profileError) {
-      console.error('Error ensuring user profile:', profileError);
-    }
-    
     return {
       message: 'Authentication successful',
       user,
@@ -127,13 +120,6 @@ export class AuthController {
 
     // Verify the token and get user info
     const user = await this.supabaseAuthService.getProfile(access_token);
-    
-    // Ensure user profile is created in our database
-    try {
-      await this.supabaseAuthService.ensureUserProfile(user);
-    } catch (profileError) {
-      console.error('Error ensuring user profile:', profileError);
-    }
     
     return {
       message: 'Authentication successful',

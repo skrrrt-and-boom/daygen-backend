@@ -1,4 +1,10 @@
-import { IsEmail, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsEmail,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class MagicLinkSignUpDto {
   @IsEmail()
@@ -8,4 +14,10 @@ export class MagicLinkSignUpDto {
   @IsString()
   @MaxLength(80)
   displayName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  password?: string;
 }

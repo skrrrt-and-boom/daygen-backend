@@ -1,12 +1,17 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { SupabaseService } from '../supabase/supabase.service';
+import { UsersService } from '../users/users.service';
+import type { SanitizedUser } from '../users/types';
 
 @Injectable()
 export class GoogleAuthService {
   private oauth2Client: OAuth2Client;
 
-  constructor(private readonly supabaseService: SupabaseService) {
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly usersService: UsersService,
+  ) {
     this.oauth2Client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
   }
 
@@ -36,50 +41,40 @@ export class GoogleAuthService {
   /**
    * Create or update user in Supabase after Google authentication
    */
-  async createOrUpdateUser(googleUserInfo: TokenPayload) {
+  async createOrUpdateUser(
+    googleUserInfo: TokenPayload,
+  ): Promise<{ authUser: any; profile: SanitizedUser }> {
     try {
       if (!googleUserInfo.email || !googleUserInfo.sub) {
         throw new BadRequestException('Invalid Google user information');
       }
 
-      // Try to find existing user in our database first
-      let existingProfile;
-      try {
-        // Check if user exists in our custom User table by email
-        const { data: users, error: findError } = await this.supabaseService
-          .getAdminClient()
-          .from('User')
-          .select('*')
-          .eq('email', googleUserInfo.email)
-          .limit(1);
+      const adminClient = this.supabaseService.getAdminClient();
 
-        if (findError) {
-          console.error('Error finding user by email:', findError);
-        } else if (users && users.length > 0) {
-          existingProfile = users[0];
+      // Try to find existing user in our database first
+      const existingProfile =
+        await this.usersService.findByEmailWithSecret(googleUserInfo.email);
+
+      let authUser: any | null = null;
+
+      if (existingProfile) {
+        try {
+          const { data, error } = await adminClient.auth.admin.getUserById(
+            existingProfile.authUserId,
+          );
+          if (error) {
+            console.error('Error loading existing Supabase user:', error);
+          } else {
+            authUser = data.user;
+          }
+        } catch (lookupError) {
+          console.error('Failed to look up Supabase auth user:', lookupError);
         }
-      } catch (error) {
-        console.error('Error checking existing user:', error);
       }
 
-      let authUser;
-      if (existingProfile) {
-        // User exists in our database, use their auth ID
-        authUser = {
-          id: existingProfile.id,
-          email: existingProfile.email,
-          user_metadata: {
-            full_name: googleUserInfo.name,
-            avatar_url: googleUserInfo.picture,
-            provider: 'google',
-            google_id: googleUserInfo.sub,
-          },
-        };
-      } else {
-        // Create new user using Supabase admin
-        const { data: newUser, error: createError } = await this.supabaseService
-          .getAdminClient()
-          .auth.admin.createUser({
+      if (!authUser) {
+        const { data: newUser, error: createError } =
+          await adminClient.auth.admin.createUser({
             email: googleUserInfo.email,
             email_confirm: true,
             user_metadata: {
@@ -97,17 +92,12 @@ export class GoogleAuthService {
         authUser = newUser.user;
       }
 
-      // Ensure user profile exists in our custom User table
-      try {
-        const profile = await this.supabaseService.getUserProfile(authUser.id);
-        return { authUser, profile };
-      } catch (profileError) {
-        // Create user profile if it doesn't exist
-        const profile = await this.supabaseService.createUserProfile(authUser, {
-          displayName: googleUserInfo.name || 'Google User',
-        });
-        return { authUser, profile };
-      }
+      const profile = await this.usersService.upsertFromSupabaseUser(authUser, {
+        displayName: googleUserInfo.name || 'Google User',
+        profileImage: googleUserInfo.picture ?? undefined,
+      });
+
+      return { authUser, profile };
     } catch (error) {
       console.error('Error creating/updating user:', error);
       throw new BadRequestException('Failed to create user account');

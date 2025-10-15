@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLocalUserInput, SanitizedUser } from './types';
-import { User } from '@prisma/client';
+import { Prisma, User as PrismaUser } from '@prisma/client';
+import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
 import { R2Service } from '../upload/r2.service';
 
@@ -15,7 +16,7 @@ export class UsersService {
     private readonly r2Service: R2Service,
   ) {}
 
-  async createLocalUser(input: CreateLocalUserInput): Promise<User> {
+  async createLocalUser(input: CreateLocalUserInput): Promise<PrismaUser> {
     const authUserId = randomUUID();
     const normalizedEmail = normalizeEmailValue(input.email);
 
@@ -31,12 +32,12 @@ export class UsersService {
     });
   }
 
-  async findByEmailWithSecret(email: string): Promise<User | null> {
+  async findByEmailWithSecret(email: string): Promise<PrismaUser | null> {
     const normalizedEmail = normalizeEmailValue(email);
     return this.prisma.user.findUnique({ where: { email: normalizedEmail } });
   }
 
-  async findByEmail(email: string): Promise<User | null> {
+  async findByEmail(email: string): Promise<PrismaUser | null> {
     const normalizedEmail = normalizeEmailValue(email);
     return this.prisma.user.findUnique({
       where: { email: normalizedEmail },
@@ -52,10 +53,10 @@ export class UsersService {
         updatedAt: true,
         // Exclude passwordHash for security
       },
-    }) as Promise<User | null>;
+    }) as Promise<PrismaUser | null>;
   }
 
-  async findById(id: string): Promise<User> {
+  async findById(id: string): Promise<PrismaUser> {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
       throw new NotFoundException('User not found');
@@ -63,12 +64,16 @@ export class UsersService {
     return user;
   }
 
-  async findByAuthUserId(authUserId: string): Promise<User> {
+  async findByAuthUserId(authUserId: string): Promise<PrismaUser> {
     const user = await this.prisma.user.findUnique({ where: { authUserId } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
     return user;
+  }
+
+  async findByAuthUserIdOrNull(authUserId: string): Promise<PrismaUser | null> {
+    return this.prisma.user.findUnique({ where: { authUserId } });
   }
 
   async listBalances(limit = 100) {
@@ -157,7 +162,70 @@ export class UsersService {
     throw new Error('Password updates are now handled by Supabase Auth');
   }
 
-  toSanitizedUser(user: User): SanitizedUser {
+  async upsertFromSupabaseUser(
+    authUser: SupabaseAuthUser,
+    options: {
+      displayName?: string | null;
+      profileImage?: string | null;
+      credits?: number;
+    } = {},
+  ): Promise<SanitizedUser> {
+    if (!authUser?.id) {
+      throw new Error('Supabase user is missing an id');
+    }
+
+    const normalizedEmail = authUser.email
+      ? normalizeEmailValue(authUser.email)
+      : `${authUser.id}@supabase.local`;
+
+    const metadata = (authUser.user_metadata ??
+      {}) as Record<string, unknown>;
+    const metaDisplayName = this.extractString(
+      metadata.display_name ?? metadata.full_name,
+    );
+    const metaAvatarUrl = this.extractString(metadata.avatar_url);
+
+    const desiredDisplayName =
+      options.displayName?.trim() ||
+      metaDisplayName ||
+      (authUser.email ? authUser.email.split('@')[0] : null);
+
+    const desiredProfileImage =
+      options.profileImage ?? metaAvatarUrl ?? null;
+
+    const updateData: Prisma.UserUpdateInput = {
+      email: normalizedEmail,
+    };
+
+    if (desiredDisplayName !== undefined) {
+      updateData.displayName = desiredDisplayName;
+    }
+
+    if (desiredProfileImage !== undefined) {
+      updateData.profileImage = desiredProfileImage;
+    }
+
+    const user = await this.prisma.user.upsert({
+      where: { authUserId: authUser.id },
+      update: updateData,
+      create: {
+        id: authUser.id,
+        authUserId: authUser.id,
+        email: normalizedEmail,
+        displayName: desiredDisplayName ?? null,
+        profileImage: desiredProfileImage,
+        credits:
+          options.credits !== undefined && options.credits !== null
+            ? options.credits
+            : 20,
+        role: 'USER',
+      },
+    });
+
+    return this.toSanitizedUser(user);
+  }
+
+  toSanitizedUser(user: PrismaUser): SanitizedUser {
     return {
       id: user.id,
       authUserId: user.authUserId,
@@ -169,5 +237,12 @@ export class UsersService {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
+  }
+
+  private extractString(value: unknown): string | null {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+    return null;
   }
 }

@@ -9,20 +9,67 @@ import { MagicLinkSignUpDto } from './dto/magic-link-signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { UsersService } from '../users/users.service';
+import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
+import type { SanitizedUser } from '../users/types';
 
 export interface AuthResult {
   accessToken: string;
-  user: any;
+  user: SanitizedUser | null;
   needsEmailConfirmation?: boolean;
 }
 
 @Injectable()
 export class SupabaseAuthService {
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly usersService: UsersService,
+  ) {}
 
-  async signUp(dto: MagicLinkSignUpDto): Promise<{ message: string }> {
-    // Use magic link for signup - no password required
-    const { error } = await this.supabaseService.getClient().auth.signInWithOtp({
+  async signUp(
+    dto: MagicLinkSignUpDto,
+  ): Promise<{ message: string; needsEmailConfirmation: boolean }> {
+    const supabase = this.supabaseService.getClient();
+
+    if (dto.password) {
+      const { data, error } = await supabase.auth.signUp({
+        email: dto.email,
+        password: dto.password,
+        options: {
+          data: {
+            display_name: dto.displayName,
+          },
+          emailRedirectTo: `${process.env.FRONTEND_URL}/auth/callback`,
+        },
+      });
+
+      if (error) {
+        if (
+          error.message.includes('already registered') ||
+          error.message.includes('User already registered')
+        ) {
+          throw new ConflictException('Email is already registered');
+        }
+        throw new BadRequestException(error.message);
+      }
+
+      if (data.user) {
+        try {
+          await this.syncUserRecord(data.user, dto.displayName);
+        } catch (syncError) {
+          console.error('Failed to sync user profile after signup:', syncError);
+        }
+      }
+
+      return {
+        message: data.session
+          ? 'Account created successfully.'
+          : 'Check your email to confirm your account.',
+        needsEmailConfirmation: !Boolean(data.session),
+      };
+    }
+
+    const { error } = await supabase.auth.signInWithOtp({
       email: dto.email,
       options: {
         data: {
@@ -33,7 +80,10 @@ export class SupabaseAuthService {
     });
 
     if (error) {
-      if (error.message.includes('already registered') || error.message.includes('User already registered')) {
+      if (
+        error.message.includes('already registered') ||
+        error.message.includes('User already registered')
+      ) {
         throw new ConflictException('Email is already registered');
       }
       throw new BadRequestException(error.message);
@@ -41,14 +91,16 @@ export class SupabaseAuthService {
 
     return {
       message: 'Check your email for the magic link to complete your registration.',
+      needsEmailConfirmation: true,
     };
   }
 
   async signInWithPassword(dto: LoginDto): Promise<AuthResult> {
-    const { data, error } = await this.supabaseService.getClient().auth.signInWithPassword({
-      email: dto.email,
-      password: dto.password,
-    });
+    const { data, error } =
+      await this.supabaseService.getClient().auth.signInWithPassword({
+        email: dto.email,
+        password: dto.password,
+      });
 
     if (error) {
       // If password is wrong, provide option for password reset
@@ -59,25 +111,30 @@ export class SupabaseAuthService {
     }
 
     // Ensure user profile exists in our database
+    let sanitized: SanitizedUser | null = null;
     try {
-      await this.ensureUserProfilePrivate(data.user);
+      if (data.user) {
+        sanitized = await this.syncUserRecord(data.user);
+      }
     } catch (profileError) {
       console.error('Error ensuring user profile:', profileError);
     }
 
     return {
       accessToken: data.session?.access_token || '',
-      user: data.user,
+      user: sanitized,
     };
   }
 
   async signInWithMagicLink(email: string): Promise<{ message: string }> {
-    const { error } = await this.supabaseService.getClient().auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${process.env.FRONTEND_URL}/auth/callback`,
-      },
-    });
+    const { error } = await this.supabaseService
+      .getClient()
+      .auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${process.env.FRONTEND_URL}/auth/callback`,
+        },
+      });
 
     if (error) {
       throw new BadRequestException(error.message);
@@ -120,34 +177,21 @@ export class SupabaseAuthService {
     };
   }
 
-  async getProfile(accessToken: string): Promise<any> {
-    const { data: { user }, error } = await this.supabaseService.getClient().auth.getUser(accessToken);
-    
+  async getProfile(accessToken: string): Promise<SanitizedUser> {
+    const {
+      data: { user },
+      error,
+    } = await this.supabaseService.getClient().auth.getUser(accessToken);
+
     if (error || !user) {
       throw new UnauthorizedException('Invalid or expired token');
     }
 
-    // Get user profile from our database
     try {
-      const profile = await this.supabaseService.getUserProfile(user.id);
-      return {
-        ...user,
-        ...profile,
-      };
+      return await this.syncUserRecord(user);
     } catch (profileError) {
-      // If profile doesn't exist, create it
-      try {
-        const profile = await this.supabaseService.createUserProfile(user, {
-          displayName: user.user_metadata?.display_name || user.email?.split('@')[0],
-        });
-        return {
-          ...user,
-          ...profile,
-        };
-      } catch (createError) {
-        console.error('Error creating user profile:', createError);
-        return user;
-      }
+      console.error('Error syncing user profile:', profileError);
+      throw new UnauthorizedException('Unable to load user profile');
     }
   }
 
@@ -163,23 +207,12 @@ export class SupabaseAuthService {
     };
   }
 
-  async ensureUserProfile(authUser: any): Promise<void> {
-    try {
-      await this.supabaseService.getUserProfile(authUser.id);
-    } catch (error) {
-      // Profile doesn't exist, create it
-      await this.supabaseService.createUserProfile(authUser, {
-        displayName: authUser.user_metadata?.display_name || authUser.email?.split('@')[0],
-      });
-    }
-  }
-
-  private async ensureUserProfilePrivate(authUser: any): Promise<void> {
-    try {
-      await this.supabaseService.getUserProfile(authUser.id);
-    } catch (error) {
-      // Profile doesn't exist, create it
-      await this.supabaseService.createUserProfile(authUser);
-    }
+  private async syncUserRecord(
+    authUser: SupabaseAuthUser,
+    displayNameOverride?: string | null,
+  ): Promise<SanitizedUser> {
+    return this.usersService.upsertFromSupabaseUser(authUser, {
+      displayName: displayNameOverride ?? undefined,
+    });
   }
 }

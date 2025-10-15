@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import {
   Strategy,
@@ -12,8 +8,12 @@ import {
 import type { Request } from 'express';
 import { UsersService } from '../users/users.service';
 import { JwtPayload } from './jwt.types';
+import { SupabaseService } from '../supabase/supabase.service';
 
-const jwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
+const jwtSecret =
+  process.env.SUPABASE_JWT_SECRET ??
+  process.env.JWT_SECRET ??
+  'change-me-in-production';
 const bearerTokenMatcher = /^Bearer\s+(.+)$/i;
 const jwtFromRequest: JwtFromRequestFunction = (req: Request) => {
   const header = req?.headers?.authorization;
@@ -27,7 +27,10 @@ const jwtFromRequest: JwtFromRequestFunction = (req: Request) => {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private readonly usersService: UsersService) {
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly supabaseService: SupabaseService,
+  ) {
     super({
       jwtFromRequest,
       ignoreExpiration: false,
@@ -36,18 +39,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
+    const authUserId = payload.sub ?? payload.authUserId;
+
+    if (!authUserId) {
+      throw new UnauthorizedException('Invalid authentication token');
+    }
+
+    const existing = await this.usersService.findByAuthUserIdOrNull(authUserId);
+    if (existing) {
+      return this.usersService.toSanitizedUser(existing);
+    }
+
     try {
-      const user = await this.usersService.findById(payload.sub);
-      if (!user || user.authUserId !== payload.authUserId) {
+      const { data, error } =
+        await this.supabaseService
+          .getAdminClient()
+          .auth.admin.getUserById(authUserId);
+
+      if (error || !data?.user) {
         throw new UnauthorizedException('Session is no longer valid');
       }
 
-      return this.usersService.toSanitizedUser(user);
+      return await this.usersService.upsertFromSupabaseUser(data.user);
     } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw new UnauthorizedException('Session is no longer valid');
-      }
-      throw error;
+      console.error('Failed to synchronize Supabase user:', error);
+      throw new UnauthorizedException('Session is no longer valid');
     }
   }
 }
