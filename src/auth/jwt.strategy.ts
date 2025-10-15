@@ -10,10 +10,12 @@ import { UsersService } from '../users/users.service';
 import { JwtPayload } from './jwt.types';
 import { SupabaseService } from '../supabase/supabase.service';
 
-const jwtSecret =
-  process.env.SUPABASE_JWT_SECRET ??
-  process.env.JWT_SECRET ??
-  'change-me-in-production';
+const supabaseJwtSecret = process.env.SUPABASE_JWT_SECRET;
+const fallbackJwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
+
+const jwtSecret = supabaseJwtSecret
+  ? Buffer.from(supabaseJwtSecret, 'base64')
+  : fallbackJwtSecret;
 const bearerTokenMatcher = /^Bearer\s+(.+)$/i;
 const jwtFromRequest: JwtFromRequestFunction = (req: Request) => {
   const header = req?.headers?.authorization;

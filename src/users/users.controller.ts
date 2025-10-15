@@ -24,15 +24,13 @@ export class UsersController {
       throw new Error('No token provided');
     }
 
-    // Verify the token with Supabase
-    const { data: { user }, error } = await this.supabaseService.getClient().auth.getUser(token);
-    if (error || !user) {
-      throw new Error('Invalid or expired token');
-    }
-
-    // Create user profile in our database
     try {
-      return this.usersService.upsertFromSupabaseUser(user, {
+      const authUser = await this.supabaseService.getUserFromToken(token);
+      if (!authUser) {
+        throw new Error('Invalid or expired token');
+      }
+
+      return this.usersService.upsertFromSupabaseUser(authUser, {
         displayName: body.displayName,
       });
     } catch (error) {

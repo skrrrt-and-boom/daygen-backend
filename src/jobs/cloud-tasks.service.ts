@@ -4,6 +4,7 @@ import {
   Logger,
   Optional,
   forwardRef,
+  NotFoundException,
 } from '@nestjs/common';
 import { CloudTasksClient } from '@google-cloud/tasks';
 import { PrismaService } from '../prisma/prisma.service';
@@ -217,7 +218,7 @@ export class CloudTasksService {
     });
 
     if (!job) {
-      throw new Error('Job not found');
+      throw new NotFoundException('Job not found');
     }
 
     return job;

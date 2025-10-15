@@ -178,17 +178,12 @@ export class SupabaseAuthService {
   }
 
   async getProfile(accessToken: string): Promise<SanitizedUser> {
-    const {
-      data: { user },
-      error,
-    } = await this.supabaseService.getClient().auth.getUser(accessToken);
-
-    if (error || !user) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-
     try {
-      return await this.syncUserRecord(user);
+      const authUser = await this.supabaseService.getUserFromToken(accessToken);
+      if (!authUser) {
+        throw new UnauthorizedException('Invalid or expired token');
+      }
+      return await this.syncUserRecord(authUser);
     } catch (profileError) {
       console.error('Error syncing user profile:', profileError);
       throw new UnauthorizedException('Unable to load user profile');
@@ -215,4 +210,5 @@ export class SupabaseAuthService {
       displayName: displayNameOverride ?? undefined,
     });
   }
+
 }
