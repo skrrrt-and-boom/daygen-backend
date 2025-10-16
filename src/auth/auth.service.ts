@@ -4,7 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
+// import * as bcrypt from 'bcrypt';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UsersService } from '../users/users.service';
@@ -95,11 +95,7 @@ export class AuthService {
         throw new NotFoundException('User not found');
       }
 
-      // Hash the new password
-      const passwordHash = await bcrypt.hash(dto.newPassword, 12);
-
       // Update the user's password
-
       await this.usersService.updatePassword();
 
       return { message: 'Password has been successfully reset.' };
