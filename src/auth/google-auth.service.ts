@@ -113,7 +113,9 @@ export class GoogleAuthService {
     const googleUserInfo = await this.verifyIdToken(idToken);
 
     // Create or update user in our system
-    const { authUser, profile } = await this.createOrUpdateUser(googleUserInfo);
+    const { authUser, profile } = (await this.createOrUpdateUser(
+      googleUserInfo,
+    )) as any;
 
     // Generate a session token for the user
     const { data: sessionData, error: sessionError } =
@@ -138,7 +140,7 @@ export class GoogleAuthService {
 
     return {
       user: authUser,
-      profile: profile as any,
+      profile: profile,
       accessToken: accessToken || '',
       refreshToken: refreshToken || '',
     };

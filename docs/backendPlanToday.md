@@ -42,7 +42,7 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
-email auth - fix with codex, because auto cursor can't handle
+Update supabase keys on the google cloud run 
 Clear fast queues (dubbling usage event in supabase)
 User Management
 Payments (stripe)
