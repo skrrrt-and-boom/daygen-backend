@@ -100,7 +100,7 @@ export class AuthService {
 
       // Update the user's password
 
-      await this.usersService.updatePassword(userId, passwordHash);
+      await this.usersService.updatePassword();
 
       return { message: 'Password has been successfully reset.' };
     } catch (error) {

@@ -62,12 +62,8 @@ export class AuthController {
   }
 
   @Post('signout')
-  async signOut(@Headers('authorization') authorization: string) {
-    const token = authorization?.replace('Bearer ', '');
-    if (!token) {
-      throw new UnauthorizedException('No token provided');
-    }
-    return this.supabaseAuthService.signOut(token);
+  async signOut() {
+    return this.supabaseAuthService.signOut();
   }
 
   // Google ID token verification endpoint
