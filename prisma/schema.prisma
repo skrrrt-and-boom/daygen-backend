@@ -10,18 +10,18 @@ datasource db {
 }
 
 model User {
-  id           String        @id // This will be the Supabase auth.users.id (UUID)
-  email        String        @unique
-  createdAt    DateTime      @default(now())
-  authUserId   String        @unique // Same as id, for backward compatibility
+  id           String       @id
+  email        String       @unique
+  createdAt    DateTime     @default(now())
+  authUserId   String       @unique
   displayName  String?
-  credits      Int           @default(20)
+  credits      Int          @default(20)
   profileImage String?
-  updatedAt    DateTime      @updatedAt
-  role         UserRole      @default(USER)
+  updatedAt    DateTime     @updatedAt
+  role         UserRole     @default(USER)
+  jobs         Job[]
   r2Files      R2File[]
   usageEvents  UsageEvent[]
-  jobs         Job[]
 }
 
 model UsageEvent {
@@ -49,37 +49,36 @@ model R2File {
   mimeType    String?
   prompt      String?
   model       String?
-  deletedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
   owner       User      @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
 
   @@index([ownerAuthId, createdAt(sort: Desc)])
   @@index([ownerAuthId, deletedAt])
 }
 
-enum UserRole {
-  USER
-  ADMIN
-}
-
 model Job {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   userId      String
   type        JobType
   status      JobStatus @default(PENDING)
-  progress    Int      @default(0)
+  progress    Int       @default(0)
   resultUrl   String?
   error       String?
   metadata    Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   completedAt DateTime?
-  
-  user        User     @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
-  
+  user        User      @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
+
   @@index([userId, status])
   @@index([status, createdAt])
+}
+
+enum UserRole {
+  USER
+  ADMIN
 }
 
 enum JobType {

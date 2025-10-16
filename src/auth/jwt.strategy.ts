@@ -37,6 +37,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest,
       ignoreExpiration: false,
       secretOrKey: jwtSecret,
+      algorithms: ['HS256'],
+      audience: 'authenticated',
     } as StrategyOptionsWithoutRequest);
   }
 
@@ -59,6 +61,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           .auth.admin.getUserById(authUserId);
 
       if (error || !data?.user) {
+        console.error('Supabase admin getUserById failed:', error);
         throw new UnauthorizedException('Session is no longer valid');
       }
 

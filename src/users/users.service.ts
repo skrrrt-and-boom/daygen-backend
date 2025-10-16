@@ -205,22 +205,51 @@ export class UsersService {
       updateData.profileImage = desiredProfileImage;
     }
 
-    const user = await this.prisma.user.upsert({
+    // First, try to find existing user by authUserId
+    let user = await this.prisma.user.findUnique({
       where: { authUserId: authUser.id },
-      update: updateData,
-      create: {
-        id: authUser.id,
-        authUserId: authUser.id,
-        email: normalizedEmail,
-        displayName: desiredDisplayName ?? null,
-        profileImage: desiredProfileImage,
-        credits:
-          options.credits !== undefined && options.credits !== null
-            ? options.credits
-            : 20,
-        role: 'USER',
-      },
     });
+
+    if (user) {
+      // Update existing user
+      user = await this.prisma.user.update({
+        where: { authUserId: authUser.id },
+        data: updateData,
+      });
+    } else {
+      // Check if user exists with same email but different authUserId
+      const existingUserByEmail = await this.prisma.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+
+      if (existingUserByEmail) {
+        // Update the existing user with the new authUserId
+        user = await this.prisma.user.update({
+          where: { email: normalizedEmail },
+          data: {
+            ...updateData,
+            id: authUser.id,
+            authUserId: authUser.id,
+          },
+        });
+      } else {
+        // Create new user
+        user = await this.prisma.user.create({
+          data: {
+            id: authUser.id,
+            authUserId: authUser.id,
+            email: normalizedEmail,
+            displayName: desiredDisplayName ?? null,
+            profileImage: desiredProfileImage,
+            credits:
+              options.credits !== undefined && options.credits !== null
+                ? options.credits
+                : 20,
+            role: 'USER',
+          },
+        });
+      }
+    }
 
     return this.toSanitizedUser(user);
   }
