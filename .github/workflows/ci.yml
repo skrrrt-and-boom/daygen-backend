@@ -39,6 +39,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Create shadow database
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          PGPASSWORD=postgres createdb -h localhost -U postgres -p 5432 test_db_shadow || true
+
       - name: Generate Prisma client
         run: npx prisma generate
 
@@ -47,7 +52,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test_db
-          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db_shadow
 
       - name: Run linting
         run: npm run lint:check
@@ -57,7 +62,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test_db
-          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db_shadow
 
       - name: Build application
         run: npm run build
