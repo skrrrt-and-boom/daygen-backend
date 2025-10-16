@@ -46,6 +46,8 @@ jobs:
         run: npx prisma db push
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
 
       - name: Run linting
         run: npm run lint:check
@@ -54,6 +56,8 @@ jobs:
         run: npm test
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
 
       - name: Build application
         run: npm run build
