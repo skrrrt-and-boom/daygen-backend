@@ -23,7 +23,13 @@ const jwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, SupabaseAuthService, GoogleAuthService, JwtStrategy, AdminGuard],
+  providers: [
+    AuthService,
+    SupabaseAuthService,
+    GoogleAuthService,
+    JwtStrategy,
+    AdminGuard,
+  ],
   exports: [AuthService, SupabaseAuthService, GoogleAuthService, AdminGuard],
 })
 export class AuthModule {}

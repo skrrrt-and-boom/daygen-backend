@@ -157,7 +157,7 @@ export class UsersService {
     return this.toSanitizedUser(updatedUser);
   }
 
-  async updatePassword(userId: string, passwordHash: string): Promise<void> {
+  updatePassword(): Promise<void> {
     // This method is deprecated - password management is now handled by Supabase Auth
     throw new Error('Password updates are now handled by Supabase Auth');
   }
@@ -178,8 +178,7 @@ export class UsersService {
       ? normalizeEmailValue(authUser.email)
       : `${authUser.id}@supabase.local`;
 
-    const metadata = (authUser.user_metadata ??
-      {}) as Record<string, unknown>;
+    const metadata = (authUser.user_metadata ?? {}) as Record<string, unknown>;
     const metaDisplayName = this.extractString(
       metadata.display_name ?? metadata.full_name,
     );
@@ -190,8 +189,7 @@ export class UsersService {
       metaDisplayName ||
       (authUser.email ? authUser.email.split('@')[0] : null);
 
-    const desiredProfileImage =
-      options.profileImage ?? metaAvatarUrl ?? null;
+    const desiredProfileImage = options.profileImage ?? metaAvatarUrl ?? null;
 
     const updateData: Prisma.UserUpdateInput = {
       email: normalizedEmail,

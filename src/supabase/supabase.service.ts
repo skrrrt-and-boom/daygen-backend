@@ -13,19 +13,21 @@ export class SupabaseService {
     const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
-      throw new Error('Missing Supabase configuration. Please set SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY environment variables.');
+      throw new Error(
+        'Missing Supabase configuration. Please set SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY environment variables.',
+      );
     }
 
     // Client for user operations (uses anon key)
-    this.supabase = createClient(supabaseUrl, supabaseAnonKey);
+    this.supabase = createClient(supabaseUrl, supabaseAnonKey) as any;
 
     // Admin client for server-side operations (uses service role key)
     this.supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
       auth: {
         autoRefreshToken: false,
-        persistSession: false
-      }
-    });
+        persistSession: false,
+      },
+    }) as any;
   }
 
   getClient(): SupabaseClient {
@@ -48,7 +50,10 @@ export class SupabaseService {
     }
 
     if (error) {
-      console.warn('Supabase getUser failed, falling back to token decode:', error);
+      console.warn(
+        'Supabase getUser failed, falling back to token decode:',
+        error,
+      );
     }
 
     const userId = this.extractUserIdFromToken(token);
@@ -56,7 +61,8 @@ export class SupabaseService {
       throw new UnauthorizedException('Invalid Supabase token');
     }
 
-    const { data, error: lookupError } = await this.supabaseAdmin.auth.admin.getUserById(userId);
+    const { data, error: lookupError } =
+      await this.supabaseAdmin.auth.admin.getUserById(userId);
     if (lookupError || !data?.user) {
       console.error('Supabase admin getUserById failed:', lookupError);
       throw new UnauthorizedException('Unable to resolve Supabase user');
@@ -73,10 +79,7 @@ export class SupabaseService {
     }
 
     try {
-      const decoded = jsonwebtoken.verify(
-        token,
-        Buffer.from(secret, 'base64'),
-      );
+      const decoded = jsonwebtoken.verify(token, Buffer.from(secret, 'base64'));
 
       if (typeof decoded === 'object' && decoded && 'sub' in decoded) {
         const value = decoded.sub;
@@ -88,5 +91,4 @@ export class SupabaseService {
 
     return null;
   }
-
 }

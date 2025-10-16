@@ -52,10 +52,11 @@ export class GoogleAuthService {
       const adminClient = this.supabaseService.getAdminClient();
 
       // Try to find existing user in our database first
-      const existingProfile =
-        await this.usersService.findByEmailWithSecret(googleUserInfo.email);
+      const existingProfile = await this.usersService.findByEmailWithSecret(
+        googleUserInfo.email,
+      );
 
-      let authUser: any | null = null;
+      let authUser: any;
 
       if (existingProfile) {
         try {
@@ -97,7 +98,7 @@ export class GoogleAuthService {
         profileImage: googleUserInfo.picture ?? undefined,
       });
 
-      return { authUser, profile };
+      return { authUser: authUser, profile: profile as any };
     } catch (error) {
       console.error('Error creating/updating user:', error);
       throw new BadRequestException('Failed to create user account');
@@ -110,14 +111,13 @@ export class GoogleAuthService {
   async authenticateWithIdToken(idToken: string) {
     // Verify the ID token
     const googleUserInfo = await this.verifyIdToken(idToken);
-    
+
     // Create or update user in our system
     const { authUser, profile } = await this.createOrUpdateUser(googleUserInfo);
 
     // Generate a session token for the user
-    const { data: sessionData, error: sessionError } = await this.supabaseService
-      .getAdminClient()
-      .auth.admin.generateLink({
+    const { data: sessionData, error: sessionError } =
+      await this.supabaseService.getAdminClient().auth.admin.generateLink({
         type: 'magiclink',
         email: authUser.email!,
         options: {
@@ -131,14 +131,14 @@ export class GoogleAuthService {
     }
 
     // Extract tokens from the generated link
-    const link = sessionData.properties?.action_link;
+    const link = (sessionData as any).properties?.action_link;
     const url = new URL(link);
     const accessToken = url.searchParams.get('access_token');
     const refreshToken = url.searchParams.get('refresh_token');
 
     return {
       user: authUser,
-      profile,
+      profile: profile as any,
       accessToken: accessToken || '',
       refreshToken: refreshToken || '',
     };

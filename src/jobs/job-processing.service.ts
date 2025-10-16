@@ -131,7 +131,10 @@ export class JobProcessingService {
           }
         } catch (responseError) {
           // If getResponse fails, just use the original error message
-          this.logger.warn('Failed to extract response from error', responseError);
+          this.logger.warn(
+            'Failed to extract response from error',
+            responseError,
+          );
         }
       }
 

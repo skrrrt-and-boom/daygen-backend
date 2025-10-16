@@ -12,10 +12,12 @@ export class SignUpDto {
   email: string;
 
   @IsOptional()
-  @ValidateIf((o) => o.password !== undefined)
+  @ValidateIf((o: any) => o.password !== undefined)
   @IsString()
   @MinLength(8, { message: 'Password must be at least 8 characters long' })
-  @MaxLength(128, { message: 'Password must be no more than 128 characters long' })
+  @MaxLength(128, {
+    message: 'Password must be no more than 128 characters long',
+  })
   password?: string;
 
   @IsOptional()

@@ -13,18 +13,19 @@ import { SupabaseService } from '../supabase/supabase.service';
 const supabaseJwtSecret = process.env.SUPABASE_JWT_SECRET;
 const fallbackJwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
 
-const jwtSecret = supabaseJwtSecret
-  ? Buffer.from(supabaseJwtSecret, 'base64')
-  : fallbackJwtSecret;
+// Use SUPABASE_JWT_SECRET directly (not base64 decoded) as this is what Supabase uses
+const jwtSecret = supabaseJwtSecret || fallbackJwtSecret;
 const bearerTokenMatcher = /^Bearer\s+(.+)$/i;
 const jwtFromRequest: JwtFromRequestFunction = (req: Request) => {
   const header = req?.headers?.authorization;
+
   if (!header) {
     return null;
   }
 
   const match = header.match(bearerTokenMatcher);
-  return match?.[1] ?? null;
+  const token = match?.[1] ?? null;
+  return token;
 };
 
 @Injectable()
@@ -38,11 +39,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ignoreExpiration: false,
       secretOrKey: jwtSecret,
       algorithms: ['HS256'],
-      audience: 'authenticated',
     } as StrategyOptionsWithoutRequest);
   }
 
   async validate(payload: JwtPayload) {
+    // Check if the user has the authenticated role
+    if (payload.role !== 'authenticated') {
+      throw new UnauthorizedException('Invalid authentication token');
+    }
+
     const authUserId = payload.sub ?? payload.authUserId;
 
     if (!authUserId) {
@@ -55,19 +60,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     try {
-      const { data, error } =
-        await this.supabaseService
-          .getAdminClient()
-          .auth.admin.getUserById(authUserId);
+      const { data, error } = await this.supabaseService
+        .getAdminClient()
+        .auth.admin.getUserById(authUserId);
 
       if (error || !data?.user) {
-        console.error('Supabase admin getUserById failed:', error);
         throw new UnauthorizedException('Session is no longer valid');
       }
 
       return await this.usersService.upsertFromSupabaseUser(data.user);
-    } catch (error) {
-      console.error('Failed to synchronize Supabase user:', error);
+    } catch {
       throw new UnauthorizedException('Session is no longer valid');
     }
   }

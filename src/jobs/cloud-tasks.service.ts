@@ -237,8 +237,13 @@ export class CloudTasksService {
 
       this.logger.log(`Updated job ${jobId} progress to ${progress}%`);
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Record to update not found')) {
-        this.logger.warn(`Job ${jobId} not found when trying to update progress - job may have been deleted or failed`);
+      if (
+        error instanceof Error &&
+        error.message.includes('Record to update not found')
+      ) {
+        this.logger.warn(
+          `Job ${jobId} not found when trying to update progress - job may have been deleted or failed`,
+        );
         return;
       }
       throw error;
@@ -292,8 +297,13 @@ export class CloudTasksService {
 
       this.logger.error(`Failed job ${jobId}: ${error}`);
     } catch (updateError) {
-      if (updateError instanceof Error && updateError.message.includes('Record to update not found')) {
-        this.logger.warn(`Job ${jobId} not found when trying to mark as failed - job may have been deleted`);
+      if (
+        updateError instanceof Error &&
+        updateError.message.includes('Record to update not found')
+      ) {
+        this.logger.warn(
+          `Job ${jobId} not found when trying to mark as failed - job may have been deleted`,
+        );
         return;
       }
       throw updateError;

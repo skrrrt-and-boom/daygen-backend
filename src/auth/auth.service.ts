@@ -1,21 +1,15 @@
 import {
-  ConflictException,
   Injectable,
-  UnauthorizedException,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { SignUpDto } from './dto/signup.dto';
-import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UsersService } from '../users/users.service';
 import { JwtPayload } from './jwt.types';
 import { SanitizedUser } from '../users/types';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
-import { User } from '@prisma/client';
 
 export interface AuthResult {
   accessToken: string;
@@ -29,14 +23,18 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async signUp(dto: SignUpDto): Promise<AuthResult> {
+  signUp(): Promise<AuthResult> {
     // This method is deprecated - use Supabase Auth instead
-    throw new BadRequestException('Please use /api/auth/supabase/signup instead');
+    throw new BadRequestException(
+      'Please use /api/auth/supabase/signup instead',
+    );
   }
 
-  async login(dto: LoginDto): Promise<AuthResult> {
+  login(): Promise<AuthResult> {
     // This method is deprecated - use Supabase Auth instead
-    throw new BadRequestException('Please use /api/auth/supabase/login instead');
+    throw new BadRequestException(
+      'Please use /api/auth/supabase/login instead',
+    );
   }
 
   async getProfile(userId: string): Promise<SanitizedUser> {
@@ -101,7 +99,7 @@ export class AuthService {
       const passwordHash = await bcrypt.hash(dto.newPassword, 12);
 
       // Update the user's password
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
       await this.usersService.updatePassword(userId, passwordHash);
 
       return { message: 'Password has been successfully reset.' };

@@ -65,7 +65,7 @@ export class SupabaseAuthService {
         message: data.session
           ? 'Account created successfully.'
           : 'Check your email to confirm your account.',
-        needsEmailConfirmation: !Boolean(data.session),
+        needsEmailConfirmation: !data.session,
       };
     }
 
@@ -90,14 +90,16 @@ export class SupabaseAuthService {
     }
 
     return {
-      message: 'Check your email for the magic link to complete your registration.',
+      message:
+        'Check your email for the magic link to complete your registration.',
       needsEmailConfirmation: true,
     };
   }
 
   async signInWithPassword(dto: LoginDto): Promise<AuthResult> {
-    const { data, error } =
-      await this.supabaseService.getClient().auth.signInWithPassword({
+    const { data, error } = await this.supabaseService
+      .getClient()
+      .auth.signInWithPassword({
         email: dto.email,
         password: dto.password,
       });
@@ -105,7 +107,9 @@ export class SupabaseAuthService {
     if (error) {
       // If password is wrong, provide option for password reset
       if (error.message.includes('Invalid login credentials')) {
-        throw new UnauthorizedException('Invalid email or password. Use forgot password to reset your password.');
+        throw new UnauthorizedException(
+          'Invalid email or password. Use forgot password to reset your password.',
+        );
       }
       throw new UnauthorizedException(error.message);
     }
@@ -146,19 +150,19 @@ export class SupabaseAuthService {
   }
 
   async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
-    const { error } = await this.supabaseService.getClient().auth.resetPasswordForEmail(
-      dto.email,
-      {
+    const { error } = await this.supabaseService
+      .getClient()
+      .auth.resetPasswordForEmail(dto.email, {
         redirectTo: `${process.env.FRONTEND_URL}/auth/reset-password`,
-      }
-    );
+      });
 
     if (error) {
       throw new BadRequestException(error.message);
     }
 
     return {
-      message: 'If an account with that email exists, we have sent a password reset link.',
+      message:
+        'If an account with that email exists, we have sent a password reset link.',
     };
   }
 
@@ -190,9 +194,9 @@ export class SupabaseAuthService {
     }
   }
 
-  async signOut(accessToken: string): Promise<{ message: string }> {
+  async signOut(): Promise<{ message: string }> {
     const { error } = await this.supabaseService.getClient().auth.signOut();
-    
+
     if (error) {
       throw new BadRequestException(error.message);
     }
@@ -210,5 +214,4 @@ export class SupabaseAuthService {
       displayName: displayNameOverride ?? undefined,
     });
   }
-
 }

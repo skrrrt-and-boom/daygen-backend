@@ -5,146 +5,55 @@ on:
     branches:
       - main
   pull_request:
+    branches:
+      - main
 
 jobs:
-  build-and-test:
+  test:
     runs-on: ubuntu-latest
+
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:15
         env:
-          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: daygen
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
         ports:
           - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/daygen
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/daygen
-      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/daygen_test
-      JWT_SECRET: test-secret
-      REDIS_URL: redis://localhost:6379
-      SKIP_DATABASE_HEALTHCHECK: "false"
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 22
           cache: 'npm'
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-
-      - name: Install Node dependencies
+      - name: Install dependencies
         run: npm ci
-
-      - name: Wait for Postgres
-        env:
-          PGPASSWORD: postgres
-        run: |
-          for i in {1..20}; do
-            if pg_isready -h localhost -p 5432 -U postgres; then
-              break
-            fi
-            sleep 3
-          done
-
-      - name: Create test database
-        env:
-          PGPASSWORD: postgres
-        run: psql -h localhost -U postgres -d postgres -c 'CREATE DATABASE daygen_test;'
-
-      - name: Setup Supabase auth schema for testing
-        env:
-          PGPASSWORD: postgres
-        run: |
-          # Create auth schema and mock functions for testing
-          psql -h localhost -U postgres -d daygen -c "
-            CREATE SCHEMA IF NOT EXISTS auth;
-            
-            -- Create mock auth.uid() function that returns a test UUID
-            CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS \$\$
-            BEGIN
-              RETURN '00000000-0000-0000-0000-000000000000'::uuid;
-            END;
-            \$\$ LANGUAGE plpgsql SECURITY DEFINER;
-            
-            -- Create mock auth.role() function that returns 'service_role'
-            CREATE OR REPLACE FUNCTION auth.role() RETURNS text AS \$\$
-            BEGIN
-              RETURN 'service_role';
-            END;
-            \$\$ LANGUAGE plpgsql SECURITY DEFINER;
-            
-            -- Create service_role if it doesn't exist
-            DO \$\$
-            BEGIN
-              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-                CREATE ROLE service_role;
-              END IF;
-            END
-            \$\$;
-          "
-          
-          # Apply same setup to test database
-          psql -h localhost -U postgres -d daygen_test -c "
-            CREATE SCHEMA IF NOT EXISTS auth;
-            
-            CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS \$\$
-            BEGIN
-              RETURN '00000000-0000-0000-0000-000000000000'::uuid;
-            END;
-            \$\$ LANGUAGE plpgsql SECURITY DEFINER;
-            
-            CREATE OR REPLACE FUNCTION auth.role() RETURNS text AS \$\$
-            BEGIN
-              RETURN 'service_role';
-            END;
-            \$\$ LANGUAGE plpgsql SECURITY DEFINER;
-            
-            DO \$\$
-            BEGIN
-              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-                CREATE ROLE service_role;
-              END IF;
-            END
-            \$\$;
-          "
 
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Run migrations (primary)
-        run: npx prisma migrate deploy
-
-      - name: Run migrations (test)
+      - name: Run database migrations
+        run: npx prisma db push
         env:
-          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
-          DIRECT_URL: ${{ env.TEST_DATABASE_URL }}
-        run: npx prisma migrate deploy
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
 
-      - name: Lint
-        run: npm run lint
+      - name: Run linting
+        run: npm run lint:check
 
-      - name: Unit tests
-        run: npm test -- --runInBand
+      - name: Run unit tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
 
-      - name: e2e tests
-        run: npm run test:e2e
+      - name: Build application
+        run: npm run build

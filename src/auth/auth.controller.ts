@@ -1,16 +1,21 @@
-import { Body, Controller, Get, Post, UseGuards, Headers, Query, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Headers,
+  Query,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SupabaseAuthService } from './supabase-auth.service';
 import { GoogleAuthService } from './google-auth.service';
 import { SupabaseService } from '../supabase/supabase.service';
-import { SignUpDto } from './dto/signup.dto';
 import { MagicLinkSignUpDto } from './dto/magic-link-signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import { JwtAuthGuard } from './jwt-auth.guard';
-import { CurrentUser } from './current-user.decorator';
-import type { SanitizedUser } from '../users/types';
 
 @Controller('auth')
 export class AuthController {
@@ -30,7 +35,6 @@ export class AuthController {
   login(@Body() dto: LoginDto) {
     return this.supabaseAuthService.signInWithPassword(dto);
   }
-
 
   @Post('forgot-password')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
@@ -70,14 +74,15 @@ export class AuthController {
   @Post('google/verify')
   async verifyGoogleToken(@Body() body: { idToken: string }) {
     const { idToken } = body;
-    
+
     if (!idToken) {
       throw new BadRequestException('No ID token provided');
     }
 
     try {
-      const result = await this.googleAuthService.authenticateWithIdToken(idToken);
-      
+      const result =
+        await this.googleAuthService.authenticateWithIdToken(idToken);
+
       return {
         message: 'Google authentication successful',
         user: result.user,
@@ -93,14 +98,17 @@ export class AuthController {
 
   // Auth callback endpoint for handling magic links and email confirmations
   @Get('callback')
-  async authCallback(@Query('access_token') accessToken: string, @Query('refresh_token') refreshToken: string) {
+  async authCallback(
+    @Query('access_token') accessToken: string,
+    @Query('refresh_token') refreshToken: string,
+  ) {
     if (!accessToken) {
       throw new BadRequestException('No access token provided');
     }
 
     // Verify the token and get user info
     const user = await this.supabaseAuthService.getProfile(accessToken);
-    
+
     return {
       message: 'Authentication successful',
       user,
@@ -111,16 +119,18 @@ export class AuthController {
 
   // OAuth callback handler for frontend
   @Post('oauth-callback')
-  async oauthCallback(@Body() body: { access_token: string; refresh_token?: string }) {
+  async oauthCallback(
+    @Body() body: { access_token: string; refresh_token?: string },
+  ) {
     const { access_token, refresh_token } = body;
-    
+
     if (!access_token) {
       throw new BadRequestException('No access token provided');
     }
 
     // Verify the token and get user info
     const user = await this.supabaseAuthService.getProfile(access_token);
-    
+
     return {
       message: 'Authentication successful',
       user,

@@ -29,7 +29,7 @@ describe('Queue System (e2e)', () => {
       .send({
         email: `test-${Date.now()}@example.com`,
         password: 'testpassword123',
-        name: 'Test User',
+        displayName: 'Test User',
       });
 
     const signupBody = signupResponse.body as {
