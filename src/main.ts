@@ -15,6 +15,7 @@ async function bootstrap() {
       { path: '', method: RequestMethod.GET }, // Exclude root path
     ],
   });
+  // Enable CORS for production domains (daygen.ai) and development
   app.enableCors({
     origin: [
       /^http:\/\/localhost:\d+$/, // Allow any localhost port
