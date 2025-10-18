@@ -1,0 +1,2 @@
+-- Enable RLS on R2File table
+ALTER TABLE "R2File" ENABLE ROW LEVEL SECURITY;

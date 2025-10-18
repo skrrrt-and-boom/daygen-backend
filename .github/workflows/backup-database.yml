@@ -1,0 +1,146 @@
+name: Daily Database Backup
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:  # Manual trigger button
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup PostgreSQL client
+        run: |
+          sudo apt-get update
+          # Install PostgreSQL 17 client to match server version
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      # DATABASE_URL is provided via job-level env above
+      
+      - name: Create database backup
+        run: |
+          mkdir -p backups
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          backup_file="daygen_backup_${timestamp}.sql"
+          
+          echo "🔄 Creating database backup..."
+          echo "Backup file: ${backup_file}"
+          
+          # Debug: Check if DATABASE_URL is set (without exposing the full URL)
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ DATABASE_URL environment variable is not set"
+            exit 1
+          else
+            echo "✅ DATABASE_URL is set (length: ${#DATABASE_URL})"
+            # Show just the host part for debugging
+            db_host=$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/?]+).*|\1|')
+            echo "Database host: ${db_host}"
+          fi
+          
+          # Check if we're using Supavisor (pooler) connection
+          if echo "$DATABASE_URL" | grep -q "pooler.supabase.com"; then
+            echo "✅ Using Supavisor connection pooler (IPv4 compatible)"
+          else
+            echo "⚠️ Using direct connection - may have IPv6 issues"
+            echo "💡 Consider using Supavisor connection string for better compatibility"
+          fi
+          
+          # Use PostgreSQL 17 binaries
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          
+          # Verify PostgreSQL version
+          echo "🔍 PostgreSQL client version:"
+          pg_dump --version
+          
+          # Connectivity check
+          echo "🔎 Testing DB connectivity..."
+          set +e
+          psql "$DATABASE_URL" -Atc "SELECT current_database(), current_user, version();" > /tmp/psql_check.txt 2>&1
+          psql_exit=$?
+          set -e
+          if [ $psql_exit -ne 0 ]; then
+            echo "❌ psql connectivity check failed (exit $psql_exit)"
+            echo "psql output:" && head -n 200 /tmp/psql_check.txt
+            echo ""
+            echo "💡 Troubleshooting tips:"
+            echo "   - Ensure DATABASE_URL uses Supavisor (pooler.supabase.com)"
+            echo "   - Check if your IP is banned: supabase network-bans get --project-ref <ref>"
+            echo "   - Verify database credentials are correct"
+            exit 1
+          else
+            echo "✅ psql connectivity OK"
+            echo "psql output:" && head -n 5 /tmp/psql_check.txt
+          fi
+
+          # Create backup
+          echo "🔍 Running pg_dump command..."
+          # Temporarily disable exit-on-error to capture pg_dump failure details
+          set +e
+          pg_dump "$DATABASE_URL" > "backups/${backup_file}" 2>&1
+          pg_dump_exit_code=$?
+          set -e
+          
+          if [ $pg_dump_exit_code -ne 0 ]; then
+            echo "❌ pg_dump failed with exit code: $pg_dump_exit_code"
+            echo "Error output (first 120 lines):"
+            if [ -f "backups/${backup_file}" ]; then
+              head -n 120 "backups/${backup_file}"
+            else
+              echo "No output file created"
+            fi
+            exit 1
+          fi
+          
+          # Check if backup was created successfully
+          if [ ! -f "backups/${backup_file}" ]; then
+            echo "❌ Backup creation failed"
+            exit 1
+          fi
+
+          # Ensure file is not empty and appears to contain SQL
+          if [ ! -s "backups/${backup_file}" ]; then
+            echo "❌ Backup file is empty"
+            exit 1
+          fi
+
+          if ! grep -Eq '^(CREATE|COPY) ' "backups/${backup_file}"; then
+            echo "❌ Backup content looks suspicious (no CREATE/COPY statements found)"
+            echo "Showing first 40 lines for debugging:"
+            head -n 40 "backups/${backup_file}"
+            exit 1
+          fi
+
+          echo "✅ Backup created successfully"
+          ls -la "backups/${backup_file}"
+          
+          # Compress backup
+          echo "🗜️ Compressing backup..."
+          gzip "backups/${backup_file}"
+          
+          echo "✅ Backup compressed: backups/${backup_file}.gz"
+          ls -la "backups/${backup_file}.gz"
+      
+      - name: Upload backup to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-backup-${{ github.run_number }}
+          path: backups/
+          retention-days: 30
+      
+      - name: Create backup summary
+        run: |
+          latest=$(ls -t backups/*.gz | head -n1)
+          echo "## 📊 Backup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backup File**: $(basename "$latest")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: $(du -h "$latest" | awk '{print $1}')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY

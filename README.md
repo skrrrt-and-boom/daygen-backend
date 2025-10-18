@@ -1,0 +1,143 @@
+# DayGen Backend
+
+This service now issues JSON Web Tokens for email/password accounts and persists user galleries so creations follow you between sessions.
+
+## Quick Start
+
+1. Install dependencies: `npm install`
+2. Set the required environment variables (see below)
+3. Run the development server: `npm run start:dev`
+
+## Required Environment
+
+- `DATABASE_URL` and `DIRECT_URL` – PostgreSQL connection strings for Prisma
+- `JWT_SECRET` – secret used to sign authentication tokens (fallbacks to `change-me-in-production` in development)
+
+### Image Provider Configuration
+
+Set the provider keys you plan to use before hitting `/api/unified-generate`. Each handler in `src/generation/generation.service.ts` expects the following environment variables:
+
+- `BFL_API_KEY` (+ optional `BFL_API_BASE`) for Flux models ([docs/bfl.ai](https://bfl.ai/api-reference))
+- One of `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_AI_KEY`, or `VITE_GEMINI_API_KEY` for Gemini image preview ([docs/ai.google.dev](https://ai.google.dev/gemini-api/docs))
+- `IDEOGRAM_API_KEY` for Ideogram V3 ([docs.ideogram.ai](https://docs.ideogram.ai))
+- `DASHSCOPE_API_KEY` (+ optional `DASHSCOPE_BASE`) for Qwen Image via DashScope ([dashscope.aliyun.com](https://dashscope.aliyun.com/api-reference/multimodal/image-generation))
+- `RUNWAY_API_KEY` for Runway Gen-4 ([learn.runwayml.com](https://learn.runwayml.com/reference/image-generations))
+- `ARK_API_KEY` (+ optional `ARK_BASE_URL`) for SeeDream on BytePlus Ark ([byteplus.com](https://www.byteplus.com/en/docs/byteplus-ark/api-ref))
+- `OPENAI_API_KEY` for DALL·E via Images API ([platform.openai.com](https://platform.openai.com/docs/api-reference/images))
+- `REVE_API_KEY` (+ optional `REVE_BASE_URL`) for Rêve image generation ([reve.gitbook.io](https://reve.gitbook.io/revepo/api))
+- `RECRAFT_API_KEY` for Recraft v2/v3 ([docs.recraft.ai](https://docs.recraft.ai/reference))
+
+See `docs/image-generation-providers.md` for a quick reference covering required payload fields, response shapes, and troubleshooting tips gathered from the official docs.
+
+## Key Endpoints
+
+- `POST /api/auth/signup` – create a new account (`email`, `password`, optional `displayName`)
+- `POST /api/auth/login` – exchange valid credentials for a JWT
+- `GET /api/auth/me` – fetch the profile for the active bearer token
+- `PATCH /api/users/me` – update `displayName` or `profileImage`
+- `GET /api/gallery` – list gallery entries for the current user (supports `limit`/`cursor`)
+- `POST /api/gallery` – persist a generation (`assetUrl`, optional `templateId`, optional metadata JSON)
+- `DELETE /api/gallery/:id` – remove one of your gallery items
+
+Tokens must be supplied via the `Authorization: Bearer <token>` header. The frontend stores the token in `localStorage` and automatically refreshes profile state on load.
+
+---
+
+<p align="center">
+  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
+</p>
+
+[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
+[circleci-url]: https://circleci.com/gh/nestjs/nest
+
+  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
+    <p align="center">
+<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
+<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
+<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
+<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
+<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
+<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
+<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
+  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
+    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
+  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
+</p>
+  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
+  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+
+## Description
+
+[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+
+## Project setup
+
+```bash
+$ npm install
+```
+
+## Compile and run the project
+
+```bash
+# development
+$ npm run start
+
+# watch mode
+$ npm run start:dev
+
+# production mode
+$ npm run start:prod
+```
+
+## Run tests
+
+```bash
+# unit tests
+$ npm run test
+
+# e2e tests
+$ npm run test:e2e
+
+# test coverage
+$ npm run test:cov
+```
+
+## Deployment
+
+When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+
+If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+
+```bash
+$ npm install -g @nestjs/mau
+$ mau deploy
+```
+
+With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+
+## Resources
+
+Check out a few resources that may come in handy when working with NestJS:
+
+- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
+- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
+- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
+- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
+- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
+- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
+- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
+- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+
+## Support
+
+Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+
+## Stay in touch
+
+- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
+- Website - [https://nestjs.com](https://nestjs.com/)
+- Twitter - [@nestframework](https://twitter.com/nestframework)
+
+## License
+
+Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
