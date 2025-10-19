@@ -43,18 +43,21 @@ model UsageEvent {
 }
 
 model R2File {
-  id          String    @id @default(cuid())
-  ownerAuthId String
-  fileName    String
-  fileUrl     String
-  fileSize    Int?
-  mimeType    String?
-  prompt      String?
-  model       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime?
-  owner       User      @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  id             String    @id @default(cuid())
+  ownerAuthId    String
+  fileName       String
+  fileUrl        String
+  fileSize       Int?
+  mimeType       String?
+  prompt         String?
+  model          String?
+  avatarId       String?
+  avatarImageId  String?
+  productId      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+  owner          User      @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
 
   @@index([ownerAuthId, createdAt(sort: Desc)])
   @@index([ownerAuthId, deletedAt])

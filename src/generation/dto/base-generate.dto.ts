@@ -18,6 +18,9 @@ const KNOWN_KEYS = new Set([
   'outputLength',
   'topP',
   'providerOptions',
+  'avatarId',
+  'avatarImageId',
+  'productId',
 ]);
 
 function collectProviderOptions(obj: unknown) {
@@ -75,6 +78,21 @@ export abstract class BaseGenerateDto {
   @Allow()
   @Transform(({ obj }) => collectProviderOptions(obj), { toClassOnly: true })
   providerOptions: Record<string, unknown> = {};
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  avatarId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  avatarImageId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  productId?: string;
 }
 
 export class ProviderGenerateDto extends BaseGenerateDto {

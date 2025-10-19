@@ -11,6 +11,9 @@ export interface CreateR2FileDto {
   mimeType?: string;
   prompt?: string;
   model?: string;
+  avatarId?: string;
+  avatarImageId?: string;
+  productId?: string;
 }
 
 export interface R2FileResponse {
@@ -21,6 +24,9 @@ export interface R2FileResponse {
   mimeType?: string;
   prompt?: string;
   model?: string;
+  avatarId?: string;
+  avatarImageId?: string;
+  productId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -95,6 +101,9 @@ export class R2FilesService {
             mimeType: dto.mimeType,
             prompt: dto.prompt,
             model: dto.model,
+            avatarId: dto.avatarId,
+            avatarImageId: dto.avatarImageId,
+            productId: dto.productId,
             deletedAt: null,
             updatedAt: new Date(),
           },
@@ -114,6 +123,9 @@ export class R2FilesService {
         mimeType: dto.mimeType,
         prompt: dto.prompt,
         model: dto.model,
+        avatarId: dto.avatarId,
+        avatarImageId: dto.avatarImageId,
+        productId: dto.productId,
         updatedAt: new Date(),
       },
     });
@@ -158,6 +170,9 @@ export class R2FilesService {
     mimeType?: string | null;
     prompt?: string | null;
     model?: string | null;
+    avatarId?: string | null;
+    avatarImageId?: string | null;
+    productId?: string | null;
     createdAt: Date;
     updatedAt: Date;
   }): R2FileResponse {
@@ -169,6 +184,9 @@ export class R2FilesService {
       mimeType: file.mimeType ?? undefined,
       prompt: file.prompt ?? undefined,
       model: file.model ?? undefined,
+      avatarId: file.avatarId ?? undefined,
+      avatarImageId: file.avatarImageId ?? undefined,
+      productId: file.productId ?? undefined,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt,
     };

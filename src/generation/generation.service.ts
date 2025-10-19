@@ -69,6 +69,9 @@ interface ReveEditInput {
   image: InMemoryFilePayload;
   mask?: InMemoryFilePayload;
   providerOptions: Record<string, unknown>;
+  avatarId?: string;
+  avatarImageId?: string;
+  productId?: string;
 }
 
 const FLUX_OPTION_KEYS = [
@@ -286,7 +289,7 @@ export class GenerationService {
         model,
       });
 
-      await this.persistResult(user, prompt, providerResult);
+      await this.persistResult(user, prompt, providerResult, dto);
 
       this.logger.log(
         `Generation completed successfully for user ${user.authUserId}`,
@@ -1707,7 +1710,16 @@ export class GenerationService {
       },
     };
 
-    await this.persistResult(user, input.prompt, providerResult);
+    // Create a DTO-like object for persistResult
+    const dto = {
+      prompt: input.prompt,
+      model: input.model || 'reve-image-1.0',
+      avatarId: input.avatarId,
+      avatarImageId: input.avatarImageId,
+      productId: input.productId,
+      providerOptions: input.providerOptions || {},
+    };
+    await this.persistResult(user, input.prompt, providerResult, dto);
 
     return clientPayload;
   }
@@ -2023,6 +2035,7 @@ export class GenerationService {
     user: SanitizedUser,
     prompt: string,
     providerResult: ProviderResult,
+    dto: UnifiedGenerateDto,
   ) {
     try {
       await this.usageService.recordGeneration(user, {
@@ -2075,6 +2088,9 @@ export class GenerationService {
             mimeType,
             prompt,
             model: providerResult.model,
+            avatarId: dto.avatarId,
+            avatarImageId: dto.avatarImageId,
+            productId: dto.productId,
           });
 
           // Update the asset URL to use R2 URL
