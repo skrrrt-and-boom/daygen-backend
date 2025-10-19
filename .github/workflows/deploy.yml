@@ -1,0 +1,116 @@
+name: Deploy Backend to Google Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: daygen-backend-365299591811
+  SERVICE_NAME: daygen-backend
+  REGION: europe-central2
+  IMAGE_NAME: gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run tests
+      run: npm test
+      
+    - name: Run linting
+      run: npm run lint
+      
+    - name: Build application
+      run: npm run build
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ env.PROJECT_ID }}
+        
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker
+      
+    - name: Build Docker image
+      run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+      
+    - name: Push Docker image
+      run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+      
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy ${{ env.SERVICE_NAME }} \
+          --image ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+          --platform managed \
+          --region ${{ env.REGION }} \
+          --allow-unauthenticated \
+          --memory 2Gi \
+          --cpu 2 \
+          --min-instances 1 \
+          --max-instances 10 \
+          --timeout 900 \
+          --concurrency 1000 \
+          --set-env-vars="NODE_ENV=production,PORT=3000,API_BASE_URL=https://${{ env.SERVICE_NAME }}-${{ env.PROJECT_ID }}.${{ env.REGION }}.run.app" \
+          --update-env-vars="DATABASE_URL=${{ secrets.DATABASE_URL }}" \
+          --update-env-vars="DIRECT_URL=${{ secrets.DIRECT_URL }}" \
+          --update-env-vars="JWT_SECRET=${{ secrets.JWT_SECRET }}" \
+          --update-env-vars="SUPABASE_URL=${{ secrets.SUPABASE_URL }}" \
+          --update-env-vars="SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" \
+          --update-env-vars="SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+          --update-env-vars="STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}" \
+          --update-env-vars="STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}" \
+          --update-env-vars="STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}" \
+          --update-env-vars="FRONTEND_URL=https://daygen.ai" \
+          --update-env-vars="STRIPE_TEST_PRICE_ID=${{ secrets.STRIPE_TEST_PRICE_ID }}" \
+          --update-env-vars="STRIPE_STARTER_PRICE_ID=${{ secrets.STRIPE_STARTER_PRICE_ID }}" \
+          --update-env-vars="STRIPE_POPULAR_PRICE_ID=${{ secrets.STRIPE_POPULAR_PRICE_ID }}" \
+          --update-env-vars="STRIPE_BEST_VALUE_PRICE_ID=${{ secrets.STRIPE_BEST_VALUE_PRICE_ID }}" \
+          --update-env-vars="STRIPE_PRO_PRICE_ID=${{ secrets.STRIPE_PRO_PRICE_ID }}" \
+          --update-env-vars="STRIPE_ENTERPRISE_PRICE_ID=${{ secrets.STRIPE_ENTERPRISE_PRICE_ID }}" \
+          --update-env-vars="CLOUDFLARE_R2_ACCOUNT_ID=${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}" \
+          --update-env-vars="CLOUDFLARE_R2_ACCESS_KEY_ID=${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}" \
+          --update-env-vars="CLOUDFLARE_R2_SECRET_ACCESS_KEY=${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}" \
+          --update-env-vars="CLOUDFLARE_R2_BUCKET_NAME=${{ secrets.CLOUDFLARE_R2_BUCKET_NAME }}" \
+          --update-env-vars="CLOUDFLARE_R2_PUBLIC_URL=${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}" \
+          --update-env-vars="OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
+          --update-env-vars="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" \
+          --update-env-vars="BFL_API_KEY=${{ secrets.BFL_API_KEY }}" \
+          --update-env-vars="BFL_API_BASE=${{ secrets.BFL_API_BASE }}" \
+          --update-env-vars="IDEOGRAM_API_KEY=${{ secrets.IDEOGRAM_API_KEY }}" \
+          --update-env-vars="DASHSCOPE_API_KEY=${{ secrets.DASHSCOPE_API_KEY }}" \
+          --update-env-vars="RUNWAY_API_KEY=${{ secrets.RUNWAY_API_KEY }}" \
+          --update-env-vars="ARK_API_KEY=${{ secrets.ARK_API_KEY }}" \
+          --update-env-vars="REVE_API_KEY=${{ secrets.REVE_API_KEY }}" \
+          --update-env-vars="RECRAFT_API_KEY=${{ secrets.RECRAFT_API_KEY }}" \
+          --update-env-vars="LUMAAI_API_KEY=${{ secrets.LUMAAI_API_KEY }}"
+          
+    - name: Test deployment
+      run: |
+        SERVICE_URL="https://${{ env.SERVICE_NAME }}-${{ env.PROJECT_ID }}.${{ env.REGION }}.run.app"
+        echo "Testing health endpoint: $SERVICE_URL/health"
+        curl -f "$SERVICE_URL/health" || exit 1
+        echo "✅ Backend deployed successfully!"

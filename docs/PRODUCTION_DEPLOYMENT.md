@@ -33,7 +33,8 @@ CLOUDFLARE_R2_PUBLIC_URL="https://your-public-url.r2.dev"
 # Google Cloud Configuration
 GOOGLE_CLOUD_PROJECT="your-project-id"
 GOOGLE_CLOUD_LOCATION="europe-central2"
-GOOGLE_APPLICATION_CREDENTIALS="/app/service-account-key.json"
+# Note: GOOGLE_APPLICATION_CREDENTIALS is NOT needed for Cloud Run
+# Cloud Run automatically uses Application Default Credentials
 API_BASE_URL="https://your-service-url.run.app"
 INTERNAL_API_KEY="your-internal-api-key"
 
@@ -72,21 +73,50 @@ gcloud services enable run.googleapis.com
 gcloud services enable iam.googleapis.com
 ```
 
-### 2. Create Cloud Tasks Queues
+### 2. Configure Cloud Run Service Account
+
+Cloud Run uses Application Default Credentials automatically. You need to ensure the Cloud Run service account has the required permissions:
+
+```bash
+# Get the Cloud Run service account email
+SERVICE_ACCOUNT_EMAIL=$(gcloud run services describe daygen-backend \
+  --region=europe-central2 \
+  --format="value(spec.template.spec.serviceAccountName)")
+
+# If no custom service account is set, use the default compute service account
+if [ -z "$SERVICE_ACCOUNT_EMAIL" ]; then
+  SERVICE_ACCOUNT_EMAIL="${PROJECT_ID}-compute@developer.gserviceaccount.com"
+fi
+
+# Grant required permissions
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/cloudtasks.enqueuer"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/cloudtasks.viewer"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/run.invoker"
+```
+
+### 3. Create Cloud Tasks Queues
 
 ```bash
 # Run the queue setup script
 ./scripts/setup-cloud-tasks-queues.sh
 ```
 
-### 3. Deploy to Google Cloud Run
+### 4. Deploy to Google Cloud Run
 
 ```bash
 # Deploy using the deployment script
 ./scripts/deploy-with-env.sh
 ```
 
-### 4. Set Production Environment Variables
+### 5. Set Production Environment Variables
 
 ```bash
 # Set the production API base URL
@@ -185,8 +215,8 @@ Content-Type: application/json
 ### Common Issues
 
 1. **Authentication Errors**
-   - Check service account permissions
-   - Verify GOOGLE_APPLICATION_CREDENTIALS
+   - Check Cloud Run service account permissions
+   - Verify the service account has required IAM roles
 
 2. **Queue Not Found**
    - Run setup script to create queues

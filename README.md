@@ -100,7 +100,7 @@ Configure API keys for the providers you want to use:
 
 ### Google Cloud Tasks
 - `GOOGLE_CLOUD_PROJECT_ID` - GCP project ID
-- `GOOGLE_APPLICATION_CREDENTIALS` - Service account key path
+- `GOOGLE_APPLICATION_CREDENTIALS` - Service account key path (local development only)
 
 ## 🔗 API Endpoints
 

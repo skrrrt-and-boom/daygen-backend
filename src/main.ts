@@ -70,13 +70,14 @@ async function bootstrap() {
   server.headersTimeout = 10 * 60 * 1000; // 10 minutes
 
   const port = process.env.PORT ?? 3000;
-  
+
   console.log(`🔧 Environment check:`);
   console.log(`   - NODE_ENV: ${process.env.NODE_ENV}`);
   console.log(`   - PORT: ${port}`);
-  console.log(`   - DATABASE_URL: ${process.env.DATABASE_URL ? 'Set' : 'Not set'}`);
+  console.log(
+    `   - DATABASE_URL: ${process.env.DATABASE_URL ? 'Set' : 'Not set'}`,
+  );
   console.log(`   - JWT_SECRET: ${process.env.JWT_SECRET ? 'Set' : 'Not set'}`);
-  
   try {
     await app.listen(port, '0.0.0.0');
     console.log(`🚀 Server running on http://0.0.0.0:${port}`);

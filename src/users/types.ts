@@ -13,4 +13,13 @@ export interface SanitizedUser {
   role: 'USER' | 'ADMIN';
   createdAt: Date;
   updatedAt: Date;
+  subscription?: {
+    id: string;
+    status: string;
+    currentPeriodStart: Date;
+    currentPeriodEnd: Date;
+    cancelAtPeriodEnd: boolean;
+    credits: number;
+    createdAt: Date;
+  } | null;
 }

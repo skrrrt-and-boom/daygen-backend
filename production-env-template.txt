@@ -1,0 +1,64 @@
+# Production Environment Variables Template
+# Copy this file to .env.production and fill in your actual values
+
+# Database Configuration
+DATABASE_URL="postgresql://username:password@host:port/database?pgbouncer=true"
+DIRECT_URL="postgresql://username:password@host:port/database"
+SHADOW_DATABASE_URL="postgresql://username:password@host:port/database_shadow"
+
+# JWT Configuration
+JWT_SECRET="your-super-secure-jwt-secret-here"
+
+# Supabase Configuration
+SUPABASE_URL="https://your-project.supabase.co"
+SUPABASE_ANON_KEY="your-supabase-anon-key"
+SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
+
+# Stripe Configuration (CRITICAL FOR PAYMENT FIXES)
+STRIPE_SECRET_KEY="sk_live_your_live_secret_key_here"
+STRIPE_PUBLISHABLE_KEY="pk_live_your_live_publishable_key_here"
+STRIPE_WEBHOOK_SECRET="whsec_your_webhook_secret_here"
+
+# Frontend URL (for payment redirects)
+FRONTEND_URL="https://daygen.ai"
+
+# Stripe Price IDs (CRITICAL - These must match your Stripe Dashboard)
+# One-time credit packages
+STRIPE_TEST_PRICE_ID="price_test_10_credits"
+STRIPE_STARTER_PRICE_ID="price_starter_100_credits"
+STRIPE_POPULAR_PRICE_ID="price_popular_500_credits"
+STRIPE_BEST_VALUE_PRICE_ID="price_best_value_1000_credits"
+
+# Subscription plans
+STRIPE_PRO_PRICE_ID="price_pro_monthly"
+STRIPE_ENTERPRISE_PRICE_ID="price_enterprise_monthly"
+
+# Cloudflare R2 Configuration
+CLOUDFLARE_R2_ACCOUNT_ID="your-account-id"
+CLOUDFLARE_R2_ACCESS_KEY_ID="your-access-key-id"
+CLOUDFLARE_R2_SECRET_ACCESS_KEY="your-secret-access-key"
+CLOUDFLARE_R2_BUCKET_NAME="your-bucket-name"
+CLOUDFLARE_R2_PUBLIC_URL="https://your-public-url.r2.dev"
+
+# Google Cloud Configuration
+GOOGLE_CLOUD_PROJECT="daygen-backend-365299591811"
+GOOGLE_CLOUD_LOCATION="europe-central2"
+API_BASE_URL="https://daygen-backend-365299591811.europe-central2.run.app"
+INTERNAL_API_KEY="your-internal-api-key"
+
+# Image Generation API Keys
+OPENAI_API_KEY="sk-proj-your-openai-key"
+GEMINI_API_KEY="your-gemini-key"
+BFL_API_KEY="your-bfl-key"
+BFL_API_BASE="https://api.bfl.ai"
+IDEOGRAM_API_KEY="your-ideogram-key"
+DASHSCOPE_API_KEY="your-dashscope-key"
+RUNWAY_API_KEY="your-runway-key"
+ARK_API_KEY="your-ark-key"
+REVE_API_KEY="your-reve-key"
+RECRAFT_API_KEY="your-recraft-key"
+LUMAAI_API_KEY="your-luma-key"
+
+# Server Configuration
+PORT=3000
+NODE_ENV=production

@@ -64,16 +64,26 @@ export class UsersService {
     return user;
   }
 
-  async findByAuthUserId(authUserId: string): Promise<PrismaUser> {
-    const user = await this.prisma.user.findUnique({ where: { authUserId } });
+  async findByAuthUserId(
+    authUserId: string,
+  ): Promise<PrismaUser & { subscription?: any }> {
+    const user = await this.prisma.user.findUnique({
+      where: { authUserId },
+      include: { subscription: true },
+    });
     if (!user) {
       throw new NotFoundException('User not found');
     }
     return user;
   }
 
-  async findByAuthUserIdOrNull(authUserId: string): Promise<PrismaUser | null> {
-    return this.prisma.user.findUnique({ where: { authUserId } });
+  async findByAuthUserIdOrNull(
+    authUserId: string,
+  ): Promise<(PrismaUser & { subscription?: any }) | null> {
+    return this.prisma.user.findUnique({
+      where: { authUserId },
+      include: { subscription: true },
+    });
   }
 
   async listBalances(limit = 100) {
@@ -252,7 +262,7 @@ export class UsersService {
     return this.toSanitizedUser(user);
   }
 
-  toSanitizedUser(user: PrismaUser): SanitizedUser {
+  toSanitizedUser(user: PrismaUser & { subscription?: any }): SanitizedUser {
     return {
       id: user.id,
       authUserId: user.authUserId,
@@ -263,6 +273,17 @@ export class UsersService {
       role: user.role,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      subscription: user.subscription
+        ? {
+            id: user.subscription.id,
+            status: user.subscription.status,
+            currentPeriodStart: user.subscription.currentPeriodStart,
+            currentPeriodEnd: user.subscription.currentPeriodEnd,
+            cancelAtPeriodEnd: user.subscription.cancelAtPeriodEnd,
+            credits: user.subscription.credits,
+            createdAt: user.subscription.createdAt,
+          }
+        : null,
     };
   }
 

@@ -4,11 +4,16 @@ import { UsersModule } from '../users/users.module';
 import { StripeService } from './stripe.service';
 import { PaymentsService } from './payments.service';
 import { PaymentsController } from './payments.controller';
+import { PublicPaymentsController } from './public-payments.controller';
 import { StripeWebhookController } from './stripe-webhook.controller';
 
 @Module({
   imports: [PrismaModule, UsersModule],
-  controllers: [PaymentsController, StripeWebhookController],
+  controllers: [
+    PaymentsController,
+    PublicPaymentsController,
+    StripeWebhookController,
+  ],
   providers: [StripeService, PaymentsService],
   exports: [StripeService, PaymentsService],
 })

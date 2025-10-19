@@ -42,13 +42,13 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
+Gemini first job is always failing
 Retry failed jobs
 When logging with google: /generate_204?IikpFw:1  GET https://accounts.google.com/generate_204?IikpFw net::ERR_BLOCKED_BY_CLIENT
 Add vary feature like in MJ
 Change generation display, make every new job to appear in the first place
 Make image generation faster
 User Management
-Payments (stripe)
 User profiles and settings
 Usage tracking and limits
 Image editing tools

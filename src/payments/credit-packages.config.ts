@@ -20,27 +20,7 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
     id: 'test',
     name: 'Test Pack',
     credits: 10,
-    price: 1, // $0.01 for testing
-  },
-  {
-    id: 'starter',
-    name: 'Starter Pack',
-    credits: 100,
-    price: 1000, // $10.00
-  },
-  {
-    id: 'popular',
-    name: 'Popular Pack',
-    credits: 500,
-    price: 4000,
-    badge: 'POPULAR', // $40.00
-  },
-  {
-    id: 'best-value',
-    name: 'Best Value',
-    credits: 1000,
-    price: 7000,
-    badge: 'BEST_VALUE', // $70.00
+    price: 1000, // $10.00 (you mentioned thin pack is $10)
   },
 ];
 

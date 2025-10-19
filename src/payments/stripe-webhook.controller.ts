@@ -88,7 +88,18 @@ export class StripeWebhookController {
     this.logger.log(`Processing checkout session completed: ${session.id}`);
 
     try {
-      await this.paymentsService.handleSuccessfulPayment(session);
+      // Handle both one-time payments and subscriptions
+      if (session.mode === 'payment') {
+        await this.paymentsService.handleSuccessfulPayment(session);
+      } else if (session.mode === 'subscription') {
+        // For subscriptions, we need to get the subscription object
+        if (session.subscription) {
+          const subscription = await this.stripeService.retrieveSubscription(
+            session.subscription as string,
+          );
+          await this.paymentsService.handleSuccessfulSubscription(subscription);
+        }
+      }
     } catch (error) {
       this.logger.error(
         `Error processing checkout session ${session.id}:`,
@@ -101,7 +112,8 @@ export class StripeWebhookController {
     this.logger.log(`Processing subscription created: ${subscription.id}`);
 
     try {
-      await this.paymentsService.handleSuccessfulSubscription(subscription);
+      // Only create subscription record, credits will be handled by checkout.session.completed
+      await this.paymentsService.createSubscriptionRecord(subscription);
     } catch (error) {
       this.logger.error(
         `Error processing subscription ${subscription.id}:`,

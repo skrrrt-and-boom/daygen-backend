@@ -163,7 +163,7 @@ export class PaymentsService {
     );
   }
 
-  async handleSuccessfulSubscription(
+  async createSubscriptionRecord(
     subscription: Stripe.Subscription,
   ): Promise<void> {
     const customerId = subscription.customer as string;
@@ -202,7 +202,7 @@ export class PaymentsService {
       return;
     }
 
-    // Create subscription record
+    // Create subscription record (without adding credits)
     await this.prisma.subscription.create({
       data: {
         userId: user.authUserId,
@@ -220,11 +220,45 @@ export class PaymentsService {
       },
     });
 
-    // Add credits to user
+    this.logger.log(
+      `Successfully created subscription record ${subscription.id} for user ${user.authUserId}`,
+    );
+  }
+
+  async handleSuccessfulSubscription(
+    subscription: Stripe.Subscription,
+  ): Promise<void> {
+    const customerId = subscription.customer as string;
+    const customer = await this.stripeService.retrieveCustomer(customerId);
+
+    if (!customer.email) {
+      this.logger.error(`Customer ${customerId} has no email`);
+      return;
+    }
+
+    // Find user by email
+    const user = await this.usersService.findByEmail(customer.email);
+    if (!user) {
+      this.logger.error(`User not found for email ${customer.email}`);
+      return;
+    }
+
+    // Get subscription plan details
+    const priceId = subscription.items.data[0]?.price.id;
+    const plan = SUBSCRIPTION_PLANS.find(
+      (p) => this.getPriceIdForSubscription(p) === priceId,
+    );
+
+    if (!plan) {
+      this.logger.error(`Plan not found for price ID ${priceId}`);
+      return;
+    }
+
+    // Add credits to user (this is called from checkout.session.completed)
     await this.addCreditsToUser(user.authUserId, plan.credits, null);
 
     this.logger.log(
-      `Successfully created subscription ${subscription.id} for user ${user.authUserId}`,
+      `Successfully added ${plan.credits} credits for subscription ${subscription.id} to user ${user.authUserId}`,
     );
   }
 
@@ -234,17 +268,27 @@ export class PaymentsService {
     paymentId: string | null,
   ): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
+      // Get current user credits
+      const userRecord = await tx.user.findUnique({
+        where: { authUserId: userId },
+        select: { credits: true },
+      });
+
+      if (!userRecord) {
+        throw new NotFoundException('User not found for credit addition');
+      }
+
+      const newBalance = userRecord.credits + credits;
+
       // Update user credits
       await tx.user.update({
         where: { authUserId: userId },
         data: {
-          credits: {
-            increment: credits,
-          },
+          credits: newBalance,
         },
       });
 
-      // Log the credit addition
+      // Log the credit addition with correct balance
       await tx.usageEvent.create({
         data: {
           userAuthId: userId,
@@ -252,7 +296,7 @@ export class PaymentsService {
           model: 'payment',
           prompt: `Added ${credits} credits`,
           cost: -credits, // Negative cost for credit addition
-          balanceAfter: 0, // Will be calculated by the service
+          balanceAfter: newBalance,
           status: 'COMPLETED',
           metadata: {
             paymentId,
@@ -358,26 +402,40 @@ export class PaymentsService {
   }
 
   private getPriceIdForPackage(creditPackage: any): string {
-    // For now, return a placeholder. In production, you'd store these in the database
-    // or environment variables
     const priceIdMap: Record<string, string> = {
-      test: 'price_test_10_credits',
-      starter: 'price_starter_100_credits',
-      popular: 'price_popular_500_credits',
-      'best-value': 'price_best_value_1000_credits',
+      test: process.env.STRIPE_TEST_PRICE_ID || '',
     };
 
-    return priceIdMap[creditPackage.id] || 'price_test_10_credits';
+    const priceId = priceIdMap[creditPackage.id];
+    if (!priceId) {
+      this.logger.error(
+        `Price ID not configured for package: ${creditPackage.id}`,
+      );
+      throw new BadRequestException(
+        `Price configuration missing for package: ${creditPackage.id}`,
+      );
+    }
+
+    return priceId;
   }
 
   private getPriceIdForSubscription(plan: any): string {
-    // For now, return a placeholder. In production, you'd store these in the database
     const priceIdMap: Record<string, string> = {
-      pro: 'price_pro_monthly',
-      enterprise: 'price_enterprise_monthly',
+      pro: process.env.STRIPE_PRO_PRICE_ID || '',
+      enterprise: process.env.STRIPE_ENTERPRISE_PRICE_ID || '',
     };
 
-    return priceIdMap[plan.id] || 'price_pro_monthly';
+    const priceId = priceIdMap[plan.id];
+    if (!priceId) {
+      this.logger.error(
+        `Price ID not configured for subscription plan: ${plan.id}`,
+      );
+      throw new BadRequestException(
+        `Price configuration missing for subscription plan: ${plan.id}`,
+      );
+    }
+
+    return priceId;
   }
 
   async updateSubscriptionStatus(
@@ -467,6 +525,37 @@ export class PaymentsService {
     this.logger.log(
       `Marked subscription ${subscription.id} as past due due to failed payment`,
     );
+  }
+
+  async completeTestPayment(
+    sessionId: string,
+  ): Promise<{ message: string; paymentId?: string }> {
+    // This is a test method to manually complete payments for development
+    const session = await this.getSessionStatus(sessionId);
+    if (session.paymentStatus === 'PENDING') {
+      // Find the payment and mark it as completed
+      const payment = await this.prisma.payment.findUnique({
+        where: { stripeSessionId: sessionId },
+      });
+
+      if (payment) {
+        await this.prisma.payment.update({
+          where: { id: payment.id },
+          data: { status: 'COMPLETED' },
+        });
+
+        // Add credits to user
+        await this.addCreditsToUser(
+          payment.userId,
+          payment.credits,
+          payment.id,
+        );
+
+        return { message: 'Payment completed manually', paymentId: payment.id };
+      }
+    }
+
+    return { message: 'Payment not found or already completed' };
   }
 
   private mapStripeStatusToDb(stripeStatus: string): SubscriptionStatus {

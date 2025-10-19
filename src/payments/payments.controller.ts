@@ -45,14 +45,6 @@ export class PaymentsController {
     }
   }
 
-  @Get('session/:sessionId')
-  async getSessionStatus(
-    @CurrentUser() user: SanitizedUser,
-    @Param('sessionId') sessionId: string,
-  ) {
-    return this.paymentsService.getSessionStatus(sessionId);
-  }
-
   @Get('history')
   async getPaymentHistory(@CurrentUser() user: SanitizedUser) {
     return this.paymentsService.getUserPaymentHistory(user.authUserId);
@@ -60,7 +52,10 @@ export class PaymentsController {
 
   @Get('subscription')
   async getSubscription(@CurrentUser() user: SanitizedUser) {
-    return this.paymentsService.getUserSubscription(user.authUserId);
+    const subscription = await this.paymentsService.getUserSubscription(
+      user.authUserId,
+    );
+    return subscription || null;
   }
 
   @Post('subscription/cancel')
@@ -69,11 +64,9 @@ export class PaymentsController {
     return { message: 'Subscription cancelled successfully' };
   }
 
-  @Get('config')
-  getConfig() {
-    return {
-      creditPackages: this.paymentsService.getCreditPackages(),
-      subscriptionPlans: this.paymentsService.getSubscriptionPlans(),
-    };
+  @Post('test/complete-payment/:sessionId')
+  async completeTestPayment(@Param('sessionId') sessionId: string) {
+    // This is a test endpoint to manually complete payments for development
+    return this.paymentsService.completeTestPayment(sessionId);
   }
 }

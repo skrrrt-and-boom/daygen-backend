@@ -28,8 +28,12 @@ export class StripeService {
     const baseUrl =
       this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
 
+    // Map our types to Stripe modes
+    const mode: StripeType.Checkout.SessionCreateParams.Mode =
+      type === 'one_time' ? 'payment' : 'subscription';
+
     const sessionParams: StripeType.Checkout.SessionCreateParams = {
-      mode: type as StripeType.Checkout.SessionCreateParams.Mode,
+      mode,
       payment_method_types: ['card'],
       line_items: [
         {
@@ -45,8 +49,8 @@ export class StripeService {
       },
     };
 
-    // For subscriptions, add customer creation
-    if (type === 'subscription') {
+    // For one-time payments, add customer creation
+    if (type === 'one_time') {
       sessionParams.customer_creation = 'always';
     }
 

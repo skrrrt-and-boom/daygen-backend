@@ -71,7 +71,8 @@ Required environment variables:
 # Google Cloud Configuration
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=europe-central2
-GOOGLE_APPLICATION_CREDENTIALS=./service-account-key.json
+# Note: GOOGLE_APPLICATION_CREDENTIALS only needed for local development
+# Cloud Run uses Application Default Credentials automatically
 
 # API Configuration
 API_BASE_URL=http://localhost:3000  # or your production URL
@@ -270,9 +271,9 @@ The migration from BullMQ/Redis to Cloud Tasks provides:
 ### Common Issues
 
 1. **Authentication Errors**
-   - Check service account key
-   - Verify GOOGLE_APPLICATION_CREDENTIALS
-   - Ensure proper permissions
+   - Check Cloud Run service account permissions
+   - Verify required IAM roles are assigned
+   - For local development: check service account key file
 
 2. **Queue Not Found**
    - Run setup script to create queues
