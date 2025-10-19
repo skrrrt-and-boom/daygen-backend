@@ -257,7 +257,9 @@ export class CloudTasksService {
   ) {
     // Validate that resultUrl is not a base64 data URL
     if (resultUrl && resultUrl.startsWith('data:image/')) {
-      throw new Error('Base64 data URLs are not allowed in job results. Please upload to R2 first and provide the public URL.');
+      throw new Error(
+        'Base64 data URLs are not allowed in job results. Please upload to R2 first and provide the public URL.',
+      );
     }
 
     const updateData: Prisma.JobUpdateInput = {

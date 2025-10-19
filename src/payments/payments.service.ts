@@ -1,20 +1,23 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from './stripe.service';
 import { UsersService } from '../users/users.service';
-import { 
-  CREDIT_PACKAGES, 
-  SUBSCRIPTION_PLANS, 
-  getCreditPackageById, 
-  getSubscriptionPlanById 
+import {
+  CREDIT_PACKAGES,
+  SUBSCRIPTION_PLANS,
+  getCreditPackageById,
+  getSubscriptionPlanById,
 } from './credit-packages.config';
 import type { SanitizedUser } from '../users/types';
-import type { 
-  Payment, 
-  Subscription, 
-  PaymentStatus, 
-  PaymentType, 
-  SubscriptionStatus 
+import type {
+  PaymentStatus,
+  PaymentType,
+  SubscriptionStatus,
 } from '@prisma/client';
 import Stripe from 'stripe';
 
@@ -55,7 +58,7 @@ export class PaymentsService {
 
   async createOneTimePurchaseSession(
     user: SanitizedUser,
-    packageId: string
+    packageId: string,
   ): Promise<{ sessionId: string; url: string }> {
     const creditPackage = getCreditPackageById(packageId);
     if (!creditPackage) {
@@ -73,7 +76,7 @@ export class PaymentsService {
         packageId,
         credits: creditPackage.credits.toString(),
         amount: creditPackage.price.toString(),
-      }
+      },
     );
 
     // Create pending payment record
@@ -100,7 +103,7 @@ export class PaymentsService {
 
   async createSubscriptionSession(
     user: SanitizedUser,
-    planId: string
+    planId: string,
   ): Promise<{ sessionId: string; url: string }> {
     const subscriptionPlan = getSubscriptionPlanById(planId);
     if (!subscriptionPlan) {
@@ -117,7 +120,7 @@ export class PaymentsService {
         planId,
         credits: subscriptionPlan.credits.toString(),
         amount: subscriptionPlan.price.toString(),
-      }
+      },
     );
 
     return {
@@ -126,7 +129,9 @@ export class PaymentsService {
     };
   }
 
-  async handleSuccessfulPayment(session: Stripe.Checkout.Session): Promise<void> {
+  async handleSuccessfulPayment(
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
     const payment = await this.prisma.payment.findUnique({
       where: { stripeSessionId: session.id },
     });
@@ -153,13 +158,17 @@ export class PaymentsService {
     // Add credits to user
     await this.addCreditsToUser(payment.userId, payment.credits, payment.id);
 
-    this.logger.log(`Successfully processed payment ${payment.id} for user ${payment.userId}`);
+    this.logger.log(
+      `Successfully processed payment ${payment.id} for user ${payment.userId}`,
+    );
   }
 
-  async handleSuccessfulSubscription(subscription: Stripe.Subscription): Promise<void> {
+  async handleSuccessfulSubscription(
+    subscription: Stripe.Subscription,
+  ): Promise<void> {
     const customerId = subscription.customer as string;
     const customer = await this.stripeService.retrieveCustomer(customerId);
-    
+
     if (!customer.email) {
       this.logger.error(`Customer ${customerId} has no email`);
       return;
@@ -184,8 +193,10 @@ export class PaymentsService {
 
     // Get subscription plan details
     const priceId = subscription.items.data[0]?.price.id;
-    const plan = SUBSCRIPTION_PLANS.find(p => this.getPriceIdForSubscription(p) === priceId);
-    
+    const plan = SUBSCRIPTION_PLANS.find(
+      (p) => this.getPriceIdForSubscription(p) === priceId,
+    );
+
     if (!plan) {
       this.logger.error(`Plan not found for price ID ${priceId}`);
       return;
@@ -198,8 +209,12 @@ export class PaymentsService {
         stripeSubscriptionId: subscription.id,
         stripePriceId: priceId,
         status: this.mapStripeStatusToDb(subscription.status),
-        currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
-        currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
+        currentPeriodStart: new Date(
+          (subscription as any).current_period_start * 1000,
+        ),
+        currentPeriodEnd: new Date(
+          (subscription as any).current_period_end * 1000,
+        ),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
         credits: plan.credits,
       },
@@ -208,10 +223,16 @@ export class PaymentsService {
     // Add credits to user
     await this.addCreditsToUser(user.authUserId, plan.credits, null);
 
-    this.logger.log(`Successfully created subscription ${subscription.id} for user ${user.authUserId}`);
+    this.logger.log(
+      `Successfully created subscription ${subscription.id} for user ${user.authUserId}`,
+    );
   }
 
-  async addCreditsToUser(userId: string, credits: number, paymentId: string | null): Promise<void> {
+  async addCreditsToUser(
+    userId: string,
+    credits: number,
+    paymentId: string | null,
+  ): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       // Update user credits
       await tx.user.update({
@@ -244,14 +265,17 @@ export class PaymentsService {
     this.logger.log(`Added ${credits} credits to user ${userId}`);
   }
 
-  async getUserPaymentHistory(userId: string, limit = 25): Promise<PaymentHistoryItem[]> {
+  async getUserPaymentHistory(
+    userId: string,
+    limit = 25,
+  ): Promise<PaymentHistoryItem[]> {
     const payments = await this.prisma.payment.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
 
-    return payments.map(payment => ({
+    return payments.map((payment) => ({
       id: payment.id,
       amount: payment.amount,
       credits: payment.credits,
@@ -292,7 +316,9 @@ export class PaymentsService {
     }
 
     // Cancel in Stripe
-    await this.stripeService.cancelSubscription(subscription.stripeSubscriptionId);
+    await this.stripeService.cancelSubscription(
+      subscription.stripeSubscriptionId,
+    );
 
     // Update local record
     await this.prisma.subscription.update({
@@ -303,12 +329,16 @@ export class PaymentsService {
       },
     });
 
-    this.logger.log(`Cancelled subscription ${subscription.id} for user ${userId}`);
+    this.logger.log(
+      `Cancelled subscription ${subscription.id} for user ${userId}`,
+    );
   }
 
-  async getSessionStatus(sessionId: string): Promise<{ status: string; paymentStatus?: PaymentStatus }> {
+  async getSessionStatus(
+    sessionId: string,
+  ): Promise<{ status: string; paymentStatus?: PaymentStatus }> {
     const session = await this.stripeService.retrieveSession(sessionId);
-    
+
     const payment = await this.prisma.payment.findUnique({
       where: { stripeSessionId: sessionId },
     });
@@ -331,40 +361,50 @@ export class PaymentsService {
     // For now, return a placeholder. In production, you'd store these in the database
     // or environment variables
     const priceIdMap: Record<string, string> = {
-      'test': 'price_test_10_credits',
-      'starter': 'price_starter_100_credits',
-      'popular': 'price_popular_500_credits',
+      test: 'price_test_10_credits',
+      starter: 'price_starter_100_credits',
+      popular: 'price_popular_500_credits',
       'best-value': 'price_best_value_1000_credits',
     };
-    
+
     return priceIdMap[creditPackage.id] || 'price_test_10_credits';
   }
 
   private getPriceIdForSubscription(plan: any): string {
     // For now, return a placeholder. In production, you'd store these in the database
     const priceIdMap: Record<string, string> = {
-      'pro': 'price_pro_monthly',
-      'enterprise': 'price_enterprise_monthly',
+      pro: 'price_pro_monthly',
+      enterprise: 'price_enterprise_monthly',
     };
-    
+
     return priceIdMap[plan.id] || 'price_pro_monthly';
   }
 
-  async updateSubscriptionStatus(subscription: Stripe.Subscription): Promise<void> {
+  async updateSubscriptionStatus(
+    subscription: Stripe.Subscription,
+  ): Promise<void> {
     await this.prisma.subscription.updateMany({
       where: { stripeSubscriptionId: subscription.id },
       data: {
         status: this.mapStripeStatusToDb(subscription.status),
-        currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
-        currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
+        currentPeriodStart: new Date(
+          (subscription as any).current_period_start * 1000,
+        ),
+        currentPeriodEnd: new Date(
+          (subscription as any).current_period_end * 1000,
+        ),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
       },
     });
 
-    this.logger.log(`Updated subscription ${subscription.id} status to ${subscription.status}`);
+    this.logger.log(
+      `Updated subscription ${subscription.id} status to ${subscription.status}`,
+    );
   }
 
-  async cancelSubscriptionByStripeId(stripeSubscriptionId: string): Promise<void> {
+  async cancelSubscriptionByStripeId(
+    stripeSubscriptionId: string,
+  ): Promise<void> {
     await this.prisma.subscription.updateMany({
       where: { stripeSubscriptionId },
       data: {
@@ -391,9 +431,15 @@ export class PaymentsService {
     }
 
     // Add monthly credits to user
-    await this.addCreditsToUser(subscription.userId, subscription.credits, null);
+    await this.addCreditsToUser(
+      subscription.userId,
+      subscription.credits,
+      null,
+    );
 
-    this.logger.log(`Processed recurring payment for subscription ${subscription.id}`);
+    this.logger.log(
+      `Processed recurring payment for subscription ${subscription.id}`,
+    );
   }
 
   async handleFailedPayment(invoice: Stripe.Invoice): Promise<void> {
@@ -406,7 +452,9 @@ export class PaymentsService {
     });
 
     if (!subscription) {
-      this.logger.error(`Subscription not found for failed invoice ${invoice.id}`);
+      this.logger.error(
+        `Subscription not found for failed invoice ${invoice.id}`,
+      );
       return;
     }
 
@@ -416,19 +464,21 @@ export class PaymentsService {
       data: { status: 'PAST_DUE' },
     });
 
-    this.logger.log(`Marked subscription ${subscription.id} as past due due to failed payment`);
+    this.logger.log(
+      `Marked subscription ${subscription.id} as past due due to failed payment`,
+    );
   }
 
   private mapStripeStatusToDb(stripeStatus: string): SubscriptionStatus {
     const statusMap: Record<string, SubscriptionStatus> = {
-      'active': 'ACTIVE',
-      'canceled': 'CANCELLED',
-      'past_due': 'PAST_DUE',
-      'unpaid': 'UNPAID',
-      'incomplete': 'INCOMPLETE',
-      'incomplete_expired': 'INCOMPLETE_EXPIRED',
-      'trialing': 'TRIALING',
-      'paused': 'PAUSED',
+      active: 'ACTIVE',
+      canceled: 'CANCELLED',
+      past_due: 'PAST_DUE',
+      unpaid: 'UNPAID',
+      incomplete: 'INCOMPLETE',
+      incomplete_expired: 'INCOMPLETE_EXPIRED',
+      trialing: 'TRIALING',
+      paused: 'PAUSED',
     };
 
     return statusMap[stripeStatus] || 'ACTIVE';

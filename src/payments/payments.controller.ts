@@ -1,12 +1,12 @@
-import { 
-  Controller, 
-  Post, 
-  Get, 
-  Body, 
-  Param, 
-  UseGuards, 
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  UseGuards,
   Logger,
-  BadRequestException 
+  BadRequestException,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import type { CreateCheckoutSessionDto } from './payments.service';
@@ -24,14 +24,22 @@ export class PaymentsController {
   @Post('create-checkout')
   async createCheckoutSession(
     @CurrentUser() user: SanitizedUser,
-    @Body() dto: CreateCheckoutSessionDto
+    @Body() dto: CreateCheckoutSessionDto,
   ) {
-    this.logger.log(`Creating checkout session for user ${user.authUserId}, type: ${dto.type}, package: ${dto.packageId}`);
+    this.logger.log(
+      `Creating checkout session for user ${user.authUserId}, type: ${dto.type}, package: ${dto.packageId}`,
+    );
 
     if (dto.type === 'one_time') {
-      return this.paymentsService.createOneTimePurchaseSession(user, dto.packageId);
+      return this.paymentsService.createOneTimePurchaseSession(
+        user,
+        dto.packageId,
+      );
     } else if (dto.type === 'subscription') {
-      return this.paymentsService.createSubscriptionSession(user, dto.packageId);
+      return this.paymentsService.createSubscriptionSession(
+        user,
+        dto.packageId,
+      );
     } else {
       throw new BadRequestException('Invalid payment type');
     }
@@ -40,7 +48,7 @@ export class PaymentsController {
   @Get('session/:sessionId')
   async getSessionStatus(
     @CurrentUser() user: SanitizedUser,
-    @Param('sessionId') sessionId: string
+    @Param('sessionId') sessionId: string,
   ) {
     return this.paymentsService.getSessionStatus(sessionId);
   }

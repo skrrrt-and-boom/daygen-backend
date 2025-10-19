@@ -1,9 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
-import type { 
-  Stripe as StripeType
-} from 'stripe';
+import type { Stripe as StripeType } from 'stripe';
 
 @Injectable()
 export class StripeService {
@@ -25,10 +23,11 @@ export class StripeService {
     userId: string,
     type: 'one_time' | 'subscription',
     priceId: string,
-    metadata: Record<string, string> = {}
+    metadata: Record<string, string> = {},
   ): Promise<StripeType.Checkout.Session> {
-    const baseUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
-    
+    const baseUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
+
     const sessionParams: StripeType.Checkout.SessionCreateParams = {
       mode: type as StripeType.Checkout.SessionCreateParams.Mode,
       payment_method_types: ['card'],
@@ -53,32 +52,45 @@ export class StripeService {
 
     try {
       const session = await this.stripe.checkout.sessions.create(sessionParams);
-      this.logger.log(`Created checkout session ${session.id} for user ${userId}`);
+      this.logger.log(
+        `Created checkout session ${session.id} for user ${userId}`,
+      );
       return session;
     } catch (error) {
-      this.logger.error(`Failed to create checkout session for user ${userId}:`, error);
+      this.logger.error(
+        `Failed to create checkout session for user ${userId}:`,
+        error,
+      );
       throw error;
     }
   }
 
-  async constructWebhookEvent(
+  constructWebhookEvent(
     payload: string | Buffer,
-    signature: string
-  ): Promise<StripeType.Event> {
-    const webhookSecret = this.configService.get<string>('STRIPE_WEBHOOK_SECRET');
+    signature: string,
+  ): StripeType.Event {
+    const webhookSecret = this.configService.get<string>(
+      'STRIPE_WEBHOOK_SECRET',
+    );
     if (!webhookSecret) {
       throw new Error('STRIPE_WEBHOOK_SECRET is required');
     }
 
     try {
-      return this.stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+      return this.stripe.webhooks.constructEvent(
+        payload,
+        signature,
+        webhookSecret,
+      );
     } catch (error) {
       this.logger.error('Webhook signature verification failed:', error);
       throw error;
     }
   }
 
-  async retrieveSession(sessionId: string): Promise<StripeType.Checkout.Session> {
+  async retrieveSession(
+    sessionId: string,
+  ): Promise<StripeType.Checkout.Session> {
     try {
       return await this.stripe.checkout.sessions.retrieve(sessionId);
     } catch (error) {
@@ -89,7 +101,7 @@ export class StripeService {
 
   async createCustomer(
     email: string,
-    metadata: Record<string, string> = {}
+    metadata: Record<string, string> = {},
   ): Promise<StripeType.Customer> {
     try {
       const customerParams: StripeType.CustomerCreateParams = {
@@ -104,34 +116,48 @@ export class StripeService {
     }
   }
 
-  async cancelSubscription(subscriptionId: string): Promise<StripeType.Subscription> {
+  async cancelSubscription(
+    subscriptionId: string,
+  ): Promise<StripeType.Subscription> {
     try {
       return await this.stripe.subscriptions.cancel(subscriptionId);
     } catch (error) {
-      this.logger.error(`Failed to cancel subscription ${subscriptionId}:`, error);
+      this.logger.error(
+        `Failed to cancel subscription ${subscriptionId}:`,
+        error,
+      );
       throw error;
     }
   }
 
-  async retrieveSubscription(subscriptionId: string): Promise<StripeType.Subscription> {
+  async retrieveSubscription(
+    subscriptionId: string,
+  ): Promise<StripeType.Subscription> {
     try {
       return await this.stripe.subscriptions.retrieve(subscriptionId);
     } catch (error) {
-      this.logger.error(`Failed to retrieve subscription ${subscriptionId}:`, error);
+      this.logger.error(
+        `Failed to retrieve subscription ${subscriptionId}:`,
+        error,
+      );
       throw error;
     }
   }
 
   async retrieveCustomer(customerId: string): Promise<StripeType.Customer> {
     try {
-      return await this.stripe.customers.retrieve(customerId) as StripeType.Customer;
+      return (await this.stripe.customers.retrieve(
+        customerId,
+      )) as StripeType.Customer;
     } catch (error) {
       this.logger.error(`Failed to retrieve customer ${customerId}:`, error);
       throw error;
     }
   }
 
-  async listSubscriptions(customerId: string): Promise<StripeType.Subscription[]> {
+  async listSubscriptions(
+    customerId: string,
+  ): Promise<StripeType.Subscription[]> {
     try {
       const subscriptions = await this.stripe.subscriptions.list({
         customer: customerId,
@@ -139,7 +165,10 @@ export class StripeService {
       });
       return subscriptions.data;
     } catch (error) {
-      this.logger.error(`Failed to list subscriptions for customer ${customerId}:`, error);
+      this.logger.error(
+        `Failed to list subscriptions for customer ${customerId}:`,
+        error,
+      );
       throw error;
     }
   }

@@ -1,45 +1,203 @@
 # DayGen Backend
 
-This service now issues JSON Web Tokens for email/password accounts and persists user galleries so creations follow you between sessions.
+A comprehensive NestJS backend service for the DayGen AI-powered content generation platform. Provides image and video generation, user authentication, payment processing, and gallery management.
 
-## Quick Start
+## 🚀 Features
 
-1. Install dependencies: `npm install`
-2. Set the required environment variables (see below)
-3. Run the development server: `npm run start:dev`
+### Image Generation
+- **FLUX Models**: Flux Pro 1.1, Ultra, Kontext Pro/Max via BFL API
+- **Gemini 2.5 Flash**: Google's latest text-to-image model
+- **Ideogram V3**: Advanced text-to-image with turbo mode
+- **Recraft v2/v3**: Professional image generation
+- **Reve**: Fast image generation and editing
+- **Qwen Image**: Alibaba's text-to-image via DashScope
+- **Runway Gen-4**: Professional image generation
+- **DALL·E**: OpenAI's image generation API
+- **Luma AI**: Dream Shaper, Realistic Vision, Photon models
 
-## Required Environment
+### Video Generation
+- **Veo 3**: Google's cinematic video generation
+- **Kling**: Advanced video generation with camera controls
+- **Runway Gen-4 Video**: Professional video generation
+- **Wan 2.2**: Alibaba's text-to-video generation
+- **Hailuo 02**: MiniMax video generation
+- **Seedance 1.0 Pro**: High-quality video generation
+- **Luma Ray 2**: Professional video generation
 
-- `DATABASE_URL` and `DIRECT_URL` – PostgreSQL connection strings for Prisma
-- `JWT_SECRET` – secret used to sign authentication tokens (fallbacks to `change-me-in-production` in development)
+### Core Services
+- **Authentication**: Supabase Auth + JWT with Google OAuth
+- **Payment Processing**: Stripe integration for credits and subscriptions
+- **File Storage**: Cloudflare R2 for image/video storage
+- **Job Queue**: Google Cloud Tasks for async processing
+- **Gallery Management**: User galleries with R2 storage
+- **Usage Tracking**: Credit system and usage analytics
+- **WebSocket Support**: Real-time job status updates
 
-### Image Provider Configuration
+## 🛠️ Tech Stack
 
-Set the provider keys you plan to use before hitting `/api/unified-generate`. Each handler in `src/generation/generation.service.ts` expects the following environment variables:
+- **Framework**: NestJS with TypeScript
+- **Database**: PostgreSQL with Prisma ORM
+- **Storage**: Cloudflare R2
+- **Queue**: Google Cloud Tasks
+- **Payments**: Stripe
+- **Auth**: Supabase + JWT
+- **Deployment**: Google Cloud Run
 
-- `BFL_API_KEY` (+ optional `BFL_API_BASE`) for Flux models ([docs/bfl.ai](https://bfl.ai/api-reference))
-- One of `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_AI_KEY`, or `VITE_GEMINI_API_KEY` for Gemini image preview ([docs/ai.google.dev](https://ai.google.dev/gemini-api/docs))
-- `IDEOGRAM_API_KEY` for Ideogram V3 ([docs.ideogram.ai](https://docs.ideogram.ai))
-- `DASHSCOPE_API_KEY` (+ optional `DASHSCOPE_BASE`) for Qwen Image via DashScope ([dashscope.aliyun.com](https://dashscope.aliyun.com/api-reference/multimodal/image-generation))
-- `RUNWAY_API_KEY` for Runway Gen-4 ([learn.runwayml.com](https://learn.runwayml.com/reference/image-generations))
-- `ARK_API_KEY` (+ optional `ARK_BASE_URL`) for SeeDream on BytePlus Ark ([byteplus.com](https://www.byteplus.com/en/docs/byteplus-ark/api-ref))
-- `OPENAI_API_KEY` for DALL·E via Images API ([platform.openai.com](https://platform.openai.com/docs/api-reference/images))
-- `REVE_API_KEY` (+ optional `REVE_BASE_URL`) for Rêve image generation ([reve.gitbook.io](https://reve.gitbook.io/revepo/api))
-- `RECRAFT_API_KEY` for Recraft v2/v3 ([docs.recraft.ai](https://docs.recraft.ai/reference))
+## 🚀 Quick Start
 
-See `docs/image-generation-providers.md` for a quick reference covering required payload fields, response shapes, and troubleshooting tips gathered from the official docs.
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
 
-## Key Endpoints
+2. **Set up environment variables** (see Environment Configuration below)
 
-- `POST /api/auth/signup` – create a new account (`email`, `password`, optional `displayName`)
-- `POST /api/auth/login` – exchange valid credentials for a JWT
-- `GET /api/auth/me` – fetch the profile for the active bearer token
-- `PATCH /api/users/me` – update `displayName` or `profileImage`
-- `GET /api/gallery` – list gallery entries for the current user (supports `limit`/`cursor`)
-- `POST /api/gallery` – persist a generation (`assetUrl`, optional `templateId`, optional metadata JSON)
-- `DELETE /api/gallery/:id` – remove one of your gallery items
+3. **Set up database**:
+   ```bash
+   npx prisma generate
+   npx prisma db push
+   ```
 
-Tokens must be supplied via the `Authorization: Bearer <token>` header. The frontend stores the token in `localStorage` and automatically refreshes profile state on load.
+4. **Run development server**:
+   ```bash
+   npm run start:dev
+   ```
+
+## 📝 Environment Configuration
+
+### Required Variables
+- `DATABASE_URL` - PostgreSQL connection string
+- `DIRECT_URL` - Direct PostgreSQL connection for migrations
+- `JWT_SECRET` - Secret for JWT token signing
+- `SUPABASE_URL` - Supabase project URL
+- `SUPABASE_ANON_KEY` - Supabase anonymous key
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
+
+### Image Generation Providers
+Configure API keys for the providers you want to use:
+
+- `BFL_API_KEY` - Black Forest Labs (FLUX models)
+- `GEMINI_API_KEY` - Google Gemini 2.5 Flash
+- `IDEOGRAM_API_KEY` - Ideogram V3
+- `DASHSCOPE_API_KEY` - Alibaba Qwen Image
+- `RUNWAY_API_KEY` - Runway Gen-4
+- `OPENAI_API_KEY` - OpenAI DALL·E
+- `REVE_API_KEY` - Reve image generation
+- `RECRAFT_API_KEY` - Recraft v2/v3
+- `LUMA_API_KEY` - Luma AI models
+
+### Storage & Services
+- `R2_ACCOUNT_ID` - Cloudflare R2 account ID
+- `R2_ACCESS_KEY_ID` - R2 access key
+- `R2_SECRET_ACCESS_KEY` - R2 secret key
+- `R2_BUCKET_NAME` - R2 bucket name
+- `R2_PUBLIC_URL` - R2 public URL
+
+### Payment Processing
+- `STRIPE_SECRET_KEY` - Stripe secret key
+- `STRIPE_WEBHOOK_SECRET` - Stripe webhook secret
+- `FRONTEND_URL` - Frontend URL for redirects
+
+### Google Cloud Tasks
+- `GOOGLE_CLOUD_PROJECT_ID` - GCP project ID
+- `GOOGLE_APPLICATION_CREDENTIALS` - Service account key path
+
+## 🔗 API Endpoints
+
+### Authentication
+- `POST /api/auth/signup` - Create account with email/password
+- `POST /api/auth/login` - Login with email/password
+- `POST /api/auth/google` - Google OAuth login
+- `GET /api/auth/me` - Get current user profile
+- `POST /api/auth/forgot-password` - Request password reset
+- `POST /api/auth/reset-password` - Reset password
+
+### Image Generation
+- `POST /api/unified-generate` - Unified image generation endpoint
+- `POST /api/image/flux` - FLUX model generation
+- `POST /api/image/gemini` - Gemini generation
+- `POST /api/image/ideogram` - Ideogram generation
+- `POST /api/image/runway` - Runway generation
+- `POST /api/image/recraft` - Recraft generation
+- `POST /api/image/reve` - Reve generation
+- `POST /api/image/luma` - Luma AI generation
+
+### Video Generation
+- `POST /api/video/veo` - Google Veo 3 generation
+- `POST /api/video/kling` - Kling video generation
+- `POST /api/video/runway` - Runway video generation
+- `POST /api/video/luma` - Luma video generation
+
+### Job Management
+- `POST /api/jobs/image-generation` - Create image generation job
+- `POST /api/jobs/video-generation` - Create video generation job
+- `GET /api/jobs/:jobId` - Get job status
+- `GET /api/jobs` - List user jobs
+
+### Gallery & Files
+- `GET /api/r2files` - List user files
+- `POST /api/r2files` - Upload file to R2
+- `DELETE /api/r2files/:id` - Delete file
+
+### Payments
+- `POST /api/payments/create-checkout` - Create Stripe checkout session
+- `GET /api/payments/subscription` - Get user subscription
+- `POST /api/payments/cancel-subscription` - Cancel subscription
+- `GET /api/payments/history` - Get payment history
+
+### Health & Monitoring
+- `GET /health` - Health check endpoint
+- `GET /api/usage/events` - Usage analytics (admin only)
+
+## 🧪 Testing
+
+```bash
+# Unit tests
+npm run test
+
+# E2E tests
+npm run test:e2e
+
+# Test coverage
+npm run test:cov
+
+# Linting
+npm run lint
+
+# Build
+npm run build
+```
+
+## 📊 Database Schema
+
+The application uses PostgreSQL with Prisma ORM. Key models include:
+
+- **User**: User accounts with credits and profile info
+- **R2File**: File metadata for Cloudflare R2 storage
+- **Job**: Async job tracking for generation tasks
+- **Payment**: Payment records and transactions
+- **Subscription**: User subscription management
+- **UsageEvent**: Credit usage tracking and analytics
+
+## 🚀 Deployment
+
+The application is designed to deploy on Google Cloud Run with:
+
+1. **Database**: PostgreSQL (Supabase or Cloud SQL)
+2. **Storage**: Cloudflare R2
+3. **Queue**: Google Cloud Tasks
+4. **Monitoring**: Built-in health checks and logging
+
+See `docs/PRODUCTION_DEPLOYMENT.md` for detailed deployment instructions.
+
+## 📚 Documentation
+
+- [Development Guide](docs/DEVELOPMENT.md)
+- [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md)
+- [Queue System](docs/QUEUE_SYSTEM.md)
+- [Backup System](BACKUP_SYSTEM.md)
+- [Google OAuth Setup](docs/GOOGLE_OAUTH_SETUP.md)
+- [Stripe Setup](STRIPE_SETUP.md)
 
 ---
 

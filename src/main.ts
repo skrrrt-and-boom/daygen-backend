@@ -48,11 +48,11 @@ async function bootstrap() {
   // Configure body parser with larger limits for gallery images
   // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
   const express = require('express');
-  
+
   // Raw body parser for Stripe webhooks
   // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   app.use('/webhooks/stripe', express.raw({ type: 'application/json' }));
-  
+
   // JSON parser for all other routes
   // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   app.use(express.json({ limit: '50mb' }));

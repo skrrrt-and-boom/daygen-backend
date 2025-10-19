@@ -76,7 +76,9 @@ export class R2FilesService {
   async create(ownerAuthId: string, dto: CreateR2FileDto) {
     // Validate that fileUrl is not a base64 data URL
     if (dto.fileUrl && this.r2Service.isBase64Url(dto.fileUrl)) {
-      throw new Error('Base64 data URLs are not allowed. Please upload to R2 first and provide the public URL.');
+      throw new Error(
+        'Base64 data URLs are not allowed. Please upload to R2 first and provide the public URL.',
+      );
     }
 
     // Validate that fileUrl is a proper R2 URL if provided

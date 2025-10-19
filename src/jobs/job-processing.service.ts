@@ -255,7 +255,9 @@ export class JobProcessingService {
 
     // Ensure we have an R2 URL, not base64 data
     if (fileUrl.startsWith('data:image/')) {
-      throw new Error('R2 upload failed - base64 data detected instead of R2 URL. Please ensure R2 is properly configured.');
+      throw new Error(
+        'R2 upload failed - base64 data detected instead of R2 URL. Please ensure R2 is properly configured.',
+      );
     }
 
     let r2File = r2FileId
@@ -422,7 +424,9 @@ export class JobProcessingService {
 
           // Ensure we have an R2 URL, not base64 data
           if (fileUrl.startsWith('data:image/')) {
-            throw new Error(`R2 upload failed for prompt "${prompt}" - base64 data detected instead of R2 URL. Please ensure R2 is properly configured.`);
+            throw new Error(
+              `R2 upload failed for prompt "${prompt}" - base64 data detected instead of R2 URL. Please ensure R2 is properly configured.`,
+            );
           }
 
           let r2File = r2FileId

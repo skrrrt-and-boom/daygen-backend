@@ -2107,11 +2107,15 @@ export class GenerationService {
         }
       } catch (error) {
         this.logger.error(`Failed to upload to R2: ${String(error)}`);
-        throw new Error(`R2 upload failed: ${error.message}. Please ensure R2 is properly configured and bucket has public access enabled.`);
+        throw new Error(
+          `R2 upload failed: ${error.message}. Please ensure R2 is properly configured and bucket has public access enabled.`,
+        );
       }
     } else if (asset && !this.r2Service.isConfigured()) {
       this.logger.error('R2 is not configured but image generation attempted');
-      throw new Error('R2 storage is not configured. Please configure Cloudflare R2 credentials.');
+      throw new Error(
+        'R2 storage is not configured. Please configure Cloudflare R2 credentials.',
+      );
     }
   }
 

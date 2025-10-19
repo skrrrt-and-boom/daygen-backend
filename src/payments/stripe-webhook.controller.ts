@@ -1,12 +1,11 @@
-import { 
-  Controller, 
-  Post, 
-  Req, 
-  Res, 
-  Headers, 
-  Logger, 
+import {
+  Controller,
+  Post,
+  Req,
+  Res,
+  Headers,
+  Logger,
   HttpStatus,
-  BadRequestException 
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { StripeService } from './stripe.service';
@@ -30,39 +29,44 @@ export class StripeWebhookController {
   ) {
     if (!signature) {
       this.logger.error('Missing Stripe signature');
-      return res.status(HttpStatus.BAD_REQUEST).send('Missing Stripe signature');
+      return res
+        .status(HttpStatus.BAD_REQUEST)
+        .send('Missing Stripe signature');
     }
 
     try {
       // Construct the event
-      const event = await this.stripeService.constructWebhookEvent(req.body, signature);
-      
+      const event = await this.stripeService.constructWebhookEvent(
+        req.body,
+        signature,
+      );
+
       this.logger.log(`Received webhook event: ${event.type}`);
 
       // Handle the event
       switch (event.type) {
         case 'checkout.session.completed':
-          await this.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+          await this.handleCheckoutSessionCompleted(event.data.object);
           break;
 
         case 'customer.subscription.created':
-          await this.handleSubscriptionCreated(event.data.object as Stripe.Subscription);
+          await this.handleSubscriptionCreated(event.data.object);
           break;
 
         case 'customer.subscription.updated':
-          await this.handleSubscriptionUpdated(event.data.object as Stripe.Subscription);
+          await this.handleSubscriptionUpdated(event.data.object);
           break;
 
         case 'customer.subscription.deleted':
-          await this.handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
+          await this.handleSubscriptionDeleted(event.data.object);
           break;
 
         case 'invoice.payment_succeeded':
-          await this.handleInvoicePaymentSucceeded(event.data.object as Stripe.Invoice);
+          await this.handleInvoicePaymentSucceeded(event.data.object);
           break;
 
         case 'invoice.payment_failed':
-          await this.handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
+          await this.handleInvoicePaymentFailed(event.data.object);
           break;
 
         default:
@@ -72,73 +76,95 @@ export class StripeWebhookController {
       return res.status(HttpStatus.OK).json({ received: true });
     } catch (error) {
       this.logger.error('Webhook error:', error);
-      return res.status(HttpStatus.BAD_REQUEST).send(`Webhook Error: ${error.message}`);
+      return res
+        .status(HttpStatus.BAD_REQUEST)
+        .send(`Webhook Error: ${error.message}`);
     }
   }
 
-  private async handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+  private async handleCheckoutSessionCompleted(
+    session: Stripe.Checkout.Session,
+  ) {
     this.logger.log(`Processing checkout session completed: ${session.id}`);
-    
+
     try {
       await this.paymentsService.handleSuccessfulPayment(session);
     } catch (error) {
-      this.logger.error(`Error processing checkout session ${session.id}:`, error);
+      this.logger.error(
+        `Error processing checkout session ${session.id}:`,
+        error,
+      );
     }
   }
 
   private async handleSubscriptionCreated(subscription: Stripe.Subscription) {
     this.logger.log(`Processing subscription created: ${subscription.id}`);
-    
+
     try {
       await this.paymentsService.handleSuccessfulSubscription(subscription);
     } catch (error) {
-      this.logger.error(`Error processing subscription ${subscription.id}:`, error);
+      this.logger.error(
+        `Error processing subscription ${subscription.id}:`,
+        error,
+      );
     }
   }
 
   private async handleSubscriptionUpdated(subscription: Stripe.Subscription) {
     this.logger.log(`Processing subscription updated: ${subscription.id}`);
-    
+
     try {
       // Update subscription status in database
       await this.paymentsService.updateSubscriptionStatus(subscription);
     } catch (error) {
-      this.logger.error(`Error updating subscription ${subscription.id}:`, error);
+      this.logger.error(
+        `Error updating subscription ${subscription.id}:`,
+        error,
+      );
     }
   }
 
   private async handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     this.logger.log(`Processing subscription deleted: ${subscription.id}`);
-    
+
     try {
       // Mark subscription as cancelled in database
       await this.paymentsService.cancelSubscriptionByStripeId(subscription.id);
     } catch (error) {
-      this.logger.error(`Error cancelling subscription ${subscription.id}:`, error);
+      this.logger.error(
+        `Error cancelling subscription ${subscription.id}:`,
+        error,
+      );
     }
   }
 
   private async handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     this.logger.log(`Processing invoice payment succeeded: ${invoice.id}`);
-    
+
     try {
       // Handle recurring payment for subscription
       if ((invoice as any).subscription) {
         await this.paymentsService.handleRecurringPayment(invoice);
       }
     } catch (error) {
-      this.logger.error(`Error processing invoice payment ${invoice.id}:`, error);
+      this.logger.error(
+        `Error processing invoice payment ${invoice.id}:`,
+        error,
+      );
     }
   }
 
   private async handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     this.logger.log(`Processing invoice payment failed: ${invoice.id}`);
-    
+
     try {
       // Handle failed payment
       await this.paymentsService.handleFailedPayment(invoice);
     } catch (error) {
-      this.logger.error(`Error processing failed payment ${invoice.id}:`, error);
+      this.logger.error(
+        `Error processing failed payment ${invoice.id}:`,
+        error,
+      );
     }
   }
 }

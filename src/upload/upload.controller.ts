@@ -246,7 +246,9 @@ export class UploadController {
     @CurrentUserDecorator() user: SanitizedUser,
   ) {
     if (!dto.images || !Array.isArray(dto.images) || dto.images.length === 0) {
-      throw new BadRequestException('Images array is required and must not be empty');
+      throw new BadRequestException(
+        'Images array is required and must not be empty',
+      );
     }
 
     if (!this.r2Service.isConfigured()) {
@@ -268,25 +270,27 @@ export class UploadController {
 
     for (let i = 0; i < dto.images.length; i++) {
       const image = dto.images[i];
-      
+
       try {
         // Validate base64 data
         if (!image.base64Data || !image.base64Data.startsWith('data:image/')) {
           errors.push({
             index: i,
             originalUrl: image.originalUrl,
-            error: 'Invalid base64 data format'
+            error: 'Invalid base64 data format',
           });
           continue;
         }
 
         // Extract base64 data and mime type
-        const base64Match = image.base64Data.match(/^data:([^;,]+);base64,(.*)$/);
+        const base64Match = image.base64Data.match(
+          /^data:([^;,]+);base64,(.*)$/,
+        );
         if (!base64Match) {
           errors.push({
             index: i,
             originalUrl: image.originalUrl,
-            error: 'Invalid base64 data URL format'
+            error: 'Invalid base64 data URL format',
           });
           continue;
         }
@@ -319,13 +323,12 @@ export class UploadController {
           r2FileId: r2File.id,
           success: true,
         });
-
       } catch (error) {
         console.error(`Failed to migrate image ${i}:`, error);
         errors.push({
           index: i,
           originalUrl: image.originalUrl,
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     }
