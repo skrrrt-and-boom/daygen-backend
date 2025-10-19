@@ -1,0 +1,72 @@
+export interface CreditPackage {
+  id: string;
+  name: string;
+  credits: number;
+  price: number; // Price in cents
+  badge?: 'POPULAR' | 'BEST_VALUE';
+}
+
+export interface SubscriptionPlan {
+  id: string;
+  name: string;
+  credits: number;
+  price: number; // Price in cents
+  interval: 'month' | 'year';
+  badge?: 'POPULAR' | 'BEST_VALUE';
+}
+
+export const CREDIT_PACKAGES: CreditPackage[] = [
+  { 
+    id: 'test', 
+    name: 'Test Pack', 
+    credits: 10, 
+    price: 1 // $0.01 for testing
+  },
+  { 
+    id: 'starter', 
+    name: 'Starter Pack', 
+    credits: 100, 
+    price: 1000 // $10.00
+  },
+  { 
+    id: 'popular', 
+    name: 'Popular Pack', 
+    credits: 500, 
+    price: 4000, 
+    badge: 'POPULAR' // $40.00
+  },
+  { 
+    id: 'best-value', 
+    name: 'Best Value', 
+    credits: 1000, 
+    price: 7000, 
+    badge: 'BEST_VALUE' // $70.00
+  },
+];
+
+export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
+  { 
+    id: 'pro', 
+    name: 'Pro', 
+    credits: 1000, 
+    price: 2900, 
+    interval: 'month',
+    badge: 'POPULAR' // $29.00/month
+  },
+  { 
+    id: 'enterprise', 
+    name: 'Enterprise', 
+    credits: 5000, 
+    price: 9900, 
+    interval: 'month',
+    badge: 'BEST_VALUE' // $99.00/month
+  },
+];
+
+export function getCreditPackageById(id: string): CreditPackage | undefined {
+  return CREDIT_PACKAGES.find(pkg => pkg.id === id);
+}
+
+export function getSubscriptionPlanById(id: string): SubscriptionPlan | undefined {
+  return SUBSCRIPTION_PLANS.find(plan => plan.id === id);
+}

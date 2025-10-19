@@ -24,6 +24,9 @@ export class R2Service {
         accessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID || '',
         secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY || '',
       },
+      forcePathStyle: true,
+      useAccelerateEndpoint: false,
+      disableHostPrefix: true,
     });
   }
 
@@ -32,7 +35,7 @@ export class R2Service {
    */
   async uploadFile(
     file: Express.Multer.File,
-    folder: string = 'images',
+    folder: string = 'generated-images',
   ): Promise<string> {
     const fileExtension = this.getFileExtension(file.originalname);
     const fileName = `${folder}/${randomUUID()}${fileExtension}`;
@@ -57,7 +60,7 @@ export class R2Service {
   async uploadBase64Image(
     base64Data: string,
     mimeType: string = 'image/png',
-    folder: string = 'images',
+    folder: string = 'generated-images',
   ): Promise<string> {
     // Remove data URL prefix if present
     const base64 = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
@@ -107,7 +110,7 @@ export class R2Service {
   async generatePresignedUploadUrl(
     fileName: string,
     contentType: string,
-    folder: string = 'images',
+    folder: string = 'generated-images',
   ): Promise<{ uploadUrl: string; publicUrl: string }> {
     const key = `${folder}/${randomUUID()}-${fileName}`;
 
@@ -142,6 +145,21 @@ export class R2Service {
       process.env.CLOUDFLARE_R2_BUCKET_NAME &&
       process.env.CLOUDFLARE_R2_PUBLIC_URL
     );
+  }
+
+  /**
+   * Validate that a URL is a proper R2 public URL
+   */
+  validateR2Url(url: string): boolean {
+    if (!url) return false;
+    return url.startsWith(this.publicUrl);
+  }
+
+  /**
+   * Check if a URL is a base64 data URL (should not be stored in database)
+   */
+  isBase64Url(url: string): boolean {
+    return Boolean(url && url.startsWith('data:image/'));
   }
 
   private getFileExtension(filename: string): string {

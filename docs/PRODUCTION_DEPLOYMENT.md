@@ -8,7 +8,7 @@ This guide covers deploying the DayGen backend to Google Cloud Run with full que
 
 - Google Cloud CLI installed and authenticated
 - Docker installed
-- Node.js 18+ installed
+- Node.js 20+ installed
 - All API keys for image generation services
 
 ## Environment Variables

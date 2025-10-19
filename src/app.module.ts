@@ -12,6 +12,7 @@ import { HealthModule } from './health/health.module';
 import { GenerationModule } from './generation/generation.module';
 import { UploadModule } from './upload/upload.module';
 import { JobsModule } from './jobs/jobs.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { JobsModule } from './jobs/jobs.module';
     GenerationModule,
     UploadModule,
     JobsModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

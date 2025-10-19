@@ -27,13 +27,16 @@
     "backup:full": "npm run backup:db && npm run backup:users",
     "backup:manual": "npm run backup:full && git add backups/ && git commit -m 'Database backup $(date)' && git push",
     "backup:check-connection": "node scripts/get-supavisor-connection.js",
+    "test:r2": "NODE_OPTIONS='--openssl-legacy-provider' node scripts/test-r2.js",
+    "migrate:images": "node scripts/migrate-images-to-r2.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.896.0",
+    "@aws-sdk/client-s3": "^3.913.0",
+    "@aws-sdk/node-http-handler": "^3.370.0",
     "@aws-sdk/s3-request-presigner": "^3.896.0",
     "@google-cloud/tasks": "^6.2.0",
     "@nestjs/common": "^11.1.6",
@@ -58,7 +61,7 @@
     "lumaai": "^1.17.3",
     "multer": "^2.0.2",
     "nestjs-pino": "^4.4.1",
-    "node-fetch": "^3.3.2",
+    "node-fetch": "^2.7.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-strategy": "^1.0.0",
@@ -69,7 +72,9 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "socket.io": "^4.8.1",
-    "superagent": "^10.2.3"
+    "stripe": "^19.1.0",
+    "superagent": "^10.2.3",
+    "undici": "^7.16.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.10",
