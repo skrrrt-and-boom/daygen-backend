@@ -209,8 +209,12 @@ export class PaymentsService {
         stripeSubscriptionId: subscription.id,
         stripePriceId: priceId,
         status: this.mapStripeStatusToDb(subscription.status),
-        currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
-        currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
+        currentPeriodStart: new Date(
+          (subscription as any).current_period_start * 1000,
+        ),
+        currentPeriodEnd: new Date(
+          (subscription as any).current_period_end * 1000,
+        ),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
         credits: plan.credits,
       },
@@ -441,8 +445,12 @@ export class PaymentsService {
       where: { stripeSubscriptionId: subscription.id },
       data: {
         status: this.mapStripeStatusToDb(subscription.status),
-        currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
-        currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
+        currentPeriodStart: new Date(
+          (subscription as any).current_period_start * 1000,
+        ),
+        currentPeriodEnd: new Date(
+          (subscription as any).current_period_end * 1000,
+        ),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
       },
     });

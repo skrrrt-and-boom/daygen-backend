@@ -81,7 +81,7 @@ export class AuthController {
 
       return {
         message: 'Google authentication successful',
-        user: result.user as any,
+        user: result.user,
         profile: result.profile,
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,

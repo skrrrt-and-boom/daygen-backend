@@ -105,7 +105,7 @@ export class GoogleAuthService {
         authUser = newUser.user;
       }
 
-      const profile = await this.usersService.upsertFromSupabaseUser(authUser as any, {
+      const profile = await this.usersService.upsertFromSupabaseUser(authUser, {
         displayName: googleUserInfo.name || 'Google User',
         profileImage: googleUserInfo.picture ?? undefined,
       });
@@ -131,7 +131,7 @@ export class GoogleAuthService {
     const { data: sessionData, error: sessionError } =
       await this.supabaseService.getAdminClient().auth.admin.generateLink({
         type: 'magiclink',
-        email: (authUser as any).email!,
+        email: authUser.email!,
         options: {
           redirectTo: `${process.env.FRONTEND_URL}/auth/callback`,
         },
@@ -153,7 +153,7 @@ export class GoogleAuthService {
     const refreshToken = url.searchParams.get('refresh_token');
 
     return {
-      user: authUser as any,
+      user: authUser,
       profile: profile,
       accessToken: accessToken || '',
       refreshToken: refreshToken || '',
