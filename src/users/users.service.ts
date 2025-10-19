@@ -275,13 +275,13 @@ export class UsersService {
       updatedAt: user.updatedAt,
       subscription: user.subscription
         ? {
-            id: user.subscription.id,
-            status: user.subscription.status,
-            currentPeriodStart: user.subscription.currentPeriodStart,
-            currentPeriodEnd: user.subscription.currentPeriodEnd,
-            cancelAtPeriodEnd: user.subscription.cancelAtPeriodEnd,
-            credits: user.subscription.credits,
-            createdAt: user.subscription.createdAt,
+            id: (user.subscription as any).id,
+            status: (user.subscription as any).status,
+            currentPeriodStart: (user.subscription as any).currentPeriodStart,
+            currentPeriodEnd: (user.subscription as any).currentPeriodEnd,
+            cancelAtPeriodEnd: (user.subscription as any).cancelAtPeriodEnd,
+            credits: (user.subscription as any).credits,
+            createdAt: (user.subscription as any).createdAt,
           }
         : null,
     };

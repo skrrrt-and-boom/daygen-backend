@@ -2107,8 +2107,10 @@ export class GenerationService {
         }
       } catch (error) {
         this.logger.error(`Failed to upload to R2: ${String(error)}`);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         throw new Error(
-          `R2 upload failed: ${error.message}. Please ensure R2 is properly configured and bucket has public access enabled.`,
+          `R2 upload failed: ${errorMessage}. Please ensure R2 is properly configured and bucket has public access enabled.`,
         );
       }
     } else if (asset && !this.r2Service.isConfigured()) {

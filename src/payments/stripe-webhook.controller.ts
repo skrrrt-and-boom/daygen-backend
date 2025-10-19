@@ -37,7 +37,7 @@ export class StripeWebhookController {
     try {
       // Construct the event
       const event = this.stripeService.constructWebhookEvent(
-        req.body,
+        req.body as string | Buffer,
         signature,
       );
 
@@ -76,9 +76,11 @@ export class StripeWebhookController {
       return res.status(HttpStatus.OK).json({ received: true });
     } catch (error) {
       this.logger.error('Webhook error:', error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       return res
         .status(HttpStatus.BAD_REQUEST)
-        .send(`Webhook Error: ${error.message}`);
+        .send(`Webhook Error: ${errorMessage}`);
     }
   }
 

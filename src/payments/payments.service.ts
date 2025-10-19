@@ -209,12 +209,8 @@ export class PaymentsService {
         stripeSubscriptionId: subscription.id,
         stripePriceId: priceId,
         status: this.mapStripeStatusToDb(subscription.status),
-        currentPeriodStart: new Date(
-          (subscription as any).current_period_start * 1000,
-        ),
-        currentPeriodEnd: new Date(
-          (subscription as any).current_period_end * 1000,
-        ),
+        currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
+        currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
         credits: plan.credits,
       },
@@ -401,7 +397,7 @@ export class PaymentsService {
     return SUBSCRIPTION_PLANS;
   }
 
-  private getPriceIdForPackage(creditPackage: any): string {
+  private getPriceIdForPackage(creditPackage: { id: string }): string {
     const priceIdMap: Record<string, string> = {
       test: process.env.STRIPE_TEST_PRICE_ID || '',
     };
@@ -419,7 +415,7 @@ export class PaymentsService {
     return priceId;
   }
 
-  private getPriceIdForSubscription(plan: any): string {
+  private getPriceIdForSubscription(plan: { id: string }): string {
     const priceIdMap: Record<string, string> = {
       pro: process.env.STRIPE_PRO_PRICE_ID || '',
       enterprise: process.env.STRIPE_ENTERPRISE_PRICE_ID || '',
@@ -445,12 +441,8 @@ export class PaymentsService {
       where: { stripeSubscriptionId: subscription.id },
       data: {
         status: this.mapStripeStatusToDb(subscription.status),
-        currentPeriodStart: new Date(
-          (subscription as any).current_period_start * 1000,
-        ),
-        currentPeriodEnd: new Date(
-          (subscription as any).current_period_end * 1000,
-        ),
+        currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
+        currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
       },
     });

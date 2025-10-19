@@ -4,6 +4,18 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { UsersService } from '../users/users.service';
 import type { SanitizedUser } from '../users/types';
 
+interface GoogleAuthResult {
+  user: any; // Supabase User type
+  profile: SanitizedUser;
+  accessToken: string;
+  refreshToken: string;
+}
+
+interface CreateUserResult {
+  authUser: any; // Supabase User type
+  profile: SanitizedUser;
+}
+
 @Injectable()
 export class GoogleAuthService {
   private oauth2Client: OAuth2Client;
@@ -43,7 +55,7 @@ export class GoogleAuthService {
    */
   async createOrUpdateUser(
     googleUserInfo: TokenPayload,
-  ): Promise<{ authUser: any; profile: SanitizedUser }> {
+  ): Promise<CreateUserResult> {
     try {
       if (!googleUserInfo.email || !googleUserInfo.sub) {
         throw new BadRequestException('Invalid Google user information');
@@ -93,12 +105,12 @@ export class GoogleAuthService {
         authUser = newUser.user;
       }
 
-      const profile = await this.usersService.upsertFromSupabaseUser(authUser, {
+      const profile = await this.usersService.upsertFromSupabaseUser(authUser as any, {
         displayName: googleUserInfo.name || 'Google User',
         profileImage: googleUserInfo.picture ?? undefined,
       });
 
-      return { authUser: authUser, profile: profile as any };
+      return { authUser: authUser, profile: profile };
     } catch (error) {
       console.error('Error creating/updating user:', error);
       throw new BadRequestException('Failed to create user account');
@@ -108,20 +120,18 @@ export class GoogleAuthService {
   /**
    * Complete Google authentication flow with ID token verification
    */
-  async authenticateWithIdToken(idToken: string) {
+  async authenticateWithIdToken(idToken: string): Promise<GoogleAuthResult> {
     // Verify the ID token
     const googleUserInfo = await this.verifyIdToken(idToken);
 
     // Create or update user in our system
-    const { authUser, profile } = (await this.createOrUpdateUser(
-      googleUserInfo,
-    )) as any;
+    const { authUser, profile } = await this.createOrUpdateUser(googleUserInfo);
 
     // Generate a session token for the user
     const { data: sessionData, error: sessionError } =
       await this.supabaseService.getAdminClient().auth.admin.generateLink({
         type: 'magiclink',
-        email: authUser.email!,
+        email: (authUser as any).email!,
         options: {
           redirectTo: `${process.env.FRONTEND_URL}/auth/callback`,
         },
@@ -133,13 +143,17 @@ export class GoogleAuthService {
     }
 
     // Extract tokens from the generated link
-    const link = (sessionData as any).properties?.action_link;
+    const link = (sessionData as { properties?: { action_link?: string } })
+      .properties?.action_link;
+    if (!link) {
+      throw new BadRequestException('Failed to generate authentication link');
+    }
     const url = new URL(link);
     const accessToken = url.searchParams.get('access_token');
     const refreshToken = url.searchParams.get('refresh_token');
 
     return {
-      user: authUser,
+      user: authUser as any,
       profile: profile,
       accessToken: accessToken || '',
       refreshToken: refreshToken || '',
