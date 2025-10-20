@@ -69,6 +69,10 @@ export class StripeWebhookController {
           await this.handleInvoicePaymentFailed(event.data.object);
           break;
 
+        case 'payment_intent.payment_failed':
+          await this.handlePaymentIntentFailed(event.data.object);
+          break;
+
         default:
           this.logger.log(`Unhandled event type: ${event.type}`);
       }
@@ -99,7 +103,9 @@ export class StripeWebhookController {
           const subscription = await this.stripeService.retrieveSubscription(
             session.subscription as string,
           );
-          await this.paymentsService.handleSuccessfulSubscription(subscription);
+          // Handle subscription completion: create record AND add credits
+          // Pass the session metadata to get the userId
+          await this.paymentsService.handleSuccessfulSubscriptionFromSession(subscription, session);
         }
       }
     } catch (error) {
@@ -114,8 +120,9 @@ export class StripeWebhookController {
     this.logger.log(`Processing subscription created: ${subscription.id}`);
 
     try {
-      // Only create subscription record, credits will be handled by checkout.session.completed
-      await this.paymentsService.createSubscriptionRecord(subscription);
+      // Subscription creation is now handled by checkout.session.completed
+      // This webhook is mainly for logging and any additional setup
+      this.logger.log(`Subscription ${subscription.id} created successfully`);
     } catch (error) {
       this.logger.error(
         `Error processing subscription ${subscription.id}:`,
@@ -177,6 +184,29 @@ export class StripeWebhookController {
     } catch (error) {
       this.logger.error(
         `Error processing failed payment ${invoice.id}:`,
+        error,
+      );
+    }
+  }
+
+  private async handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
+    this.logger.log(`Processing payment intent failed: ${paymentIntent.id}`);
+
+    try {
+      // Find the payment record by payment intent ID
+      const payment = await this.paymentsService.findPaymentByIntentId(paymentIntent.id);
+      
+      if (payment) {
+        // Update payment status to failed
+        await this.paymentsService.updatePaymentStatus(payment.id, 'FAILED');
+        
+        this.logger.log(`Updated payment ${payment.id} status to FAILED`);
+      } else {
+        this.logger.warn(`No payment found for failed payment intent ${paymentIntent.id}`);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error processing failed payment intent ${paymentIntent.id}:`,
         error,
       );
     }

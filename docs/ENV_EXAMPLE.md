@@ -36,9 +36,13 @@ STRIPE_STARTER_PRICE_ID="price_starter_100_credits"
 STRIPE_POPULAR_PRICE_ID="price_popular_500_credits"
 STRIPE_BEST_VALUE_PRICE_ID="price_best_value_1000_credits"
 
-# Subscription plans
+# Subscription plans (monthly)
 STRIPE_PRO_PRICE_ID="price_pro_monthly"
 STRIPE_ENTERPRISE_PRICE_ID="price_enterprise_monthly"
+
+# Subscription plans (yearly)
+STRIPE_PRO_YEARLY_PRICE_ID="price_pro_yearly"
+STRIPE_ENTERPRISE_YEARLY_PRICE_ID="price_enterprise_yearly"
 
 # Image Generation Services
 # Add your other service configurations here...
@@ -83,6 +87,8 @@ These are obtained from the Stripe Dashboard after creating products:
 - `STRIPE_BEST_VALUE_PRICE_ID`: Price ID for best value pack (1000 credits, $70.00)
 - `STRIPE_PRO_PRICE_ID`: Price ID for pro subscription (1000 credits/month, $29.00)
 - `STRIPE_ENTERPRISE_PRICE_ID`: Price ID for enterprise subscription (5000 credits/month, $99.00)
+- `STRIPE_PRO_YEARLY_PRICE_ID`: Price ID for pro subscription (12000 credits/year, $290.00)
+- `STRIPE_ENTERPRISE_YEARLY_PRICE_ID`: Price ID for enterprise subscription (60000 credits/year, $990.00)
 
 ## Security Notes
 

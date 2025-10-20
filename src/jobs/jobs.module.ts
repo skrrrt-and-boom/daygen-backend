@@ -7,6 +7,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { GenerationModule } from '../generation/generation.module';
 import { R2FilesModule } from '../r2files/r2files.module';
 import { UsageModule } from '../usage/usage.module';
+import { PaymentsModule } from '../payments/payments.module';
 import { JobProcessingService } from './job-processing.service';
 import { LoggerService } from '../common/logger.service';
 import { MetricsService } from '../common/metrics.service';
@@ -18,6 +19,7 @@ import { RequestContextService } from '../common/request-context.service';
     forwardRef(() => GenerationModule),
     R2FilesModule,
     UsageModule,
+    PaymentsModule,
   ],
   providers: [
     CloudTasksService,

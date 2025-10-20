@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Param } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 
 @Controller('public-payments')
@@ -11,5 +11,10 @@ export class PublicPaymentsController {
       creditPackages: this.paymentsService.getCreditPackages(),
       subscriptionPlans: this.paymentsService.getSubscriptionPlans(),
     };
+  }
+
+  @Get('session/:sessionId')
+  async getSessionStatus(@Param('sessionId') sessionId: string) {
+    return this.paymentsService.getSessionStatus(sessionId);
   }
 }

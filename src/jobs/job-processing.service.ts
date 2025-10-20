@@ -3,6 +3,7 @@ import { JobStatus, JobType } from '@prisma/client';
 import { GenerationService } from '../generation/generation.service';
 import { R2FilesService } from '../r2files/r2files.service';
 import { UsageService } from '../usage/usage.service';
+import { PaymentsService } from '../payments/payments.service';
 import { CloudTasksService } from './cloud-tasks.service';
 import { LoggerService } from '../common/logger.service';
 import { MetricsService } from '../common/metrics.service';
@@ -25,6 +26,7 @@ export class JobProcessingService {
     private readonly generationService: GenerationService,
     private readonly r2FilesService: R2FilesService,
     private readonly usageService: UsageService,
+    private readonly paymentsService: PaymentsService,
     private readonly structuredLogger: LoggerService,
     private readonly metricsService: MetricsService,
     private readonly requestContext: RequestContextService,
@@ -188,6 +190,18 @@ export class JobProcessingService {
       throw new Error('Insufficient credits');
     }
 
+    // Record usage and deduct credits first
+    const usageResult = await this.usageService.recordGeneration(
+      { authUserId: user.authUserId } as SanitizedUser,
+      {
+        provider: 'job_queue',
+        model: mappedModel,
+        prompt,
+        cost: 1,
+        metadata: { model: mappedModel, prompt: prompt.slice(0, 100), jobId },
+      }
+    );
+
     await this.cloudTasksService.updateJobProgress(jobId, 25);
 
     let result: unknown;
@@ -215,6 +229,22 @@ export class JobProcessingService {
         const isRetryable = this.isRetryableError(error);
 
         if (attempt === maxRetries || !isRetryable) {
+          // Auto-refund credits on final failure
+          try {
+            await this.paymentsService.refundCredits(
+              user.authUserId,
+              1,
+              `Job generation failed after ${maxRetries} attempts: ${error instanceof Error ? error.message : String(error)}`
+            );
+            this.logger.log(
+              `Refunded 1 credit to user ${user.authUserId} due to job generation failure`
+            );
+          } catch (refundError) {
+            this.logger.error(
+              `Failed to refund credits to user ${user.authUserId}:`,
+              refundError
+            );
+          }
           throw error;
         }
 
@@ -232,6 +262,23 @@ export class JobProcessingService {
     }
 
     if (!result) {
+      // Auto-refund credits if no result after all attempts
+      try {
+        await this.paymentsService.refundCredits(
+          user.authUserId,
+          1,
+          `Job generation failed - no result after all attempts`
+        );
+        this.logger.log(
+          `Refunded 1 credit to user ${user.authUserId} due to job generation failure - no result`
+        );
+      } catch (refundError) {
+        this.logger.error(
+          `Failed to refund credits to user ${user.authUserId}:`,
+          refundError
+        );
+      }
+
       if (lastError instanceof Error) {
         throw lastError;
       }

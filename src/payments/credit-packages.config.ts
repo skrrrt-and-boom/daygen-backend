@@ -25,6 +25,7 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
 ];
 
 export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
+  // Monthly plans
   {
     id: 'pro',
     name: 'Pro',
@@ -40,6 +41,23 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     price: 9900,
     interval: 'month',
     badge: 'BEST_VALUE', // $99.00/month
+  },
+  // Yearly plans
+  {
+    id: 'pro-yearly',
+    name: 'Pro',
+    credits: 12000,
+    price: 29000,
+    interval: 'year',
+    badge: 'POPULAR', // $290.00/year (20% savings)
+  },
+  {
+    id: 'enterprise-yearly',
+    name: 'Enterprise',
+    credits: 60000,
+    price: 99000,
+    interval: 'year',
+    badge: 'BEST_VALUE', // $990.00/year (20% savings)
   },
 ];
 

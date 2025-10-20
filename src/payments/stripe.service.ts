@@ -42,15 +42,15 @@ export class StripeService {
         },
       ],
       success_url: `${baseUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${baseUrl}/payment/cancel`,
+      cancel_url: `${baseUrl}/payment/cancel?type=${type}&package=${metadata.packageId || metadata.planId || 'unknown'}`,
       metadata: {
         userId,
         ...metadata,
       },
     };
 
-    // For one-time payments, add customer creation
-    if (type === 'one_time') {
+    // Only add customer_creation for one-time payments, not subscriptions
+    if (mode === 'payment') {
       sessionParams.customer_creation = 'always';
     }
 
@@ -128,6 +128,39 @@ export class StripeService {
     } catch (error) {
       this.logger.error(
         `Failed to cancel subscription ${subscriptionId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async updateSubscription(
+    subscriptionId: string,
+    newPriceId: string,
+    prorationBehavior: 'create_prorations' | 'none' = 'create_prorations',
+  ): Promise<StripeType.Subscription> {
+    try {
+      // First, get the current subscription to find the subscription item
+      const subscription = await this.stripe.subscriptions.retrieve(subscriptionId);
+      const subscriptionItemId = subscription.items.data[0]?.id;
+
+      if (!subscriptionItemId) {
+        throw new Error('No subscription item found');
+      }
+
+      // Update the subscription with the new price
+      return await this.stripe.subscriptions.update(subscriptionId, {
+        items: [
+          {
+            id: subscriptionItemId,
+            price: newPriceId,
+          },
+        ],
+        proration_behavior: prorationBehavior,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to update subscription ${subscriptionId}:`,
         error,
       );
       throw error;

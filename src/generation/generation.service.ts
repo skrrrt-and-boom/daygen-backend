@@ -17,6 +17,7 @@ import { R2Service } from '../upload/r2.service';
 import { ProviderGenerateDto } from './dto/base-generate.dto';
 import { UnifiedGenerateDto } from './dto/unified-generate.dto';
 import { UsageService } from '../usage/usage.service';
+import { PaymentsService } from '../payments/payments.service';
 
 interface GeneratedAsset {
   dataUrl: string;
@@ -246,6 +247,7 @@ export class GenerationService {
     private readonly r2FilesService: R2FilesService,
     private readonly r2Service: R2Service,
     private readonly usageService: UsageService,
+    private readonly paymentsService: PaymentsService,
   ) {
     this.fluxExtraPollHosts = this.readFluxHostSet('BFL_ALLOWED_POLL_HOSTS');
     this.fluxExtraDownloadHosts = this.readFluxHostSet(
@@ -281,6 +283,15 @@ export class GenerationService {
     this.logger.log(
       `Starting generation for user ${user.authUserId} with model ${model}`,
     );
+
+    // Record usage and deduct credits first
+    const usageResult = await this.usageService.recordGeneration(user, {
+      provider: 'generation',
+      model,
+      prompt,
+      cost: 1,
+      metadata: { model, prompt: prompt.slice(0, 100) },
+    });
 
     try {
       const providerResult = await this.dispatch(model, {
@@ -327,6 +338,24 @@ export class GenerationService {
           dto: { prompt, model, providerOptions: dto.providerOptions },
         },
       );
+
+      // Auto-refund credits on generation failure
+      try {
+        await this.paymentsService.refundCredits(
+          user.authUserId,
+          1,
+          `Generation failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+        this.logger.log(
+          `Refunded 1 credit to user ${user.authUserId} due to generation failure`
+        );
+      } catch (refundError) {
+        this.logger.error(
+          `Failed to refund credits to user ${user.authUserId}:`,
+          refundError
+        );
+      }
+
       throw error;
     }
   }

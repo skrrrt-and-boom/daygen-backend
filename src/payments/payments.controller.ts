@@ -64,9 +64,32 @@ export class PaymentsController {
     return { message: 'Subscription cancelled successfully' };
   }
 
+  @Post('subscription/upgrade')
+  async upgradeSubscription(
+    @CurrentUser() user: SanitizedUser,
+    @Body() body: { planId: string },
+  ) {
+    if (!body.planId) {
+      throw new BadRequestException('Plan ID is required');
+    }
+    
+    await this.paymentsService.upgradeSubscription(user.authUserId, body.planId);
+    return { message: 'Subscription upgraded successfully' };
+  }
+
   @Post('test/complete-payment/:sessionId')
   async completeTestPayment(@Param('sessionId') sessionId: string) {
     // This is a test endpoint to manually complete payments for development
     return this.paymentsService.completeTestPayment(sessionId);
+  }
+
+  @Get('session/:sessionId/status')
+  async getSessionStatus(@Param('sessionId') sessionId: string) {
+    return this.paymentsService.getSessionStatus(sessionId);
+  }
+
+  @Get('subscription-plans')
+  async getSubscriptionPlans() {
+    return this.paymentsService.getSubscriptionPlans();
   }
 }
