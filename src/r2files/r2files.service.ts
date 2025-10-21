@@ -14,6 +14,7 @@ export interface CreateR2FileDto {
   avatarId?: string;
   avatarImageId?: string;
   productId?: string;
+  jobId?: string;
 }
 
 export interface R2FileResponse {
@@ -27,6 +28,7 @@ export interface R2FileResponse {
   avatarId?: string;
   avatarImageId?: string;
   productId?: string;
+  jobId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -106,6 +108,7 @@ export class R2FilesService {
             avatarId: dto.avatarId,
             avatarImageId: dto.avatarImageId,
             productId: dto.productId,
+            jobId: dto.jobId,
             deletedAt: null,
             updatedAt: new Date(),
           },
@@ -128,6 +131,7 @@ export class R2FilesService {
         avatarId: dto.avatarId,
         avatarImageId: dto.avatarImageId,
         productId: dto.productId,
+        jobId: dto.jobId,
         updatedAt: new Date(),
       },
     });
@@ -175,6 +179,7 @@ export class R2FilesService {
     avatarId?: string | null;
     avatarImageId?: string | null;
     productId?: string | null;
+    jobId?: string | null;
     createdAt: Date;
     updatedAt: Date;
   }): R2FileResponse {
@@ -189,6 +194,7 @@ export class R2FilesService {
       avatarId: file.avatarId ?? undefined,
       avatarImageId: file.avatarImageId ?? undefined,
       productId: file.productId ?? undefined,
+      jobId: file.jobId ?? undefined,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt,
     };

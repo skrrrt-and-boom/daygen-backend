@@ -1,3 +1,4 @@
+THIS IS CRITICAL FILE! DO NOT TOUCH IT!!!
 
 harden usage accounting: automated resets/top-ups, Stripe or internal billing hooks, rate-limits per provider, admin dashboards.
 

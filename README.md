@@ -6,23 +6,23 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 
 ### Image Generation
 - **FLUX Models**: Flux Pro 1.1, Ultra, Kontext Pro/Max via BFL API
-- **Gemini 2.5 Flash**: Google's latest text-to-image model
-- **Ideogram V3**: Advanced text-to-image with turbo mode
-- **Recraft v2/v3**: Professional image generation
-- **Reve**: Fast image generation and editing
-- **Qwen Image**: Alibaba's text-to-image via DashScope
-- **Runway Gen-4**: Professional image generation
-- **DALL·E**: OpenAI's image generation API
-- **Luma AI**: Dream Shaper, Realistic Vision, Photon models
+- **Gemini 2.5 Flash**: Google's latest text-to-image model with experimental preview support
+- **Ideogram V3**: Advanced text-to-image with turbo mode and style presets
+- **Recraft v2/v3**: Professional image generation with multiple styles and editing capabilities
+- **Reve**: Fast image generation, editing, and remixing with advanced controls
+- **Qwen Image**: Alibaba's text-to-image generation via DashScope API
+- **Runway Gen-4**: Professional image generation with cinematic quality
+- **DALL·E 3**: OpenAI's image generation API with multiple model variants
+- **Luma AI**: Dream Shaper, Realistic Vision, and Photon models for various styles
 
 ### Video Generation
-- **Veo 3**: Google's cinematic video generation
-- **Kling**: Advanced video generation with camera controls
-- **Runway Gen-4 Video**: Professional video generation
-- **Wan 2.2**: Alibaba's text-to-video generation
-- **Hailuo 02**: MiniMax video generation
-- **Seedance 1.0 Pro**: High-quality video generation
-- **Luma Ray 2**: Professional video generation
+- **Veo 3**: Google's latest cinematic video generation with advanced prompting
+- **Kling**: Advanced video generation with multiple models and camera controls
+- **Runway Gen-4 Video**: Professional video generation with style consistency
+- **Wan 2.2**: Alibaba's text-to-video generation with high quality output
+- **Hailuo 02**: MiniMax video generation with frame control and editing
+- **Seedance 1.0 Pro**: High-quality video generation with smooth motion
+- **Luma Ray 2**: Professional video generation with advanced features
 
 ### Core Services
 - **Authentication**: Supabase Auth + JWT with Google OAuth
@@ -108,9 +108,15 @@ Configure API keys for the providers you want to use:
 - `POST /api/auth/signup` - Create account with email/password
 - `POST /api/auth/login` - Login with email/password
 - `POST /api/auth/google` - Google OAuth login
+- `POST /api/auth/oauth-callback` - Handle OAuth callbacks
 - `GET /api/auth/me` - Get current user profile
 - `POST /api/auth/forgot-password` - Request password reset
 - `POST /api/auth/reset-password` - Reset password
+
+### User Management
+- `GET /api/users/me` - Get current user profile
+- `POST /api/users/me` - Create user profile
+- `PATCH /api/users/me` - Update user profile
 
 ### Image Generation
 - `POST /api/unified-generate` - Unified image generation endpoint
@@ -142,6 +148,7 @@ Configure API keys for the providers you want to use:
 ### Payments
 - `POST /api/payments/create-checkout` - Create Stripe checkout session
 - `GET /api/payments/subscription` - Get user subscription
+- `POST /api/payments/subscription/upgrade` - Upgrade subscription
 - `POST /api/payments/cancel-subscription` - Cancel subscription
 - `GET /api/payments/history` - Get payment history
 

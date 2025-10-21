@@ -54,13 +54,16 @@ model R2File {
   avatarId       String?
   avatarImageId  String?
   productId      String?
+  jobId          String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
   owner          User      @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  job            Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([ownerAuthId, createdAt(sort: Desc)])
   @@index([ownerAuthId, deletedAt])
+  @@index([jobId])
 }
 
 model Job {
@@ -76,6 +79,7 @@ model Job {
   updatedAt   DateTime  @updatedAt
   completedAt DateTime?
   user        User      @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
+  r2Files     R2File[]
 
   @@index([userId, status])
   @@index([status, createdAt])

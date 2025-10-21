@@ -276,7 +276,13 @@ Use these test card numbers in Stripe test mode:
 - [ ] Enable Stripe Radar for fraud detection
 - [ ] Set up webhook retry policies
 
-## 8. Troubleshooting
+## 8. Related Documentation
+
+- [Webhook Processing Solution](WEBHOOK_PROCESSING_SOLUTION.md) - Detailed webhook implementation
+- [Payment Testing Guide](PAYMENT_TESTING_GUIDE.md) - Testing procedures
+- [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md) - Deployment instructions
+
+## 9. Troubleshooting
 
 ### Common Issues
 

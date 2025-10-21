@@ -318,6 +318,7 @@ export class JobProcessingService {
         mimeType,
         prompt,
         model,
+        jobId,
       });
     }
 
@@ -487,6 +488,7 @@ export class JobProcessingService {
               mimeType,
               prompt,
               model,
+              jobId,
             });
           }
 

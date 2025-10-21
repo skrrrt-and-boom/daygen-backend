@@ -217,10 +217,32 @@ socket.on('jobUpdate', (data) => {
 
 - Credits are checked before processing
 - Different job types have different costs:
-  - Image Generation: 1 credit
-  - Video Generation: 5 credits
-  - Image Upscale: 2 credits
-  - Batch Generation: 1 credit per image
+  - **Image Generation**: 1 credit per image
+  - **Video Generation**: 5-10 credits per video (varies by model)
+  - **Image Upscale**: 2 credits per image
+  - **Batch Generation**: 1 credit per image in batch
+
+### Supported Models
+
+**Image Generation Models:**
+- FLUX Pro 1.1, Ultra, Kontext Pro/Max (BFL API)
+- Gemini 2.5 Flash (Google)
+- Ideogram V3
+- Recraft v2/v3
+- Reve v1
+- Qwen Image (DashScope)
+- Runway Gen-4
+- DALL·E 3 (OpenAI)
+- Luma AI (Dream Shaper, Realistic Vision, Photon)
+
+**Video Generation Models:**
+- Veo 3 (Google)
+- Kling (ByteDance)
+- Runway Gen-4 Video
+- Wan 2.2 (Alibaba)
+- Hailuo 02 (MiniMax)
+- Seedance 1.0 Pro
+- Luma Ray 2
 
 ## Monitoring
 

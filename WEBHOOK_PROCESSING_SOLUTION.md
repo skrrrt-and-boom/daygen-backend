@@ -35,6 +35,8 @@ const priceIdToPlanMap = {
 };
 ```
 
+**Note:** The price IDs shown above are examples. Replace them with your actual Stripe price IDs from your Stripe Dashboard.
+
 ### 3. User Lookup Process
 
 1. **Primary**: Find user by Stripe customer email
@@ -166,6 +168,18 @@ SELECT * FROM payments ORDER BY created_at DESC LIMIT 5;
 # Check user credits
 SELECT email, credits FROM users WHERE email = 'user@example.com';
 ```
+
+## Production Status
+
+**Current Status**: ✅ **PRODUCTION READY**
+
+This webhook processing solution is currently deployed and handling production Stripe events. The system has been tested with real payment flows and is processing subscriptions automatically.
+
+## Related Documentation
+
+- [Stripe Setup Guide](STRIPE_SETUP.md) - Complete Stripe integration setup
+- [Payment Testing Guide](PAYMENT_TESTING_GUIDE.md) - Testing procedures
+- [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md) - Deployment instructions
 
 ## Success Metrics
 
