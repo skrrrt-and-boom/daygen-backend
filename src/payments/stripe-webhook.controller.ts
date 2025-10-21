@@ -111,7 +111,8 @@ export class StripeWebhookController {
     );
 
     // Process in background for faster webhook response
-    setImmediate(async () => {
+    setImmediate(() => {
+      void (async () => {
       try {
         // Handle both one-time payments and subscriptions
         if (session.mode === 'payment') {
@@ -164,6 +165,7 @@ export class StripeWebhookController {
           this.logger.error(`Error message: ${error.message}`);
         }
       }
+      })();
     });
   }
 

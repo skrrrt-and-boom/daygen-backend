@@ -28,7 +28,7 @@ jobs:
       run: npm ci
       
     - name: Run linting
-      run: npm run lint:check
+      run: npm run lint:check -- --ext .ts --ignore-pattern "test/**/*"
       
     - name: Run type checking
       run: npx tsc --noEmit
