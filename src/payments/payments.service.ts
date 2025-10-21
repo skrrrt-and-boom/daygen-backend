@@ -1159,7 +1159,9 @@ export class PaymentsService {
       if (session.mode === 'subscription') {
         // Handle subscription payment
         if (session.subscription) {
-          this.logger.log(`Processing subscription: ${typeof session.subscription === 'string' ? session.subscription : session.subscription.id}`);
+          this.logger.log(
+            `Processing subscription: ${typeof session.subscription === 'string' ? session.subscription : session.subscription.id}`,
+          );
 
           // Retrieve the full subscription object
           const subscription = await this.stripeService.retrieveSubscription(
@@ -1268,7 +1270,9 @@ export class PaymentsService {
       if (session.mode === 'subscription') {
         // Handle subscription payment
         if (session.subscription) {
-          this.logger.log(`Processing subscription: ${typeof session.subscription === 'string' ? session.subscription : session.subscription.id}`);
+          this.logger.log(
+            `Processing subscription: ${typeof session.subscription === 'string' ? session.subscription : session.subscription.id}`,
+          );
 
           // Retrieve the full subscription object
           const subscription = await this.stripeService.retrieveSubscription(

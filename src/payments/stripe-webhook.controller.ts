@@ -54,7 +54,7 @@ export class StripeWebhookController {
       // Handle the event
       switch (event.type) {
         case 'checkout.session.completed':
-          await this.handleCheckoutSessionCompleted(event.data.object);
+          this.handleCheckoutSessionCompleted(event.data.object);
           break;
 
         case 'customer.subscription.created':
@@ -102,13 +102,13 @@ export class StripeWebhookController {
     }
   }
 
-  private handleCheckoutSessionCompleted(
-    session: Stripe.Checkout.Session,
-  ) {
+  private handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
     this.logger.log(`Processing checkout session completed: ${session.id}`);
     this.logger.log(`Session mode: ${session.mode}`);
     this.logger.log(`Session metadata:`, session.metadata);
-    this.logger.log(`Session subscription ID: ${typeof session.subscription === 'string' ? session.subscription : session.subscription?.id || 'null'}`);
+    this.logger.log(
+      `Session subscription ID: ${typeof session.subscription === 'string' ? session.subscription : session.subscription?.id || 'null'}`,
+    );
 
     // Process in background for faster webhook response
     setImmediate(async () => {
