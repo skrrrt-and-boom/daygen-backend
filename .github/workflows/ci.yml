@@ -55,40 +55,8 @@ jobs:
         path: dist/
         retention-days: 1
 
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: build-files
-        path: dist/
-        
-    - name: Setup Google Cloud CLI
-      uses: google-github-actions/setup-gcloud@v2
-      with:
-        service_account_key: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
-        project_id: ${{ secrets.GCP_PROJECT_ID }}
-        
-    - name: Configure Docker
-      run: gcloud auth configure-docker
-      
-    - name: Build and push Docker image
-      run: |
-        docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/daygen-backend:${{ github.sha }} .
-        docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/daygen-backend:${{ github.sha }}
-        
-    - name: Deploy to Cloud Run
-      run: |
-        gcloud run deploy daygen-backend \
-          --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/daygen-backend:${{ github.sha }} \
-          --platform managed \
-          --region us-central1 \
-          --allow-unauthenticated \
-          --set-env-vars="DATABASE_URL=${{ secrets.DATABASE_URL }},JWT_SECRET=${{ secrets.JWT_SECRET }},SUPABASE_URL=${{ secrets.SUPABASE_URL }},SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }},SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }},STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }},STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }},R2_ACCOUNT_ID=${{ secrets.R2_ACCOUNT_ID }},R2_ACCESS_KEY_ID=${{ secrets.R2_ACCESS_KEY_ID }},R2_SECRET_ACCESS_KEY=${{ secrets.R2_SECRET_ACCESS_KEY }},R2_BUCKET_NAME=${{ secrets.R2_BUCKET_NAME }},R2_PUBLIC_URL=${{ secrets.R2_PUBLIC_URL }},GOOGLE_CLOUD_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}"
+  # Note: Deployment is handled by your existing deployment pipeline
+  # To enable GitHub Actions deployment, configure these secrets:
+  # - GCP_PROJECT_ID
+  # - GCP_SERVICE_ACCOUNT_KEY
+  # - DATABASE_URL, JWT_SECRET, SUPABASE_*, STRIPE_*, R2_*
