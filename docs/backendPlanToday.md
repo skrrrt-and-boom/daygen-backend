@@ -44,9 +44,9 @@ Done looks like
 Phase 1: Core Features (Week 1-2)
 Add credit logic
 Gemini first job is always failing
+Make image generation faster
 Add vary feature like in MJ
 Change generation display, make every new job to appear in the first place
-Make image generation faster
 User Management
 User profiles and settings
 Usage tracking and limits
