@@ -134,10 +134,27 @@ export class StripeService {
     }
   }
 
+  async removeCancellation(
+    subscriptionId: string,
+  ): Promise<StripeType.Subscription> {
+    try {
+      return await this.stripe.subscriptions.update(subscriptionId, {
+        cancel_at_period_end: false,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to remove cancellation for subscription ${subscriptionId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
   async updateSubscription(
     subscriptionId: string,
     newPriceId: string,
     prorationBehavior: 'create_prorations' | 'none' = 'create_prorations',
+    metadata?: Record<string, string>,
   ): Promise<StripeType.Subscription> {
     try {
       // First, get the current subscription to find the subscription item
@@ -149,7 +166,7 @@ export class StripeService {
       }
 
       // Update the subscription with the new price
-      return await this.stripe.subscriptions.update(subscriptionId, {
+      const updateParams: any = {
         items: [
           {
             id: subscriptionItemId,
@@ -157,7 +174,14 @@ export class StripeService {
           },
         ],
         proration_behavior: prorationBehavior,
-      });
+      };
+
+      // Add metadata if provided
+      if (metadata) {
+        updateParams.metadata = metadata;
+      }
+
+      return await this.stripe.subscriptions.update(subscriptionId, updateParams);
     } catch (error) {
       this.logger.error(
         `Failed to update subscription ${subscriptionId}:`,

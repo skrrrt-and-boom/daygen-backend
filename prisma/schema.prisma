@@ -154,6 +154,7 @@ enum PaymentStatus {
 enum PaymentType {
   ONE_TIME
   SUBSCRIPTION
+  SUBSCRIPTION_UPGRADE
 }
 
 enum SubscriptionStatus {

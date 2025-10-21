@@ -64,6 +64,12 @@ export class PaymentsController {
     return { message: 'Subscription cancelled successfully' };
   }
 
+  @Post('subscription/remove-cancellation')
+  async removeCancellation(@CurrentUser() user: SanitizedUser) {
+    await this.paymentsService.removeCancellation(user.authUserId);
+    return { message: 'Cancellation removed successfully' };
+  }
+
   @Post('subscription/upgrade')
   async upgradeSubscription(
     @CurrentUser() user: SanitizedUser,
@@ -91,5 +97,28 @@ export class PaymentsController {
   @Get('subscription-plans')
   async getSubscriptionPlans() {
     return this.paymentsService.getSubscriptionPlans();
+  }
+
+  @Get('find-by-intent/:paymentIntentId')
+  async findPaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
+    return this.paymentsService.findPaymentByIntentId(paymentIntentId);
+  }
+
+  @Post('test/complete-by-intent/:paymentIntentId')
+  async completePaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
+    return this.paymentsService.completePaymentByIntentId(paymentIntentId);
+  }
+
+  @Post('test/create-manual-subscription')
+  async createManualSubscription(@Body() body: {
+    userEmail: string;
+    planId: string;
+    credits: number;
+    amount: number;
+    paymentIntentId: string;
+    stripeSubscriptionId: string;
+    stripePriceId: string;
+  }) {
+    return this.paymentsService.createManualSubscription(body);
   }
 }

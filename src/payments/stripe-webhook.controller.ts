@@ -27,12 +27,16 @@ export class StripeWebhookController {
     @Res() res: Response,
     @Headers('stripe-signature') signature: string,
   ) {
+    this.logger.log('Webhook received - checking signature');
+    
     if (!signature) {
       this.logger.error('Missing Stripe signature');
       return res
         .status(HttpStatus.BAD_REQUEST)
         .send('Missing Stripe signature');
     }
+    
+    this.logger.log(`Stripe signature present: ${signature.substring(0, 20)}...`);
 
     try {
       // Construct the event
@@ -41,7 +45,7 @@ export class StripeWebhookController {
         signature,
       );
 
-      this.logger.log(`Received webhook event: ${event.type}`);
+      this.logger.log(`Received webhook event: ${event.type} (ID: ${event.id})`);
 
       // Handle the event
       switch (event.type) {
@@ -77,9 +81,15 @@ export class StripeWebhookController {
           this.logger.log(`Unhandled event type: ${event.type}`);
       }
 
+      this.logger.log(`Successfully processed webhook event: ${event.type}`);
       return res.status(HttpStatus.OK).json({ received: true });
     } catch (error) {
       this.logger.error('Webhook error:', error);
+      this.logger.error('Error details:', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        name: error instanceof Error ? error.name : undefined,
+      });
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       return res
@@ -92,32 +102,60 @@ export class StripeWebhookController {
     session: Stripe.Checkout.Session,
   ) {
     this.logger.log(`Processing checkout session completed: ${session.id}`);
+    this.logger.log(`Session mode: ${session.mode}`);
+    this.logger.log(`Session metadata:`, session.metadata);
+    this.logger.log(`Session subscription ID: ${session.subscription}`);
 
-    try {
-      // Handle both one-time payments and subscriptions
-      if (session.mode === 'payment') {
-        await this.paymentsService.handleSuccessfulPayment(session);
-      } else if (session.mode === 'subscription') {
-        // For subscriptions, we need to get the subscription object
-        if (session.subscription) {
-          const subscription = await this.stripeService.retrieveSubscription(
-            session.subscription as string,
-          );
-          // Handle subscription completion: create record AND add credits
-          // Pass the session metadata to get the userId
-          await this.paymentsService.handleSuccessfulSubscriptionFromSession(subscription, session);
+    // Process in background for faster webhook response
+    setImmediate(async () => {
+      try {
+        // Handle both one-time payments and subscriptions
+        if (session.mode === 'payment') {
+          this.logger.log(`Processing one-time payment for session ${session.id}`);
+          await this.paymentsService.handleSuccessfulPayment(session);
+        } else if (session.mode === 'subscription') {
+          this.logger.log(`Processing subscription for session ${session.id}`);
+          // For subscriptions, we need to get the subscription object
+          if (session.subscription) {
+            this.logger.log(`Retrieving subscription ${session.subscription} from Stripe`);
+            const subscription = await this.stripeService.retrieveSubscription(
+              session.subscription as string,
+            );
+            this.logger.log(`Retrieved subscription: ${subscription.id}, status: ${subscription.status}`);
+            // Handle subscription completion: create record AND add credits
+            // Pass the session metadata to get the userId
+            await this.paymentsService.handleSuccessfulSubscriptionFromSession(subscription, session);
+            this.logger.log(`Successfully processed subscription ${subscription.id}`);
+          } else {
+            this.logger.error(`No subscription ID found in session ${session.id}`);
+          }
+        } else {
+          this.logger.warn(`Unknown session mode: ${session.mode} for session ${session.id}`);
+        }
+      } catch (error) {
+        this.logger.error(
+          `Error processing checkout session ${session.id}:`,
+          error.stack || error,
+        );
+        // Log specific error details
+        if (error.code) {
+          this.logger.error(`Error code: ${error.code}`);
+        }
+        if (error.message) {
+          this.logger.error(`Error message: ${error.message}`);
         }
       }
-    } catch (error) {
-      this.logger.error(
-        `Error processing checkout session ${session.id}:`,
-        error,
-      );
-    }
+    });
   }
 
   private async handleSubscriptionCreated(subscription: Stripe.Subscription) {
     this.logger.log(`Processing subscription created: ${subscription.id}`);
+    this.logger.log(`Subscription object:`, {
+      id: subscription.id,
+      status: subscription.status,
+      current_period_start: (subscription as any).current_period_start,
+      current_period_end: (subscription as any).current_period_end,
+    });
 
     try {
       // Subscription creation is now handled by checkout.session.completed
