@@ -42,7 +42,7 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
-Make yearly subscription work
+Add credit logic
 Gemini first job is always failing
 Add vary feature like in MJ
 Change generation display, make every new job to appear in the first place
