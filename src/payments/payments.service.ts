@@ -115,23 +115,27 @@ export class PaymentsService {
     }
 
     // Check if user already has an active subscription
-    const existingSubscription = await this.getUserSubscription(user.authUserId);
-    
+    const existingSubscription = await this.getUserSubscription(
+      user.authUserId,
+    );
+
     if (existingSubscription && existingSubscription.status === 'ACTIVE') {
       // Check if they're trying to subscribe to the same tier
       const currentPlan = SUBSCRIPTION_PLANS.find(
-        (p) => this.getPriceIdForSubscription(p) === existingSubscription.stripePriceId
+        (p) =>
+          this.getPriceIdForSubscription(p) ===
+          existingSubscription.stripePriceId,
       );
-      
+
       if (currentPlan && currentPlan.id === planId) {
         throw new BadRequestException(
-          'You already have this subscription plan. To upgrade or downgrade, please use the subscription management page.'
+          'You already have this subscription plan. To upgrade or downgrade, please use the subscription management page.',
         );
       }
-      
+
       // If different tier, redirect to upgrade/downgrade flow
       throw new BadRequestException(
-        'You already have an active subscription. Please use the upgrade/downgrade option instead.'
+        'You already have an active subscription. Please use the upgrade/downgrade option instead.',
       );
     }
 
@@ -146,6 +150,27 @@ export class PaymentsService {
         credits: subscriptionPlan.credits.toString(),
         amount: subscriptionPlan.price.toString(),
       },
+    );
+
+    // CREATE PENDING PAYMENT RECORD - THIS IS THE FIX
+    // This ensures getSessionStatus() can find the payment record
+    await this.prisma.payment.create({
+      data: {
+        userId: user.authUserId,
+        stripeSessionId: session.id,
+        amount: subscriptionPlan.price,
+        credits: subscriptionPlan.credits,
+        status: 'PENDING',
+        type: 'SUBSCRIPTION',
+        metadata: {
+          planId,
+          planName: subscriptionPlan.name,
+        },
+      },
+    });
+
+    this.logger.log(
+      `Created pending payment record for subscription session ${session.id} for user ${user.authUserId}`,
     );
 
     return {
@@ -235,10 +260,12 @@ export class PaymentsService {
         stripePriceId: priceId,
         status: this.mapStripeStatusToDb(subscription.status),
         currentPeriodStart: new Date(
-          ((subscription as any).current_period_start || Math.floor(Date.now() / 1000)) * 1000,
+          ((subscription as any).current_period_start ||
+            Math.floor(Date.now() / 1000)) * 1000,
         ),
         currentPeriodEnd: new Date(
-          ((subscription as any).current_period_end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
+          ((subscription as any).current_period_end ||
+            Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
         ),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
         credits: plan.credits,
@@ -257,7 +284,9 @@ export class PaymentsService {
     // Get userId from session metadata instead of looking up by email
     const userId = session.metadata?.userId;
     if (!userId) {
-      this.logger.error(`No userId found in session metadata for subscription ${subscription.id}`);
+      this.logger.error(
+        `No userId found in session metadata for subscription ${subscription.id}`,
+      );
       return;
     }
 
@@ -290,9 +319,10 @@ export class PaymentsService {
     });
 
     // Check if subscription already exists by Stripe ID
-    const existingSubscriptionByStripeId = await this.prisma.subscription.findUnique({
-      where: { stripeSubscriptionId: subscription.id },
-    });
+    const existingSubscriptionByStripeId =
+      await this.prisma.subscription.findUnique({
+        where: { stripeSubscriptionId: subscription.id },
+      });
 
     if (existingSubscriptionByStripeId) {
       this.logger.warn(`Subscription ${subscription.id} already exists`);
@@ -305,12 +335,18 @@ export class PaymentsService {
     });
 
     if (existingUserSubscription) {
-      this.logger.warn(`User ${user.authUserId} already has subscription ${existingUserSubscription.id}. Upgrading instead.`);
-      return await this.upgradeExistingSubscription(existingUserSubscription, subscription, plan);
+      this.logger.warn(
+        `User ${user.authUserId} already has subscription ${existingUserSubscription.id}. Upgrading instead.`,
+      );
+      return await this.upgradeExistingSubscription(
+        existingUserSubscription,
+        subscription,
+        plan,
+      );
     }
 
     // Create subscription and payment records in parallel for better performance
-    const [createdSubscription] = await Promise.all([
+    await Promise.all([
       this.prisma.subscription.create({
         data: {
           userId: user.authUserId,
@@ -318,10 +354,12 @@ export class PaymentsService {
           stripePriceId: priceId,
           status: this.mapStripeStatusToDb(subscription.status),
           currentPeriodStart: new Date(
-            ((subscription as any).current_period_start || Math.floor(Date.now() / 1000)) * 1000,
+            ((subscription as any).current_period_start ||
+              Math.floor(Date.now() / 1000)) * 1000,
           ),
           currentPeriodEnd: new Date(
-            ((subscription as any).current_period_end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
+            ((subscription as any).current_period_end ||
+              Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
           ),
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
           credits: plan.credits,
@@ -352,6 +390,150 @@ export class PaymentsService {
     );
   }
 
+  /**
+   * Handle successful subscription creation from webhook (fallback method)
+   * This method works without session metadata by finding the user from Stripe customer
+   */
+  async handleSuccessfulSubscription(
+    subscription: Stripe.Subscription,
+  ): Promise<void> {
+    this.logger.log(
+      `Processing subscription ${subscription.id} without session metadata`,
+    );
+
+    try {
+      // Get the customer from Stripe to find the user
+      const customer = await this.stripeService.retrieveCustomer(
+        subscription.customer as string,
+      );
+      this.logger.log(
+        `Found customer ${customer.id} for subscription ${subscription.id}`,
+      );
+
+      // Find user by email or create a mapping
+      const user = await this.findUserByStripeCustomerId(customer.id);
+      if (!user) {
+        this.logger.error(`No user found for Stripe customer ${customer.id}`);
+        return;
+      }
+
+      // Get the price ID from the subscription
+      const priceId = subscription.items.data[0]?.price.id;
+      if (!priceId) {
+        this.logger.error(
+          `No price ID found in subscription ${subscription.id}`,
+        );
+        return;
+      }
+
+      // Find the plan by price ID
+      const plan = this.getSubscriptionPlanByPriceId(priceId);
+      if (!plan) {
+        this.logger.error(`No plan found for price ID ${priceId}`);
+        return;
+      }
+
+      // Check if subscription already exists
+      const existingSubscription = await this.prisma.subscription.findUnique({
+        where: { stripeSubscriptionId: subscription.id },
+      });
+
+      if (existingSubscription) {
+        this.logger.log(
+          `Subscription ${subscription.id} already exists in database`,
+        );
+        return;
+      }
+
+      // Create subscription record
+      await this.prisma.subscription.create({
+        data: {
+          userId: user.authUserId,
+          stripeSubscriptionId: subscription.id,
+          stripePriceId: priceId,
+          status: this.mapStripeStatusToDb(subscription.status),
+          currentPeriodStart: new Date(
+            ((subscription as any).current_period_start ||
+              Math.floor(Date.now() / 1000)) * 1000,
+          ),
+          currentPeriodEnd: new Date(
+            ((subscription as any).current_period_end ||
+              Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
+          ),
+          cancelAtPeriodEnd: subscription.cancel_at_period_end,
+          credits: plan.credits,
+        },
+      });
+
+      // Update payment record if it exists
+      await this.prisma.payment.updateMany({
+        where: {
+          userId: user.authUserId,
+          type: 'SUBSCRIPTION',
+          status: 'PENDING',
+        },
+        data: { status: 'COMPLETED' },
+      });
+
+      // Add credits to user
+      await this.addCreditsToUser(user.authUserId, plan.credits, null);
+
+      this.logger.log(
+        `Successfully processed subscription ${subscription.id} for user ${user.authUserId} with ${plan.credits} credits`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error processing subscription ${subscription.id}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Find user by Stripe customer ID
+   */
+  private async findUserByStripeCustomerId(customerId: string): Promise<any> {
+    // Try to find by email from Stripe customer
+    try {
+      const customer = await this.stripeService.retrieveCustomer(customerId);
+      if (customer.email) {
+        const userByEmail = await this.prisma.user.findUnique({
+          where: { email: customer.email },
+        });
+        if (userByEmail) {
+          return userByEmail;
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error retrieving customer ${customerId}:`, error);
+    }
+
+    return null;
+  }
+
+  /**
+   * Get subscription plan by Stripe price ID
+   */
+  private getSubscriptionPlanByPriceId(priceId: string): any {
+    // Map of price IDs to plan IDs
+    const priceIdToPlanMap = {
+      price_1QJ8XkzukLzUftDyG7MXiHje8ywj3XMklYv2og3IrLZfMml6TE5BXeTtn: 'pro', // Pro plan
+      price_enterprise: 'enterprise', // Enterprise plan
+      price_test_123: 'pro', // Test price ID
+      // Add more price IDs as needed
+    };
+
+    const planId = priceIdToPlanMap[priceId];
+    if (planId) {
+      return SUBSCRIPTION_PLANS.find((plan) => plan.id === planId);
+    }
+
+    // Fallback: try to match by price ID pattern or return default
+    this.logger.warn(`Unknown price ID ${priceId}, using default Pro plan`);
+    return SUBSCRIPTION_PLANS.find((plan) => plan.id === 'pro');
+  }
+
   private async upgradeExistingSubscription(
     existingSubscription: any,
     newStripeSubscription: Stripe.Subscription,
@@ -360,11 +542,14 @@ export class PaymentsService {
     try {
       // Get the old plan to calculate credit difference
       const oldPlan = SUBSCRIPTION_PLANS.find(
-        (p) => p.id === existingSubscription.planId || this.getPriceIdForSubscription(p) === existingSubscription.stripePriceId,
+        (p) =>
+          p.id === existingSubscription.planId ||
+          this.getPriceIdForSubscription(p) ===
+            existingSubscription.stripePriceId,
       );
 
       const creditDifference = newPlan.credits - (oldPlan?.credits || 0);
-      
+
       // Update the existing subscription with new Stripe details
       await this.prisma.subscription.update({
         where: { id: existingSubscription.id },
@@ -404,7 +589,11 @@ export class PaymentsService {
 
       // Add credit difference if upgrading to higher tier
       if (creditDifference > 0) {
-        await this.addCreditsToUser(existingSubscription.userId, creditDifference, null);
+        await this.addCreditsToUser(
+          existingSubscription.userId,
+          creditDifference,
+          null,
+        );
         this.logger.log(
           `Upgraded subscription for user ${existingSubscription.userId} from ${oldPlan?.name || 'unknown'} to ${newPlan.name}. Added ${creditDifference} credits.`,
         );
@@ -418,7 +607,10 @@ export class PaymentsService {
         );
       }
     } catch (error) {
-      this.logger.error(`Error upgrading subscription for user ${existingSubscription.userId}:`, error);
+      this.logger.error(
+        `Error upgrading subscription for user ${existingSubscription.userId}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -514,7 +706,9 @@ export class PaymentsService {
       });
     });
 
-    this.logger.log(`Refunded ${credits} credits to user ${userId} for reason: ${reason}`);
+    this.logger.log(
+      `Refunded ${credits} credits to user ${userId} for reason: ${reason}`,
+    );
   }
 
   async getUserPaymentHistory(
@@ -569,7 +763,7 @@ export class PaymentsService {
 
   async cancelUserSubscription(userId: string): Promise<void> {
     this.logger.log(`Attempting to cancel subscription for user ${userId}`);
-    
+
     const subscription = await this.prisma.subscription.findUnique({
       where: { userId },
     });
@@ -579,12 +773,16 @@ export class PaymentsService {
       throw new NotFoundException('No active subscription found');
     }
 
-    this.logger.log(`Found subscription ${subscription.id} for user ${userId}, status: ${subscription.status}`);
+    this.logger.log(
+      `Found subscription ${subscription.id} for user ${userId}, status: ${subscription.status}`,
+    );
 
     try {
       // Check if this is a test subscription or if Stripe subscription exists
-      if (subscription.stripeSubscriptionId.startsWith('sub_test_') || 
-          subscription.stripeSubscriptionId === 'sub_test_123') {
+      if (
+        subscription.stripeSubscriptionId.startsWith('sub_test_') ||
+        subscription.stripeSubscriptionId === 'sub_test_123'
+      ) {
         this.logger.log(
           `Skipping Stripe cancellation for test subscription ${subscription.stripeSubscriptionId}`,
         );
@@ -612,7 +810,7 @@ export class PaymentsService {
         `Failed to cancel subscription ${subscription.id} for user ${userId}:`,
         error,
       );
-      
+
       // Even if Stripe cancellation fails, update local record
       try {
         await this.prisma.subscription.update({
@@ -637,7 +835,7 @@ export class PaymentsService {
 
   async removeCancellation(userId: string): Promise<void> {
     this.logger.log(`Attempting to remove cancellation for user ${userId}`);
-    
+
     const subscription = await this.prisma.subscription.findUnique({
       where: { userId },
     });
@@ -648,16 +846,22 @@ export class PaymentsService {
     }
 
     if (!subscription.cancelAtPeriodEnd) {
-      this.logger.warn(`Subscription ${subscription.id} for user ${userId} is not cancelled`);
+      this.logger.warn(
+        `Subscription ${subscription.id} for user ${userId} is not cancelled`,
+      );
       throw new BadRequestException('Subscription is not cancelled');
     }
 
-    this.logger.log(`Found cancelled subscription ${subscription.id} for user ${userId}, status: ${subscription.status}`);
+    this.logger.log(
+      `Found cancelled subscription ${subscription.id} for user ${userId}, status: ${subscription.status}`,
+    );
 
     try {
       // Check if this is a test subscription or if Stripe subscription exists
-      if (subscription.stripeSubscriptionId.startsWith('sub_test_') || 
-          subscription.stripeSubscriptionId === 'sub_test_123') {
+      if (
+        subscription.stripeSubscriptionId.startsWith('sub_test_') ||
+        subscription.stripeSubscriptionId === 'sub_test_123'
+      ) {
         this.logger.log(
           `Skipping Stripe cancellation removal for test subscription ${subscription.stripeSubscriptionId}`,
         );
@@ -699,7 +903,9 @@ export class PaymentsService {
     }
 
     if (subscription.status !== 'ACTIVE') {
-      throw new BadRequestException('Only active subscriptions can be upgraded');
+      throw new BadRequestException(
+        'Only active subscriptions can be upgraded',
+      );
     }
 
     const newPlan = getSubscriptionPlanById(newPlanId);
@@ -711,7 +917,7 @@ export class PaymentsService {
 
     // Check if it's actually an upgrade (higher price)
     const currentPlan = SUBSCRIPTION_PLANS.find(
-      (p) => this.getPriceIdForSubscription(p) === subscription.stripePriceId
+      (p) => this.getPriceIdForSubscription(p) === subscription.stripePriceId,
     );
 
     if (!currentPlan) {
@@ -729,8 +935,10 @@ export class PaymentsService {
     };
 
     // Check if this is a test subscription or if Stripe subscription exists
-    if (subscription.stripeSubscriptionId.startsWith('sub_test_') || 
-        subscription.stripeSubscriptionId === 'sub_test_123') {
+    if (
+      subscription.stripeSubscriptionId.startsWith('sub_test_') ||
+      subscription.stripeSubscriptionId === 'sub_test_123'
+    ) {
       this.logger.log(
         `Skipping Stripe update for test subscription ${subscription.stripeSubscriptionId}`,
       );
@@ -740,7 +948,7 @@ export class PaymentsService {
         subscription.stripeSubscriptionId,
         newPriceId,
         isUpgrade ? 'create_prorations' : 'none',
-        upgradeMetadata
+        upgradeMetadata,
       );
     }
 
@@ -791,7 +999,7 @@ export class PaymentsService {
 
     return {
       status: session.payment_status,
-      paymentStatus: payment?.status,
+      paymentStatus: payment?.status || 'PENDING', // Default to PENDING if not found
     };
   }
 
@@ -852,10 +1060,12 @@ export class PaymentsService {
       data: {
         status: this.mapStripeStatusToDb(subscription.status),
         currentPeriodStart: new Date(
-          ((subscription as any).current_period_start || Math.floor(Date.now() / 1000)) * 1000,
+          ((subscription as any).current_period_start ||
+            Math.floor(Date.now() / 1000)) * 1000,
         ),
         currentPeriodEnd: new Date(
-          ((subscription as any).current_period_end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
+          ((subscription as any).current_period_end ||
+            Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
         ),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
       },
@@ -938,29 +1148,36 @@ export class PaymentsService {
   ): Promise<{ message: string; paymentId?: string; subscriptionId?: string }> {
     // This is a test method to manually complete payments for development
     this.logger.log(`Manually completing payment for session: ${sessionId}`);
-    
+
     try {
       // Get the Stripe session to determine the mode
       const session = await this.stripeService.retrieveSession(sessionId);
-      this.logger.log(`Session mode: ${session.mode}, status: ${session.payment_status}`);
-      
+      this.logger.log(
+        `Session mode: ${session.mode}, status: ${session.payment_status}`,
+      );
+
       if (session.mode === 'subscription') {
         // Handle subscription payment
         if (session.subscription) {
-          this.logger.log(`Processing subscription: ${session.subscription}`);
-          
+          this.logger.log(`Processing subscription: ${typeof session.subscription === 'string' ? session.subscription : session.subscription.id}`);
+
           // Retrieve the full subscription object
           const subscription = await this.stripeService.retrieveSubscription(
             session.subscription as string,
           );
-          
+
           // Process the subscription using the existing method
-          await this.handleSuccessfulSubscriptionFromSession(subscription, session);
-          
-          this.logger.log(`Successfully processed subscription ${subscription.id} manually`);
-          return { 
-            message: 'Subscription completed manually', 
-            subscriptionId: subscription.id 
+          await this.handleSuccessfulSubscriptionFromSession(
+            subscription,
+            session,
+          );
+
+          this.logger.log(
+            `Successfully processed subscription ${subscription.id} manually`,
+          );
+          return {
+            message: 'Subscription completed manually',
+            subscriptionId: subscription.id,
           };
         } else {
           this.logger.error(`No subscription found in session ${sessionId}`);
@@ -988,18 +1205,26 @@ export class PaymentsService {
               payment.id,
             );
 
-            this.logger.log(`Successfully processed payment ${payment.id} manually`);
-            return { message: 'Payment completed manually', paymentId: payment.id };
+            this.logger.log(
+              `Successfully processed payment ${payment.id} manually`,
+            );
+            return {
+              message: 'Payment completed manually',
+              paymentId: payment.id,
+            };
           }
         }
-        
+
         return { message: 'Payment not found or already completed' };
       } else {
         this.logger.error(`Unknown session mode: ${session.mode}`);
         return { message: `Unknown session mode: ${session.mode}` };
       }
     } catch (error) {
-      this.logger.error(`Error completing test payment for session ${sessionId}:`, error);
+      this.logger.error(
+        `Error completing test payment for session ${sessionId}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -1010,9 +1235,13 @@ export class PaymentsService {
     });
   }
 
-  async completePaymentByIntentId(paymentIntentId: string): Promise<{ message: string; paymentId?: string; subscriptionId?: string }> {
-    this.logger.log(`Completing payment by Payment Intent ID: ${paymentIntentId}`);
-    
+  async completePaymentByIntentId(
+    paymentIntentId: string,
+  ): Promise<{ message: string; paymentId?: string; subscriptionId?: string }> {
+    this.logger.log(
+      `Completing payment by Payment Intent ID: ${paymentIntentId}`,
+    );
+
     try {
       // Find the payment by Payment Intent ID
       const payment = await this.prisma.payment.findUnique({
@@ -1020,7 +1249,9 @@ export class PaymentsService {
       });
 
       if (!payment) {
-        this.logger.error(`No payment found for Payment Intent ID: ${paymentIntentId}`);
+        this.logger.error(
+          `No payment found for Payment Intent ID: ${paymentIntentId}`,
+        );
         return { message: 'Payment not found for this Payment Intent ID' };
       }
 
@@ -1030,25 +1261,32 @@ export class PaymentsService {
       }
 
       // Get the session to determine if it's a subscription
-      const session = await this.stripeService.retrieveSession(payment.stripeSessionId!);
-      
+      const session = await this.stripeService.retrieveSession(
+        payment.stripeSessionId!,
+      );
+
       if (session.mode === 'subscription') {
         // Handle subscription payment
         if (session.subscription) {
-          this.logger.log(`Processing subscription: ${session.subscription}`);
-          
+          this.logger.log(`Processing subscription: ${typeof session.subscription === 'string' ? session.subscription : session.subscription.id}`);
+
           // Retrieve the full subscription object
           const subscription = await this.stripeService.retrieveSubscription(
             session.subscription as string,
           );
-          
+
           // Process the subscription using the existing method
-          await this.handleSuccessfulSubscriptionFromSession(subscription, session);
-          
-          this.logger.log(`Successfully processed subscription ${subscription.id} by Payment Intent`);
-          return { 
-            message: 'Subscription completed by Payment Intent', 
-            subscriptionId: subscription.id 
+          await this.handleSuccessfulSubscriptionFromSession(
+            subscription,
+            session,
+          );
+
+          this.logger.log(
+            `Successfully processed subscription ${subscription.id} by Payment Intent`,
+          );
+          return {
+            message: 'Subscription completed by Payment Intent',
+            subscriptionId: subscription.id,
           };
         } else {
           this.logger.error(`No subscription found in session ${session.id}`);
@@ -1068,11 +1306,19 @@ export class PaymentsService {
           payment.id,
         );
 
-        this.logger.log(`Successfully processed payment ${payment.id} by Payment Intent`);
-        return { message: 'Payment completed by Payment Intent', paymentId: payment.id };
+        this.logger.log(
+          `Successfully processed payment ${payment.id} by Payment Intent`,
+        );
+        return {
+          message: 'Payment completed by Payment Intent',
+          paymentId: payment.id,
+        };
       }
     } catch (error) {
-      this.logger.error(`Error completing payment by Payment Intent ID ${paymentIntentId}:`, error);
+      this.logger.error(
+        `Error completing payment by Payment Intent ID ${paymentIntentId}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -1092,9 +1338,13 @@ export class PaymentsService {
     paymentIntentId: string;
     stripeSubscriptionId: string;
     stripePriceId: string;
-  }): Promise<{ message: string; subscriptionId?: string; paymentId?: string }> {
+  }): Promise<{
+    message: string;
+    subscriptionId?: string;
+    paymentId?: string;
+  }> {
     this.logger.log(`Creating manual subscription for ${data.userEmail}`);
-    
+
     try {
       // Find user by email
       const user = await this.usersService.findByEmail(data.userEmail);
@@ -1152,10 +1402,10 @@ export class PaymentsService {
         `Successfully created manual subscription ${subscription.id} and added ${data.credits} credits for user ${user.authUserId}`,
       );
 
-      return { 
-        message: 'Manual subscription created successfully', 
+      return {
+        message: 'Manual subscription created successfully',
         subscriptionId: subscription.id,
-        paymentId: payment.id
+        paymentId: payment.id,
       };
     } catch (error) {
       this.logger.error(`Error creating manual subscription:`, error);

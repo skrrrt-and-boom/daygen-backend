@@ -158,7 +158,8 @@ export class StripeService {
   ): Promise<StripeType.Subscription> {
     try {
       // First, get the current subscription to find the subscription item
-      const subscription = await this.stripe.subscriptions.retrieve(subscriptionId);
+      const subscription =
+        await this.stripe.subscriptions.retrieve(subscriptionId);
       const subscriptionItemId = subscription.items.data[0]?.id;
 
       if (!subscriptionItemId) {
@@ -181,7 +182,10 @@ export class StripeService {
         updateParams.metadata = metadata;
       }
 
-      return await this.stripe.subscriptions.update(subscriptionId, updateParams);
+      return await this.stripe.subscriptions.update(
+        subscriptionId,
+        updateParams,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to update subscription ${subscriptionId}:`,

@@ -19,15 +19,18 @@ export class PublicPaymentsController {
   }
 
   @Post('test/create-manual-subscription')
-  async createManualSubscription(@Body() body: {
-    userEmail: string;
-    planId: string;
-    credits: number;
-    amount: number;
-    paymentIntentId: string;
-    stripeSubscriptionId: string;
-    stripePriceId: string;
-  }) {
+  async createManualSubscription(
+    @Body()
+    body: {
+      userEmail: string;
+      planId: string;
+      credits: number;
+      amount: number;
+      paymentIntentId: string;
+      stripeSubscriptionId: string;
+      stripePriceId: string;
+    },
+  ) {
     return this.paymentsService.createManualSubscription(body);
   }
 }

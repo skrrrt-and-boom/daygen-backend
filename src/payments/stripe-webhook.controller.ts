@@ -28,15 +28,17 @@ export class StripeWebhookController {
     @Headers('stripe-signature') signature: string,
   ) {
     this.logger.log('Webhook received - checking signature');
-    
+
     if (!signature) {
       this.logger.error('Missing Stripe signature');
       return res
         .status(HttpStatus.BAD_REQUEST)
         .send('Missing Stripe signature');
     }
-    
-    this.logger.log(`Stripe signature present: ${signature.substring(0, 20)}...`);
+
+    this.logger.log(
+      `Stripe signature present: ${signature.substring(0, 20)}...`,
+    );
 
     try {
       // Construct the event
@@ -45,7 +47,9 @@ export class StripeWebhookController {
         signature,
       );
 
-      this.logger.log(`Received webhook event: ${event.type} (ID: ${event.id})`);
+      this.logger.log(
+        `Received webhook event: ${event.type} (ID: ${event.id})`,
+      );
 
       // Handle the event
       switch (event.type) {
@@ -98,39 +102,54 @@ export class StripeWebhookController {
     }
   }
 
-  private async handleCheckoutSessionCompleted(
+  private handleCheckoutSessionCompleted(
     session: Stripe.Checkout.Session,
   ) {
     this.logger.log(`Processing checkout session completed: ${session.id}`);
     this.logger.log(`Session mode: ${session.mode}`);
     this.logger.log(`Session metadata:`, session.metadata);
-    this.logger.log(`Session subscription ID: ${session.subscription}`);
+    this.logger.log(`Session subscription ID: ${typeof session.subscription === 'string' ? session.subscription : session.subscription?.id || 'null'}`);
 
     // Process in background for faster webhook response
     setImmediate(async () => {
       try {
         // Handle both one-time payments and subscriptions
         if (session.mode === 'payment') {
-          this.logger.log(`Processing one-time payment for session ${session.id}`);
+          this.logger.log(
+            `Processing one-time payment for session ${session.id}`,
+          );
           await this.paymentsService.handleSuccessfulPayment(session);
         } else if (session.mode === 'subscription') {
           this.logger.log(`Processing subscription for session ${session.id}`);
           // For subscriptions, we need to get the subscription object
           if (session.subscription) {
-            this.logger.log(`Retrieving subscription ${session.subscription} from Stripe`);
+            this.logger.log(
+              `Retrieving subscription ${typeof session.subscription === 'string' ? session.subscription : session.subscription.id} from Stripe`,
+            );
             const subscription = await this.stripeService.retrieveSubscription(
               session.subscription as string,
             );
-            this.logger.log(`Retrieved subscription: ${subscription.id}, status: ${subscription.status}`);
+            this.logger.log(
+              `Retrieved subscription: ${subscription.id}, status: ${subscription.status}`,
+            );
             // Handle subscription completion: create record AND add credits
             // Pass the session metadata to get the userId
-            await this.paymentsService.handleSuccessfulSubscriptionFromSession(subscription, session);
-            this.logger.log(`Successfully processed subscription ${subscription.id}`);
+            await this.paymentsService.handleSuccessfulSubscriptionFromSession(
+              subscription,
+              session,
+            );
+            this.logger.log(
+              `Successfully processed subscription ${subscription.id}`,
+            );
           } else {
-            this.logger.error(`No subscription ID found in session ${session.id}`);
+            this.logger.error(
+              `No subscription ID found in session ${session.id}`,
+            );
           }
         } else {
-          this.logger.warn(`Unknown session mode: ${session.mode} for session ${session.id}`);
+          this.logger.warn(
+            `Unknown session mode: ${session.mode} for session ${session.id}`,
+          );
         }
       } catch (error) {
         this.logger.error(
@@ -158,9 +177,9 @@ export class StripeWebhookController {
     });
 
     try {
-      // Subscription creation is now handled by checkout.session.completed
-      // This webhook is mainly for logging and any additional setup
-      this.logger.log(`Subscription ${subscription.id} created successfully`);
+      // Process subscription creation as a fallback if checkout.session.completed didn't handle it
+      await this.paymentsService.handleSuccessfulSubscription(subscription);
+      this.logger.log(`Successfully processed subscription ${subscription.id}`);
     } catch (error) {
       this.logger.error(
         `Error processing subscription ${subscription.id}:`,
@@ -232,15 +251,19 @@ export class StripeWebhookController {
 
     try {
       // Find the payment record by payment intent ID
-      const payment = await this.paymentsService.findPaymentByIntentId(paymentIntent.id);
-      
+      const payment = await this.paymentsService.findPaymentByIntentId(
+        paymentIntent.id,
+      );
+
       if (payment) {
         // Update payment status to failed
         await this.paymentsService.updatePaymentStatus(payment.id, 'FAILED');
-        
+
         this.logger.log(`Updated payment ${payment.id} status to FAILED`);
       } else {
-        this.logger.warn(`No payment found for failed payment intent ${paymentIntent.id}`);
+        this.logger.warn(
+          `No payment found for failed payment intent ${paymentIntent.id}`,
+        );
       }
     } catch (error) {
       this.logger.error(

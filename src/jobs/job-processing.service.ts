@@ -191,7 +191,7 @@ export class JobProcessingService {
     }
 
     // Record usage and deduct credits first
-    const usageResult = await this.usageService.recordGeneration(
+    await this.usageService.recordGeneration(
       { authUserId: user.authUserId } as SanitizedUser,
       {
         provider: 'job_queue',
@@ -199,7 +199,7 @@ export class JobProcessingService {
         prompt,
         cost: 1,
         metadata: { model: mappedModel, prompt: prompt.slice(0, 100), jobId },
-      }
+      },
     );
 
     await this.cloudTasksService.updateJobProgress(jobId, 25);
@@ -234,15 +234,15 @@ export class JobProcessingService {
             await this.paymentsService.refundCredits(
               user.authUserId,
               1,
-              `Job generation failed after ${maxRetries} attempts: ${error instanceof Error ? error.message : String(error)}`
+              `Job generation failed after ${maxRetries} attempts: ${error instanceof Error ? error.message : String(error)}`,
             );
             this.logger.log(
-              `Refunded 1 credit to user ${user.authUserId} due to job generation failure`
+              `Refunded 1 credit to user ${user.authUserId} due to job generation failure`,
             );
           } catch (refundError) {
             this.logger.error(
               `Failed to refund credits to user ${user.authUserId}:`,
-              refundError
+              refundError,
             );
           }
           throw error;
@@ -267,15 +267,15 @@ export class JobProcessingService {
         await this.paymentsService.refundCredits(
           user.authUserId,
           1,
-          `Job generation failed - no result after all attempts`
+          `Job generation failed - no result after all attempts`,
         );
         this.logger.log(
-          `Refunded 1 credit to user ${user.authUserId} due to job generation failure - no result`
+          `Refunded 1 credit to user ${user.authUserId} due to job generation failure - no result`,
         );
       } catch (refundError) {
         this.logger.error(
           `Failed to refund credits to user ${user.authUserId}:`,
-          refundError
+          refundError,
         );
       }
 

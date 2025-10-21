@@ -285,7 +285,7 @@ export class GenerationService {
     );
 
     // Record usage and deduct credits first
-    const usageResult = await this.usageService.recordGeneration(user, {
+    await this.usageService.recordGeneration(user, {
       provider: 'generation',
       model,
       prompt,
@@ -344,15 +344,15 @@ export class GenerationService {
         await this.paymentsService.refundCredits(
           user.authUserId,
           1,
-          `Generation failed: ${error instanceof Error ? error.message : String(error)}`
+          `Generation failed: ${error instanceof Error ? error.message : String(error)}`,
         );
         this.logger.log(
-          `Refunded 1 credit to user ${user.authUserId} due to generation failure`
+          `Refunded 1 credit to user ${user.authUserId} due to generation failure`,
         );
       } catch (refundError) {
         this.logger.error(
           `Failed to refund credits to user ${user.authUserId}:`,
-          refundError
+          refundError,
         );
       }
 

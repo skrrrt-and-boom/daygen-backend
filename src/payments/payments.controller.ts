@@ -78,8 +78,11 @@ export class PaymentsController {
     if (!body.planId) {
       throw new BadRequestException('Plan ID is required');
     }
-    
-    await this.paymentsService.upgradeSubscription(user.authUserId, body.planId);
+
+    await this.paymentsService.upgradeSubscription(
+      user.authUserId,
+      body.planId,
+    );
     return { message: 'Subscription upgraded successfully' };
   }
 
@@ -95,7 +98,7 @@ export class PaymentsController {
   }
 
   @Get('subscription-plans')
-  async getSubscriptionPlans() {
+  getSubscriptionPlans() {
     return this.paymentsService.getSubscriptionPlans();
   }
 
@@ -105,20 +108,25 @@ export class PaymentsController {
   }
 
   @Post('test/complete-by-intent/:paymentIntentId')
-  async completePaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
+  async completePaymentByIntent(
+    @Param('paymentIntentId') paymentIntentId: string,
+  ) {
     return this.paymentsService.completePaymentByIntentId(paymentIntentId);
   }
 
   @Post('test/create-manual-subscription')
-  async createManualSubscription(@Body() body: {
-    userEmail: string;
-    planId: string;
-    credits: number;
-    amount: number;
-    paymentIntentId: string;
-    stripeSubscriptionId: string;
-    stripePriceId: string;
-  }) {
+  async createManualSubscription(
+    @Body()
+    body: {
+      userEmail: string;
+      planId: string;
+      credits: number;
+      amount: number;
+      paymentIntentId: string;
+      stripeSubscriptionId: string;
+      stripePriceId: string;
+    },
+  ) {
     return this.paymentsService.createManualSubscription(body);
   }
 }
