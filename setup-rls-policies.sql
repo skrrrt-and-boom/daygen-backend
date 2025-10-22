@@ -21,6 +21,10 @@ CREATE POLICY "Users can update own profile" ON "User"
     FOR UPDATE USING (auth.uid()::text = "authUserId")
     WITH CHECK (auth.uid()::text = "authUserId");
 
+-- Users can insert their own profile during signup
+CREATE POLICY "Users can create own profile" ON "User"
+    FOR INSERT WITH CHECK (auth.uid()::text = "authUserId");
+
 -- Service role can do everything (for backend operations)
 CREATE POLICY "Service role full access" ON "User"
     FOR ALL USING (auth.role() = 'service_role');
