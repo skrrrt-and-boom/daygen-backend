@@ -33,9 +33,9 @@ jobs:
     - name: Run type checking
       run: npx tsc --noEmit
       
-    - name: Run tests
+    - name: Run unit tests
       run: npm test
-        
+      
     - name: Build application
       run: npm run build
       
@@ -46,8 +46,5 @@ jobs:
         path: dist/
         retention-days: 1
 
-  # Note: Deployment is handled by your existing deployment pipeline
-  # To enable GitHub Actions deployment, configure these secrets:
-  # - GCP_PROJECT_ID
-  # - GCP_SERVICE_ACCOUNT_KEY
-  # - DATABASE_URL, JWT_SECRET, SUPABASE_*, STRIPE_*, R2_*
+  # Note: Deployment is handled by external services
+  # No additional deployment step needed in GitHub Actions
