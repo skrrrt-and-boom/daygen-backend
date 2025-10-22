@@ -33,4 +33,25 @@ export class PublicPaymentsController {
   ) {
     return this.paymentsService.createManualSubscription(body);
   }
+
+  @Get('test/url-config')
+  getUrlConfig() {
+    const nodeEnv = process.env.NODE_ENV || 'development';
+    const frontendUrl = process.env.FRONTEND_URL;
+    
+    let baseUrl: string;
+    if (nodeEnv === 'production') {
+      baseUrl = frontendUrl || 'https://daygen.ai';
+    } else {
+      baseUrl = 'http://localhost:5173';
+    }
+
+    return {
+      nodeEnv,
+      frontendUrl,
+      baseUrl,
+      successUrl: `${baseUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${baseUrl}/payment/cancel?type=subscription&package=pro`
+    };
+  }
 }

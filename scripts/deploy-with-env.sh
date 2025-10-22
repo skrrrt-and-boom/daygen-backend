@@ -6,7 +6,7 @@
 set -e
 
 # Configuration
-PROJECT_ID="daygen-backend"
+PROJECT_ID="daygen-backend-365299591811"
 SERVICE_NAME="daygen-backend"
 REGION="europe-central2"
 IMAGE_NAME="gcr.io/$PROJECT_ID/$SERVICE_NAME"
@@ -146,6 +146,25 @@ if [ ! -z "$STRIPE_PUBLISHABLE_KEY" ]; then
     ENV_VARS="$ENV_VARS,STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE_KEY"
 fi
 
+# Add Stripe Price IDs (CRITICAL FOR SUBSCRIPTIONS)
+if [ ! -z "$STRIPE_PRO_PRICE_ID" ]; then
+    ENV_VARS="$ENV_VARS,STRIPE_PRO_PRICE_ID=$STRIPE_PRO_PRICE_ID"
+fi
+if [ ! -z "$STRIPE_ENTERPRISE_PRICE_ID" ]; then
+    ENV_VARS="$ENV_VARS,STRIPE_ENTERPRISE_PRICE_ID=$STRIPE_ENTERPRISE_PRICE_ID"
+fi
+if [ ! -z "$STRIPE_PRO_YEARLY_PRICE_ID" ]; then
+    ENV_VARS="$ENV_VARS,STRIPE_PRO_YEARLY_PRICE_ID=$STRIPE_PRO_YEARLY_PRICE_ID"
+fi
+if [ ! -z "$STRIPE_ENTERPRISE_YEARLY_PRICE_ID" ]; then
+    ENV_VARS="$ENV_VARS,STRIPE_ENTERPRISE_YEARLY_PRICE_ID=$STRIPE_ENTERPRISE_YEARLY_PRICE_ID"
+fi
+
+# Add Frontend URL for payment redirects
+if [ ! -z "$FRONTEND_URL" ]; then
+    ENV_VARS="$ENV_VARS,FRONTEND_URL=$FRONTEND_URL"
+fi
+
 # Add Google Cloud Tasks configuration
 if [ ! -z "$GOOGLE_CLOUD_PROJECT" ]; then
     ENV_VARS="$ENV_VARS,GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT"
@@ -179,5 +198,5 @@ gcloud run deploy $SERVICE_NAME \
     --set-env-vars "$ENV_VARS"
 
 echo "✅ Deployment completed!"
-echo "🌐 Service URL: https://$SERVICE_NAME-$PROJECT_ID.a.run.app"
+echo "🌐 Service URL: https://$SERVICE_NAME-$PROJECT_ID.europe-central2.run.app"
 echo "📊 Check logs with: gcloud run logs tail $SERVICE_NAME --region=$REGION"

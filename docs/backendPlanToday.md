@@ -43,16 +43,18 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
+Why sybscription info is stored in usageEvent table - there are images
 Add credit logic
+Image generation overall
 Gemini first job is always failing
 Make image generation faster
 Add vary feature like in MJ
+Add all resources on the website to cloudflare R2, for static images to load faster
 Change generation display, make every new job to appear in the first place
 User Management
 User profiles and settings
 Usage tracking and limits
 Image editing tools
-R2 File Management (for asets like showcases)
 File organization (folders/tags)
 Bulk operations
 File sharing and permissions

@@ -165,6 +165,7 @@ export class PaymentsService {
         metadata: {
           planId,
           planName: subscriptionPlan.name,
+          billingPeriod: subscriptionPlan.interval === 'year' ? 'yearly' : 'monthly',
         },
       },
     });
@@ -990,17 +991,30 @@ export class PaymentsService {
 
   async getSessionStatus(
     sessionId: string,
-  ): Promise<{ status: string; paymentStatus?: PaymentStatus }> {
+  ): Promise<{ status: string; paymentStatus?: PaymentStatus; mode?: string; metadata?: any }> {
     const session = await this.stripeService.retrieveSession(sessionId);
 
     const payment = await this.prisma.payment.findUnique({
       where: { stripeSessionId: sessionId },
     });
 
-    return {
+    const result: { status: string; paymentStatus?: PaymentStatus; mode?: string; metadata?: any } = {
       status: session.payment_status,
       paymentStatus: payment?.status || 'PENDING', // Default to PENDING if not found
+      mode: session.mode,
     };
+
+    // Add metadata for subscriptions
+    if (session.mode === 'subscription' && payment?.metadata) {
+      const metadata = payment.metadata as any; // Type assertion for metadata object
+      result.metadata = {
+        planName: metadata.planName,
+        billingPeriod: metadata.billingPeriod || 'monthly',
+        planId: metadata.planId,
+      };
+    }
+
+    return result;
   }
 
   getCreditPackages() {
