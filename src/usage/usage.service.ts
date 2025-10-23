@@ -38,7 +38,9 @@ export class UsageService {
       throw new NotFoundException('User not found');
     }
 
-    return userRecord.credits >= cost;
+    const graceCredits = this.getGraceCredits();
+    const projected = userRecord.credits - cost;
+    return projected >= -graceCredits;
   }
 
   async recordGeneration(
@@ -46,39 +48,31 @@ export class UsageService {
     event: UsageEventInput,
   ): Promise<UsageEventResult> {
     const cost = this.normalizeCost(event.cost);
-    const graceCredits = this.getGraceCredits();
+    const sanitizedMetadata = this.sanitizeMetadata(event.metadata);
 
-    return this.prisma.$transaction(async (tx) => {
-      const userRecord = await tx.user.findUnique({
-        where: { authUserId: user.authUserId },
-        select: { credits: true },
-      });
+    // Apply atomic debit via SQL function; it enforces grace based on plan
+    try {
+      const newBalanceRows = await this.prisma.$queryRawUnsafe<
+        { apply_credit_delta: number }[]
+      >(
+        'SELECT public.apply_credit_delta($1, $2, $3::"CreditReason", $4::"CreditSourceType", $5, $6, $7, $8, $9::jsonb) as apply_credit_delta',
+        user.authUserId,
+        -cost,
+        'JOB',
+        'JOB',
+        null,
+        event.provider,
+        event.model ?? null,
+        null,
+        JSON.stringify({
+          prompt: event.prompt?.slice(0, 256),
+          ...sanitizedMetadata,
+        }),
+      );
+      const balanceAfter = newBalanceRows?.[0]?.apply_credit_delta ?? 0;
 
-      if (!userRecord) {
-        throw new NotFoundException('User not found for usage event');
-      }
-
-      const balanceAfter = userRecord.credits - cost;
-      let status: UsageStatus = UsageStatus.COMPLETED;
-
-      // Check if we're going negative and if grace credits allow it
-      if (balanceAfter < 0) {
-        const graceLimit = -graceCredits;
-        if (balanceAfter < graceLimit) {
-          throw new ForbiddenException(
-            'Insufficient credits to complete generation. Each generation costs 1 credit.',
-          );
-        }
-        // Within grace limit, mark as GRACE status
-        status = UsageStatus.GRACE;
-      }
-
-      await tx.user.update({
-        where: { authUserId: user.authUserId },
-        data: { credits: balanceAfter },
-      });
-
-      await tx.usageEvent.create({
+      // Write a lightweight usage event for audit and pagination
+      await this.prisma.usageEvent.create({
         data: {
           userAuthId: user.authUserId,
           provider: event.provider,
@@ -86,13 +80,23 @@ export class UsageService {
           prompt: event.prompt ? event.prompt.slice(0, 4096) : null,
           cost,
           balanceAfter,
-          status,
-          metadata: event.metadata as Prisma.InputJsonValue | undefined,
+          status: balanceAfter < 0 ? UsageStatus.GRACE : UsageStatus.COMPLETED,
+          metadata: sanitizedMetadata as Prisma.InputJsonValue | undefined,
         },
       });
 
-      return { status, balanceAfter };
-    });
+      return {
+        status: balanceAfter < 0 ? UsageStatus.GRACE : UsageStatus.COMPLETED,
+        balanceAfter,
+      };
+    } catch (e) {
+      if (e instanceof Error && /Insufficient credits/.test(e.message)) {
+        throw new ForbiddenException(
+          'Insufficient credits to complete generation.',
+        );
+      }
+      throw e;
+    }
   }
 
   async listEvents(params: {
@@ -152,5 +156,54 @@ export class UsageService {
     }
     const rounded = Math.max(0, Math.round(input));
     return rounded;
+  }
+
+  private sanitizeMetadata(
+    metadata?: Record<string, unknown>,
+    maxSizeBytes: number = 8192,
+  ): Record<string, unknown> | undefined {
+    if (!metadata || typeof metadata !== 'object') {
+      return undefined;
+    }
+
+    const redactIfBase64 = (value: unknown): unknown => {
+      if (typeof value === 'string') {
+        if (/^data:[^;]+;base64,/i.test(value)) {
+          return '[redacted-data-url]';
+        }
+        if (value.length > maxSizeBytes) {
+          return `${value.slice(0, Math.min(2048, maxSizeBytes))}...[truncated]`;
+        }
+      } else if (Array.isArray(value)) {
+        return value.slice(0, 50).map((v) => redactIfBase64(v));
+      } else if (value && typeof value === 'object') {
+        const obj = value as Record<string, unknown>;
+        const out: Record<string, unknown> = {};
+        let count = 0;
+        for (const [k, v] of Object.entries(obj)) {
+          if (count++ > 50) {
+            out['__truncated__'] = true;
+            break;
+          }
+          out[k] = redactIfBase64(v);
+        }
+        return out;
+      }
+      return value;
+    };
+
+    const cleaned = redactIfBase64(metadata) as Record<string, unknown>;
+    try {
+      const serialized = JSON.stringify(cleaned);
+      if (serialized.length > maxSizeBytes) {
+        return {
+          note: 'metadata-truncated',
+          preview: serialized.slice(0, maxSizeBytes),
+        };
+      }
+    } catch {
+      return { note: 'metadata-unserializable' };
+    }
+    return cleaned;
   }
 }

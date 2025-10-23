@@ -28,7 +28,7 @@ export class StripeService {
     // Environment-aware URL configuration
     const nodeEnv = this.configService.get<string>('NODE_ENV') || 'development';
     const frontendUrl = this.configService.get<string>('FRONTEND_URL');
-    
+
     // Use environment-specific URLs
     let baseUrl: string;
     if (nodeEnv === 'production') {
@@ -38,9 +38,13 @@ export class StripeService {
       baseUrl = 'http://localhost:5173';
     }
 
-    this.logger.log(`Creating checkout session with baseUrl: ${baseUrl} (NODE_ENV: ${nodeEnv})`);
+    this.logger.log(
+      `Creating checkout session with baseUrl: ${baseUrl} (NODE_ENV: ${nodeEnv})`,
+    );
     this.logger.log(`Frontend URL from config: ${frontendUrl}`);
-    this.logger.log(`Success URL will be: ${baseUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`);
+    this.logger.log(
+      `Success URL will be: ${baseUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+    );
 
     // Map our types to Stripe modes
     const mode: StripeType.Checkout.SessionCreateParams.Mode =

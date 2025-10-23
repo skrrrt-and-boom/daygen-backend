@@ -46,7 +46,7 @@ export class PaymentsController {
   }
 
   @Get('history')
-  async getPaymentHistory(@CurrentUser() user: SanitizedUser) {
+  getPaymentHistory(@CurrentUser() user: SanitizedUser) {
     return this.paymentsService.getUserPaymentHistory(user.authUserId);
   }
 
@@ -87,13 +87,12 @@ export class PaymentsController {
   }
 
   @Post('test/complete-payment/:sessionId')
-  async completeTestPayment(@Param('sessionId') sessionId: string) {
-    // This is a test endpoint to manually complete payments for development
+  completeTestPayment(@Param('sessionId') sessionId: string) {
     return this.paymentsService.completeTestPayment(sessionId);
   }
 
   @Get('session/:sessionId/status')
-  async getSessionStatus(@Param('sessionId') sessionId: string) {
+  getSessionStatus(@Param('sessionId') sessionId: string) {
     return this.paymentsService.getSessionStatus(sessionId);
   }
 
@@ -103,19 +102,17 @@ export class PaymentsController {
   }
 
   @Get('find-by-intent/:paymentIntentId')
-  async findPaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
+  findPaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
     return this.paymentsService.findPaymentByIntentId(paymentIntentId);
   }
 
   @Post('test/complete-by-intent/:paymentIntentId')
-  async completePaymentByIntent(
-    @Param('paymentIntentId') paymentIntentId: string,
-  ) {
+  completePaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
     return this.paymentsService.completePaymentByIntentId(paymentIntentId);
   }
 
   @Post('test/create-manual-subscription')
-  async createManualSubscription(
+  createManualSubscription(
     @Body()
     body: {
       userEmail: string;

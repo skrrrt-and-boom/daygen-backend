@@ -19,7 +19,6 @@ export interface SanitizedUser {
     currentPeriodStart: Date;
     currentPeriodEnd: Date;
     cancelAtPeriodEnd: boolean;
-    credits: number;
     createdAt: Date;
   } | null;
 }

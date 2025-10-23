@@ -50,6 +50,13 @@ export interface SubscriptionInfo {
   billingPeriod: 'monthly' | 'yearly';
 }
 
+type SessionStatusResult = {
+  status: string;
+  paymentStatus?: PaymentStatus;
+  mode?: string;
+  metadata?: any;
+};
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -165,7 +172,8 @@ export class PaymentsService {
         metadata: {
           planId,
           planName: subscriptionPlan.name,
-          billingPeriod: subscriptionPlan.interval === 'year' ? 'yearly' : 'monthly',
+          billingPeriod:
+            subscriptionPlan.interval === 'year' ? 'yearly' : 'monthly',
         },
       },
     });
@@ -197,7 +205,7 @@ export class PaymentsService {
       return;
     }
 
-    // Update payment status
+    // Update existing pending payment for this session
     await this.prisma.payment.update({
       where: { id: payment.id },
       data: {
@@ -346,45 +354,39 @@ export class PaymentsService {
       );
     }
 
-    // Create subscription and payment records in parallel for better performance
-    await Promise.all([
-      this.prisma.subscription.create({
-        data: {
-          userId: user.authUserId,
-          stripeSubscriptionId: subscription.id,
-          stripePriceId: priceId,
-          status: this.mapStripeStatusToDb(subscription.status),
-          currentPeriodStart: new Date(
-            ((subscription as any).current_period_start ||
-              Math.floor(Date.now() / 1000)) * 1000,
-          ),
-          currentPeriodEnd: new Date(
-            ((subscription as any).current_period_end ||
-              Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
-          ),
-          cancelAtPeriodEnd: subscription.cancel_at_period_end,
-          credits: plan.credits,
-        },
-      }),
-      this.prisma.payment.create({
-        data: {
-          userId: user.authUserId,
-          stripeSessionId: session.id, // Use the actual session ID
-          amount: plan.price,
-          credits: plan.credits,
-          status: 'COMPLETED',
-          type: 'SUBSCRIPTION',
-          metadata: {
-            planId: plan.id,
-            planName: plan.name,
-            stripeSubscriptionId: subscription.id,
-          },
-        },
-      }),
-    ]);
+    // Create subscription; update existing pending payment instead of creating a duplicate
+    await this.prisma.subscription.create({
+      data: {
+        userId: user.authUserId,
+        stripeSubscriptionId: subscription.id,
+        stripePriceId: priceId,
+        status: this.mapStripeStatusToDb(subscription.status),
+        currentPeriodStart: new Date(
+          ((subscription as any).current_period_start ||
+            Math.floor(Date.now() / 1000)) * 1000,
+        ),
+        currentPeriodEnd: new Date(
+          ((subscription as any).current_period_end ||
+            Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
+        ),
+        cancelAtPeriodEnd: subscription.cancel_at_period_end,
+        credits: plan.credits,
+      },
+    });
 
-    // Add credits to user (this can be done in parallel with the above)
-    await this.addCreditsToUser(user.authUserId, plan.credits, null);
+    await this.prisma.payment.updateMany({
+      where: { userId: user.authUserId, stripeSessionId: session.id },
+      data: {
+        status: 'COMPLETED',
+        metadata: {
+          planId: plan.id,
+          planName: plan.name,
+          stripeSubscriptionId: subscription.id,
+        },
+      },
+    });
+
+    // Do not grant credits here; rely on invoice event for first-cycle credits
 
     this.logger.log(
       `Successfully created subscription ${subscription.id} and added ${plan.credits} credits for user ${user.authUserId}`,
@@ -621,44 +623,19 @@ export class PaymentsService {
     credits: number,
     paymentId: string | null,
   ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      // Get current user credits
-      const userRecord = await tx.user.findUnique({
-        where: { authUserId: userId },
-        select: { credits: true },
-      });
-
-      if (!userRecord) {
-        throw new NotFoundException('User not found for credit addition');
-      }
-
-      const newBalance = userRecord.credits + credits;
-
-      // Update user credits
-      await tx.user.update({
-        where: { authUserId: userId },
-        data: {
-          credits: newBalance,
-        },
-      });
-
-      // Log the credit addition with correct balance
-      await tx.usageEvent.create({
-        data: {
-          userAuthId: userId,
-          provider: 'stripe',
-          model: 'payment',
-          prompt: `Added ${credits} credits`,
-          cost: -credits, // Negative cost for credit addition
-          balanceAfter: newBalance,
-          status: 'COMPLETED',
-          metadata: {
-            paymentId,
-            type: 'credit_purchase',
-          },
-        },
-      });
-    });
+    // Centralize via SQL function apply_credit_delta (will also write the ledger)
+    await this.prisma.$executeRawUnsafe(
+      'SELECT public.apply_credit_delta($1, $2, $3::"CreditReason", $4::"CreditSourceType", $5, $6, $7, $8, $9::jsonb)',
+      userId,
+      credits,
+      'PAYMENT',
+      'PAYMENT',
+      paymentId,
+      'stripe',
+      'payment',
+      null,
+      JSON.stringify({ paymentId, type: 'credit_purchase' }),
+    );
 
     this.logger.log(`Added ${credits} credits to user ${userId}`);
   }
@@ -668,44 +645,18 @@ export class PaymentsService {
     credits: number,
     reason: string,
   ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      // Get current user credits
-      const userRecord = await tx.user.findUnique({
-        where: { authUserId: userId },
-        select: { credits: true },
-      });
-
-      if (!userRecord) {
-        throw new NotFoundException('User not found for credit refund');
-      }
-
-      const newBalance = userRecord.credits + credits;
-
-      // Update user credits
-      await tx.user.update({
-        where: { authUserId: userId },
-        data: {
-          credits: newBalance,
-        },
-      });
-
-      // Log the credit refund with correct balance
-      await tx.usageEvent.create({
-        data: {
-          userAuthId: userId,
-          provider: 'system',
-          model: 'refund',
-          prompt: `Refunded ${credits} credits: ${reason}`,
-          cost: -credits, // Negative cost for credit refund
-          balanceAfter: newBalance,
-          status: 'COMPLETED',
-          metadata: {
-            type: 'credit_refund',
-            reason,
-          },
-        },
-      });
-    });
+    await this.prisma.$executeRawUnsafe(
+      'SELECT public.apply_credit_delta($1, $2, $3::"CreditReason", $4::"CreditSourceType", $5, $6, $7, $8, $9::jsonb)',
+      userId,
+      credits,
+      'REFUND',
+      'SYSTEM',
+      null,
+      'system',
+      'refund',
+      null,
+      JSON.stringify({ type: 'credit_refund', reason }),
+    );
 
     this.logger.log(
       `Refunded ${credits} credits to user ${userId} for reason: ${reason}`,
@@ -753,7 +704,7 @@ export class PaymentsService {
       currentPeriodStart: subscription.currentPeriodStart,
       currentPeriodEnd: subscription.currentPeriodEnd,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-      credits: subscription.credits,
+      credits: plan?.credits ?? 0,
       createdAt: subscription.createdAt,
       stripePriceId: subscription.stripePriceId,
       planId: plan?.id || null,
@@ -991,14 +942,14 @@ export class PaymentsService {
 
   async getSessionStatus(
     sessionId: string,
-  ): Promise<{ status: string; paymentStatus?: PaymentStatus; mode?: string; metadata?: any }> {
+  ): Promise<SessionStatusResult> {
     const session = await this.stripeService.retrieveSession(sessionId);
 
     const payment = await this.prisma.payment.findUnique({
       where: { stripeSessionId: sessionId },
     });
 
-    const result: { status: string; paymentStatus?: PaymentStatus; mode?: string; metadata?: any } = {
+    const result: SessionStatusResult = {
       status: session.payment_status,
       paymentStatus: payment?.status || 'PENDING', // Default to PENDING if not found
       mode: session.mode,
@@ -1118,11 +1069,69 @@ export class PaymentsService {
       return;
     }
 
-    // Add monthly credits to user
+    // Idempotency: if we already processed the invoice's payment intent, skip
+    const paymentIntentId = (invoice as any).payment_intent as string | undefined;
+    if (paymentIntentId) {
+      const existing = await this.prisma.payment.findUnique({
+        where: { stripePaymentIntentId: paymentIntentId },
+      });
+      if (existing) {
+        this.logger.log(
+          `Invoice ${invoice.id} already processed via payment ${existing.id}; skipping credit grant`,
+        );
+        return;
+      }
+    }
+
+    const plan = SUBSCRIPTION_PLANS.find(
+      (p) => this.getPriceIdForSubscription(p) === subscription.stripePriceId,
+    );
+    const creditsToGrant = plan?.credits ?? 0;
+
+    const payment = await this.prisma.payment.create({
+      data: {
+        userId: subscription.userId,
+        stripePaymentIntentId: paymentIntentId || undefined,
+        amount: Number((invoice as any).amount_paid || 0),
+        credits: creditsToGrant,
+        status: 'COMPLETED',
+        type: 'SUBSCRIPTION',
+        metadata: {
+          invoiceId: invoice.id,
+          periodStart: (invoice as any).period_start,
+          periodEnd: (invoice as any).period_end,
+        },
+      },
+    });
+
+    // Create subscription cycle idempotently
+    try {
+      await (this.prisma as any).subscriptionCycle.create({
+        data: {
+          subscriptionId: subscription.id,
+          stripeInvoiceId: invoice.id,
+          periodStart: new Date(
+            ((invoice as any).period_start || Math.floor(Date.now() / 1000)) *
+              1000,
+          ),
+          periodEnd: new Date(
+            ((invoice as any).period_end ||
+              Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
+          ),
+          creditsGranted: creditsToGrant,
+        },
+      });
+    } catch {
+      // Unique violation means we already recorded this cycle
+      this.logger.warn(
+        `Subscription cycle for invoice ${invoice.id} already exists`,
+      );
+    }
+
     await this.addCreditsToUser(
       subscription.userId,
-      subscription.credits,
-      null,
+      creditsToGrant,
+      payment.id,
     );
 
     this.logger.log(

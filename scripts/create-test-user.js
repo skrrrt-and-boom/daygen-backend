@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 const { PrismaClient } = require('@prisma/client');
-const bcrypt = require('bcrypt');
 
 const prisma = new PrismaClient({
   datasources: {
@@ -27,13 +26,9 @@ async function createTestUser() {
       });
     }
     
-    // Create new user
-    const passwordHash = await bcrypt.hash('testpassword123', 12);
-    
     const user = await prisma.user.create({
       data: {
         email: 'test@example.com',
-        passwordHash: passwordHash,
         displayName: 'Test User',
         authUserId: 'test-user-123',
         credits: 100

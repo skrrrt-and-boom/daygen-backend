@@ -37,7 +37,7 @@ model UsageEvent {
   status       UsageStatus @default(COMPLETED)
   metadata     Json?
   createdAt    DateTime    @default(now())
-  user         User        @relation(fields: [userAuthId], references: [authUserId], onDelete: Cascade)
+  user         User        @relation(fields: [userAuthId], references: [id], onDelete: Cascade)
 
   @@index([userAuthId, createdAt(sort: Desc)])
 }
@@ -58,7 +58,7 @@ model R2File {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
-  owner          User      @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  owner          User      @relation(fields: [ownerAuthId], references: [id], onDelete: Cascade)
   job            Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([ownerAuthId, createdAt(sort: Desc)])
@@ -78,7 +78,7 @@ model Job {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   completedAt DateTime?
-  user        User      @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   r2Files     R2File[]
 
   @@index([userId, status])
@@ -122,7 +122,7 @@ model Payment {
   metadata              Json?
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
-  user                  User        @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([stripeSessionId])
@@ -138,10 +138,9 @@ model Subscription {
   currentPeriodStart    DateTime
   currentPeriodEnd      DateTime
   cancelAtPeriodEnd     Boolean            @default(false)
-  credits               Int
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
-  user                  User               @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([stripeSubscriptionId])
@@ -170,4 +169,67 @@ enum SubscriptionStatus {
   INCOMPLETE_EXPIRED
   TRIALING
   PAUSED
+}
+
+// -------------------------------------
+// New schema objects for credits refactor
+// -------------------------------------
+
+model Plan {
+  id               String   @id @default(cuid())
+  name             String
+  interval         String   // 'monthly' | 'yearly'
+  creditsPerPeriod Int
+  graceCredits     Int      @default(0)
+  stripePriceId    String   @unique
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model SubscriptionCycle {
+  id               String   @id @default(cuid())
+  subscriptionId   String
+  stripeInvoiceId  String   @unique
+  periodStart      DateTime
+  periodEnd        DateTime
+  creditsGranted   Int
+  createdAt        DateTime @default(now())
+  subscription     Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, periodStart])
+}
+
+enum CreditReason {
+  JOB
+  PAYMENT
+  REFUND
+  ADJUSTMENT
+  SUBSCRIPTION_CYCLE
+}
+
+enum CreditSourceType {
+  JOB
+  PAYMENT
+  SUBSCRIPTION_CYCLE
+  SYSTEM
+}
+
+model CreditLedger {
+  id           String           @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId       String
+  delta        Int
+  balanceAfter Int
+  reason       CreditReason
+  sourceType   CreditSourceType
+  sourceId     String?
+  provider     String?
+  model        String?
+  promptHash   String?
+  metadata     Json?
+  createdAt    DateTime         @default(now())
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([sourceType, sourceId])
 }

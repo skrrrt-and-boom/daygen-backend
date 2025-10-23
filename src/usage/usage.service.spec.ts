@@ -4,20 +4,19 @@ import { UsageService } from './usage.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const createService = (credits: number, grace = 0) => {
-  const tx = {
+  const prisma = {
     user: {
       findUnique: jest.fn().mockResolvedValue({ credits }),
-      update: jest.fn().mockResolvedValue(null),
     },
     usageEvent: {
       create: jest.fn().mockResolvedValue(null),
     },
-  };
-
-  const prisma = {
-    $transaction: jest.fn((fn: (txArg: typeof tx) => Promise<unknown>) =>
-      fn(tx),
-    ),
+    $queryRawUnsafe: jest
+      .fn()
+      .mockImplementation((sql: string, _userId: string, delta: number) => {
+        const newBalance = credits + (typeof delta === 'number' ? delta : 0);
+        return Promise.resolve([{ apply_credit_delta: newBalance }]);
+      }),
   } as unknown as PrismaService;
 
   if (grace !== undefined) {
@@ -27,7 +26,10 @@ const createService = (credits: number, grace = 0) => {
   }
 
   const service = new UsageService(prisma);
-  return { service, tx };
+  return { service, prisma } as unknown as {
+    service: UsageService;
+    prisma: any;
+  };
 };
 
 describe('UsageService', () => {
@@ -36,7 +38,7 @@ describe('UsageService', () => {
   });
 
   it('deducts credits and records event for successful generation', async () => {
-    const { service, tx } = createService(10);
+    const { service, prisma } = createService(10);
 
     const result = await service.recordGeneration(
       {
@@ -58,12 +60,9 @@ describe('UsageService', () => {
       },
     );
 
-    expect(tx.user.update).toHaveBeenCalledWith({
-      where: { authUserId: 'auth-id' },
-      data: { credits: 8 },
-    });
-    expect(tx.usageEvent.create).toHaveBeenCalledTimes(1);
-    const usageCreateMock = tx.usageEvent.create as jest.Mock<
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledTimes(1);
+    expect(prisma.usageEvent.create).toHaveBeenCalledTimes(1);
+    const usageCreateMock = prisma.usageEvent.create as jest.Mock<
       Promise<unknown>,
       [Record<string, unknown>]
     >;
@@ -83,7 +82,11 @@ describe('UsageService', () => {
   });
 
   it('allows grace usage when within limit', async () => {
-    const { service, tx } = createService(0, 5);
+    const { service, prisma } = createService(0, 5);
+    // Mock apply_credit_delta to return -3
+    (prisma.$queryRawUnsafe as jest.Mock).mockResolvedValueOnce([
+      { apply_credit_delta: -3 },
+    ]);
 
     const result = await service.recordGeneration(
       {
@@ -103,12 +106,9 @@ describe('UsageService', () => {
       },
     );
 
-    expect(tx.user.update).toHaveBeenCalledWith({
-      where: { authUserId: 'auth-id' },
-      data: { credits: -3 },
-    });
-    expect(tx.usageEvent.create).toHaveBeenCalledTimes(1);
-    const graceCreateMock = tx.usageEvent.create as jest.Mock<
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledTimes(1);
+    expect(prisma.usageEvent.create).toHaveBeenCalledTimes(1);
+    const graceCreateMock = prisma.usageEvent.create as jest.Mock<
       Promise<unknown>,
       [Record<string, unknown>]
     >;
@@ -125,7 +125,11 @@ describe('UsageService', () => {
   });
 
   it('throws when exceeding grace limit', async () => {
-    const { service } = createService(1, 1);
+    const { service, prisma } = createService(1, 1);
+    // Simulate apply_credit_delta raising error
+    (prisma.$queryRawUnsafe as jest.Mock).mockRejectedValueOnce(
+      new Error('Insufficient credits to apply delta'),
+    );
 
     await expect(
       service.recordGeneration(

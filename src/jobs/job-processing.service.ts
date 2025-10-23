@@ -190,17 +190,7 @@ export class JobProcessingService {
       throw new Error('Insufficient credits');
     }
 
-    // Record usage and deduct credits first
-    await this.usageService.recordGeneration(
-      { authUserId: user.authUserId } as SanitizedUser,
-      {
-        provider: 'job_queue',
-        model: mappedModel,
-        prompt,
-        cost: 1,
-        metadata: { model: mappedModel, prompt: prompt.slice(0, 100), jobId },
-      },
-    );
+    // Do not pre-deduct here; generation path already charges once
 
     await this.cloudTasksService.updateJobProgress(jobId, 25);
 
@@ -322,15 +312,7 @@ export class JobProcessingService {
       });
     }
 
-    await this.usageService.recordGeneration(
-      { authUserId: user.authUserId } as SanitizedUser,
-      {
-        provider,
-        model,
-        prompt,
-        cost: 1,
-      },
-    );
+    // Avoid second deduction; the generation path performed the charge
 
     await this.cloudTasksService.completeJob(jobId, r2File.fileUrl, {
       r2FileId: r2File.id,
@@ -366,15 +348,7 @@ export class JobProcessingService {
 
     const videoUrl = `https://example.com/video-${Date.now()}.mp4`;
 
-    await this.usageService.recordGeneration(
-      { authUserId: userId } as SanitizedUser,
-      {
-        provider,
-        model,
-        prompt,
-        cost: 5,
-      },
-    );
+    // Charge should occur in the generation/business logic, not here
 
     await this.cloudTasksService.completeJob(jobId, videoUrl, {
       videoUrl,
@@ -494,10 +468,7 @@ export class JobProcessingService {
 
           results.push(r2File.fileUrl);
 
-          await this.usageService.recordGeneration(
-            { authUserId: userId } as SanitizedUser,
-            { provider, model, prompt, cost: 1 },
-          );
+          // Single charge per generated output should be handled centrally
         } catch (error) {
           this.logger.error(
             `Failed to process prompt "${prompt}" in batch:`,

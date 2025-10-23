@@ -14,12 +14,12 @@ export class PublicPaymentsController {
   }
 
   @Get('session/:sessionId')
-  async getSessionStatus(@Param('sessionId') sessionId: string) {
+  getSessionStatus(@Param('sessionId') sessionId: string) {
     return this.paymentsService.getSessionStatus(sessionId);
   }
 
   @Post('test/create-manual-subscription')
-  async createManualSubscription(
+  createManualSubscription(
     @Body()
     body: {
       userEmail: string;
@@ -38,7 +38,7 @@ export class PublicPaymentsController {
   getUrlConfig() {
     const nodeEnv = process.env.NODE_ENV || 'development';
     const frontendUrl = process.env.FRONTEND_URL;
-    
+
     let baseUrl: string;
     if (nodeEnv === 'production') {
       baseUrl = frontendUrl || 'https://daygen.ai';
@@ -51,7 +51,7 @@ export class PublicPaymentsController {
       frontendUrl,
       baseUrl,
       successUrl: `${baseUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${baseUrl}/payment/cancel?type=subscription&package=pro`
+      cancelUrl: `${baseUrl}/payment/cancel?type=subscription&package=pro`,
     };
   }
 }

@@ -284,7 +284,7 @@ export class GenerationService {
       `Starting generation for user ${user.authUserId} with model ${model}`,
     );
 
-    // Record usage and deduct credits first
+    // Record usage and deduct credits once per request
     await this.usageService.recordGeneration(user, {
       provider: 'generation',
       model,
@@ -2066,18 +2066,9 @@ export class GenerationService {
     providerResult: ProviderResult,
     dto: UnifiedGenerateDto,
   ) {
-    try {
-      await this.usageService.recordGeneration(user, {
-        provider: providerResult.provider,
-        model: providerResult.model,
-        prompt,
-        metadata: {
-          rawResponse: providerResult.rawResponse,
-        },
-      });
-    } catch (error) {
-      this.logger.error(`Failed to record usage event: ${String(error)}`);
-    }
+    // Do not record another usage event here to avoid double-charging
+    // and do not persist raw provider responses into the database
+    // (they should be kept in object storage if needed).
 
     const [firstAsset] = providerResult.assets;
     if (!firstAsset) {

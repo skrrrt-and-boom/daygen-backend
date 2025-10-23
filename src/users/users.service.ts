@@ -280,7 +280,6 @@ export class UsersService {
             currentPeriodStart: user.subscription.currentPeriodStart,
             currentPeriodEnd: user.subscription.currentPeriodEnd,
             cancelAtPeriodEnd: user.subscription.cancelAtPeriodEnd,
-            credits: user.subscription.credits,
             createdAt: user.subscription.createdAt,
           }
         : null,

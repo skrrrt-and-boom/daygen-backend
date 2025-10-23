@@ -15,7 +15,6 @@ async function testDatabaseConnection() {
       data: {
         email: `test-${Date.now()}@example.com`,
         authUserId: `test-auth-${Date.now()}`,
-        passwordHash: 'test-hash',
         displayName: 'Test User',
       },
     });
