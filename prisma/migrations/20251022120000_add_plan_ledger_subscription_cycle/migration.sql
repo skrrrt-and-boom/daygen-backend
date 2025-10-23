@@ -9,7 +9,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Plan table
 CREATE TABLE IF NOT EXISTS "Plan" (
-  "id" TEXT NOT NULL DEFAULT (cuid()),
+  "id" TEXT NOT NULL DEFAULT (gen_random_uuid())::text,
   "name" TEXT NOT NULL,
   "interval" TEXT NOT NULL,
   "creditsPerPeriod" INTEGER NOT NULL,
@@ -25,7 +25,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "Plan_stripePriceId_key" ON "Plan"("stripePric
 
 -- SubscriptionCycle table
 CREATE TABLE IF NOT EXISTS "SubscriptionCycle" (
-  "id" TEXT NOT NULL DEFAULT (cuid()),
+  "id" TEXT NOT NULL DEFAULT (gen_random_uuid())::text,
   "subscriptionId" TEXT NOT NULL,
   "stripeInvoiceId" TEXT NOT NULL,
   "periodStart" TIMESTAMP(3) NOT NULL,

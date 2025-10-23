@@ -4,6 +4,7 @@ import { UsersModule } from '../users/users.module';
 import { StripeService } from './stripe.service';
 import { PaymentsService } from './payments.service';
 import { PaymentsController } from './payments.controller';
+import { PaymentsTestController } from './payments-test.controller';
 import { PublicPaymentsController } from './public-payments.controller';
 import { StripeWebhookController } from './stripe-webhook.controller';
 
@@ -11,6 +12,7 @@ import { StripeWebhookController } from './stripe-webhook.controller';
   imports: [PrismaModule, UsersModule],
   controllers: [
     PaymentsController,
+    PaymentsTestController,
     PublicPaymentsController,
     StripeWebhookController,
   ],

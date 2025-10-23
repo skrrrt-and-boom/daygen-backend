@@ -55,6 +55,7 @@
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "google-auth-library": "^10.4.0",
     "jsonwebtoken": "^9.0.2",

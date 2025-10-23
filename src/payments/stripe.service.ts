@@ -19,6 +19,10 @@ export class StripeService {
     });
   }
 
+  getClient(): StripeType {
+    return this.stripe;
+  }
+
   async createCheckoutSession(
     userId: string,
     type: 'one_time' | 'subscription',

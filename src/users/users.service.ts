@@ -220,7 +220,7 @@ export class UsersService {
 
     if (user) {
       // Update existing user
-      user = await this.prisma.user.update({
+      await this.prisma.user.update({
         where: { authUserId: authUser.id },
         data: updateData,
       });
@@ -232,7 +232,7 @@ export class UsersService {
 
       if (existingUserByEmail) {
         // Update the existing user with the new authUserId
-        user = await this.prisma.user.update({
+        await this.prisma.user.update({
           where: { email: normalizedEmail },
           data: {
             ...updateData,
@@ -242,7 +242,7 @@ export class UsersService {
         });
       } else {
         // Create new user
-        user = await this.prisma.user.create({
+        await this.prisma.user.create({
           data: {
             id: authUser.id,
             authUserId: authUser.id,
@@ -259,7 +259,16 @@ export class UsersService {
       }
     }
 
-    return this.toSanitizedUser(user);
+    // Always fetch the latest user data from database to ensure we have current credits
+    const latestUser = await this.prisma.user.findUnique({
+      where: { authUserId: authUser.id },
+    });
+
+    if (!latestUser) {
+      throw new Error('Failed to fetch user after upsert');
+    }
+
+    return this.toSanitizedUser(latestUser);
   }
 
   toSanitizedUser(user: PrismaUser & { subscription?: any }): SanitizedUser {

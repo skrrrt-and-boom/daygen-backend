@@ -24,6 +24,7 @@ model User {
   usageEvents  UsageEvent[]
   payments     Payment[]
   subscription Subscription?
+  creditLedger CreditLedger[]
 }
 
 model UsageEvent {
@@ -141,6 +142,7 @@ model Subscription {
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
   user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cycles                SubscriptionCycle[]
 
   @@index([userId])
   @@index([stripeSubscriptionId])

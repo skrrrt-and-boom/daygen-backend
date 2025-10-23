@@ -48,7 +48,7 @@ export class StripeWebhookController {
       );
 
       this.logger.log(
-        `Received webhook event: ${event.type} (ID: ${event.id})`,
+        `Received webhook event: ${event.type} (ID: ${event.id}) at ${new Date().toISOString()}`,
       );
 
       // Handle the event
@@ -103,7 +103,7 @@ export class StripeWebhookController {
   }
 
   private handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
-    this.logger.log(`Processing checkout session completed: ${session.id}`);
+    this.logger.log(`Processing checkout session completed: ${session.id} at ${new Date().toISOString()}`);
     this.logger.log(`Session mode: ${session.mode}`);
     this.logger.log(`Session metadata:`, session.metadata);
     this.logger.log(
@@ -222,12 +222,18 @@ export class StripeWebhookController {
   }
 
   private async handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
-    this.logger.log(`Processing invoice payment succeeded: ${invoice.id}`);
+    this.logger.log(`Processing invoice payment succeeded: ${invoice.id} at ${new Date().toISOString()}`);
+    this.logger.log(`Invoice subscription: ${(invoice as any).subscription}`);
+    this.logger.log(`Invoice amount: ${(invoice as any).amount_paid}`);
 
     try {
       // Handle recurring payment for subscription
       if ((invoice as any).subscription) {
+        this.logger.log(`Processing recurring payment for subscription ${(invoice as any).subscription}`);
         await this.paymentsService.handleRecurringPayment(invoice);
+        this.logger.log(`Successfully processed invoice ${invoice.id}`);
+      } else {
+        this.logger.log(`Invoice ${invoice.id} has no subscription, skipping`);
       }
     } catch (error) {
       this.logger.error(
@@ -238,11 +244,14 @@ export class StripeWebhookController {
   }
 
   private async handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
-    this.logger.log(`Processing invoice payment failed: ${invoice.id}`);
+    this.logger.log(`Processing invoice payment failed: ${invoice.id} at ${new Date().toISOString()}`);
+    this.logger.log(`Invoice subscription: ${(invoice as any).subscription}`);
+    this.logger.log(`Invoice amount: ${(invoice as any).amount_due}`);
 
     try {
-      // Handle failed payment
+      // Handle failed payment and revoke credits if they were granted
       await this.paymentsService.handleFailedPayment(invoice);
+      this.logger.log(`Successfully processed failed invoice ${invoice.id}`);
     } catch (error) {
       this.logger.error(
         `Error processing failed payment ${invoice.id}:`,

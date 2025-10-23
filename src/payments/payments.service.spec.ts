@@ -78,7 +78,7 @@ describe('PaymentsService', () => {
     expect(addSpy).toHaveBeenCalledWith('user_1', expect.any(Number), 'pay_1');
   });
 
-  it('does not grant credits in subscription checkout handler; updates pending payment', async () => {
+  it('verifies payment status before granting credits in subscription checkout handler', async () => {
     const subscription = {
       id: 'sub_1',
       status: 'active',
@@ -92,6 +92,9 @@ describe('PaymentsService', () => {
       .fn()
       .mockResolvedValue({ authUserId: 'user_1' });
 
+    // Mock payment verification to return successful
+    const verifySpy = jest.spyOn(service as any, 'verifySubscriptionPaymentStatus')
+      .mockResolvedValue({ isPaid: true, status: 'paid' });
     const creditsSpy = jest.spyOn(service as any, 'addCreditsToUser');
 
     await service.handleSuccessfulSubscriptionFromSession(
@@ -99,11 +102,49 @@ describe('PaymentsService', () => {
       session,
     );
 
+    expect(verifySpy).toHaveBeenCalledWith(subscription, session);
     expect(prisma.subscription.create).toHaveBeenCalled();
-    expect(prisma.payment.updateMany).toHaveBeenCalledWith({
-      where: { userId: 'user_1', stripeSessionId: 'cs_abc' },
-      data: { status: 'COMPLETED', metadata: expect.any(Object) },
+    expect(prisma.payment.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'user_1',
+        stripeSessionId: 'cs_abc',
+        amount: expect.any(Number),
+        credits: expect.any(Number),
+        status: 'COMPLETED',
+        type: 'SUBSCRIPTION',
+        metadata: expect.any(Object),
+      },
     });
+    expect(creditsSpy).toHaveBeenCalledWith('user_1', expect.any(Number), expect.any(String));
+  });
+
+  it('does not grant credits when payment verification fails', async () => {
+    const subscription = {
+      id: 'sub_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: { data: [{ price: { id: 'price_pro' } }] },
+      current_period_start: Math.floor(Date.now() / 1000),
+      current_period_end: Math.floor(Date.now() / 1000) + 3600,
+    } as any;
+    const session = { id: 'cs_abc', metadata: { userId: 'user_1' } } as any;
+    users.findByAuthUserId = jest
+      .fn()
+      .mockResolvedValue({ authUserId: 'user_1' });
+
+    // Mock payment verification to return failed
+    const verifySpy = jest.spyOn(service as any, 'verifySubscriptionPaymentStatus')
+      .mockResolvedValue({ isPaid: false, status: 'unpaid', reason: 'Payment not confirmed' });
+    const creditsSpy = jest.spyOn(service as any, 'addCreditsToUser');
+
+    await service.handleSuccessfulSubscriptionFromSession(
+      subscription,
+      session,
+    );
+
+    expect(verifySpy).toHaveBeenCalledWith(subscription, session);
+    expect(prisma.subscription.create).toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
     expect(creditsSpy).not.toHaveBeenCalled();
   });
 
@@ -149,5 +190,62 @@ describe('PaymentsService', () => {
   it('refundCredits increments credits using centralized function', async () => {
     await service.refundCredits('user_1', 10, 'test');
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips duplicate credit grant when first invoice arrives after checkout', async () => {
+    const subscription = {
+      id: 'sub_db_1',
+      userId: 'user_1',
+      stripePriceId: 'price_pro',
+    };
+    const invoice = {
+      id: 'in_1',
+      subscription: 'sub_1',
+      payment_intent: 'pi_22',
+      amount_paid: 2900,
+      period_start: Math.floor(Date.now() / 1000),
+      period_end: Math.floor(Date.now() / 1000) + 3600,
+    } as any;
+
+    prisma.subscription.findUnique = jest.fn().mockResolvedValue(subscription);
+    prisma.payment.findUnique = jest.fn().mockResolvedValue(null);
+    prisma.payment.findFirst = jest.fn().mockResolvedValue({
+      id: 'pay_existing',
+      metadata: { periodStart: invoice.period_start },
+    });
+    prisma.payment.create = jest.fn().mockResolvedValue({ id: 'pay_new' });
+    const addSpy = jest.spyOn(service as any, 'addCreditsToUser');
+
+    await service.handleRecurringPayment(invoice);
+
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(addSpy).not.toHaveBeenCalled();
+  });
+
+  it('adds credits to user correctly', async () => {
+    const userId = 'user_1';
+    const creditsToAdd = 1000;
+    const paymentId = 'pay_1';
+    
+    // Mock the SQL function to return the new balance
+    prisma.$queryRawUnsafe = jest.fn().mockResolvedValue([{ apply_credit_delta: 1020 }]); // 20 + 1000
+    prisma.user.findUnique = jest.fn()
+      .mockResolvedValueOnce({ credits: 20, email: 'test@example.com' }) // before
+      .mockResolvedValueOnce({ credits: 1020 }); // after
+
+    await service.addCreditsToUser(userId, creditsToAdd, paymentId);
+
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT public.apply_credit_delta'),
+      userId,
+      creditsToAdd,
+      'PAYMENT',
+      'PAYMENT',
+      paymentId,
+      'stripe',
+      'payment',
+      null,
+      expect.any(String)
+    );
   });
 });
