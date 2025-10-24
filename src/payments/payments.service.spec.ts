@@ -99,7 +99,7 @@ describe('PaymentsService', () => {
       .spyOn(service as any, 'verifySubscriptionPaymentStatus')
       .mockResolvedValue({ isPaid: true, status: 'paid' });
     const creditsSpy = jest.spyOn(service as any, 'addCreditsToUser');
-    
+
     // Mock payment.create to return a payment with id
     prisma.payment.create = jest.fn().mockResolvedValue({
       id: 'pay_1',
@@ -107,7 +107,7 @@ describe('PaymentsService', () => {
       status: 'COMPLETED',
       credits: 1000,
     });
-    
+
     // Mock user lookup for addCreditsToUser
     prisma.user.findUnique = jest.fn().mockResolvedValue({
       id: 'user_1',
