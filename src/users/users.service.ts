@@ -214,7 +214,7 @@ export class UsersService {
     }
 
     // First, try to find existing user by authUserId
-    let user = await this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { authUserId: authUser.id },
     });
 

@@ -13,6 +13,7 @@ describe('PaymentsService', () => {
     prisma = {
       payment: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
         update: jest.fn(),
         updateMany: jest.fn(),
         create: jest.fn(),
@@ -31,6 +32,7 @@ describe('PaymentsService', () => {
         update: jest.fn(),
       },
       $executeRawUnsafe: jest.fn(),
+      $queryRawUnsafe: jest.fn(),
     } as unknown as PrismaService;
 
     users = {
@@ -93,9 +95,26 @@ describe('PaymentsService', () => {
       .mockResolvedValue({ authUserId: 'user_1' });
 
     // Mock payment verification to return successful
-    const verifySpy = jest.spyOn(service as any, 'verifySubscriptionPaymentStatus')
+    const verifySpy = jest
+      .spyOn(service as any, 'verifySubscriptionPaymentStatus')
       .mockResolvedValue({ isPaid: true, status: 'paid' });
     const creditsSpy = jest.spyOn(service as any, 'addCreditsToUser');
+    
+    // Mock payment.create to return a payment with id
+    prisma.payment.create = jest.fn().mockResolvedValue({
+      id: 'pay_1',
+      userId: 'user_1',
+      status: 'COMPLETED',
+      credits: 1000,
+    });
+    
+    // Mock user lookup for addCreditsToUser
+    prisma.user.findUnique = jest.fn().mockResolvedValue({
+      id: 'user_1',
+      authUserId: 'user_1',
+      credits: 20,
+      email: 'test@example.com',
+    });
 
     await service.handleSuccessfulSubscriptionFromSession(
       subscription,
@@ -115,7 +134,11 @@ describe('PaymentsService', () => {
         metadata: expect.any(Object),
       },
     });
-    expect(creditsSpy).toHaveBeenCalledWith('user_1', expect.any(Number), expect.any(String));
+    expect(creditsSpy).toHaveBeenCalledWith(
+      'user_1',
+      expect.any(Number),
+      expect.any(String),
+    );
   });
 
   it('does not grant credits when payment verification fails', async () => {
@@ -133,8 +156,13 @@ describe('PaymentsService', () => {
       .mockResolvedValue({ authUserId: 'user_1' });
 
     // Mock payment verification to return failed
-    const verifySpy = jest.spyOn(service as any, 'verifySubscriptionPaymentStatus')
-      .mockResolvedValue({ isPaid: false, status: 'unpaid', reason: 'Payment not confirmed' });
+    const verifySpy = jest
+      .spyOn(service as any, 'verifySubscriptionPaymentStatus')
+      .mockResolvedValue({
+        isPaid: false,
+        status: 'unpaid',
+        reason: 'Payment not confirmed',
+      });
     const creditsSpy = jest.spyOn(service as any, 'addCreditsToUser');
 
     await service.handleSuccessfulSubscriptionFromSession(
@@ -226,26 +254,22 @@ describe('PaymentsService', () => {
     const userId = 'user_1';
     const creditsToAdd = 1000;
     const paymentId = 'pay_1';
-    
-    // Mock the SQL function to return the new balance
-    prisma.$queryRawUnsafe = jest.fn().mockResolvedValue([{ apply_credit_delta: 1020 }]); // 20 + 1000
-    prisma.user.findUnique = jest.fn()
-      .mockResolvedValueOnce({ credits: 20, email: 'test@example.com' }) // before
-      .mockResolvedValueOnce({ credits: 1020 }); // after
+
+    // Mock user lookup and update
+    prisma.user.findUnique = jest
+      .fn()
+      .mockResolvedValue({ credits: 20, email: 'test@example.com' });
+    prisma.user.update = jest.fn().mockResolvedValue({ credits: 1020 });
 
     await service.addCreditsToUser(userId, creditsToAdd, paymentId);
 
-    expect(prisma.$queryRawUnsafe).toHaveBeenCalledWith(
-      expect.stringContaining('SELECT public.apply_credit_delta'),
-      userId,
-      creditsToAdd,
-      'PAYMENT',
-      'PAYMENT',
-      paymentId,
-      'stripe',
-      'payment',
-      null,
-      expect.any(String)
-    );
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { authUserId: userId },
+      select: { credits: true, email: true },
+    });
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { authUserId: userId },
+      data: { credits: 1020 },
+    });
   });
 });

@@ -18,6 +18,11 @@ export class PublicPaymentsController {
     return this.paymentsService.getSessionStatus(sessionId);
   }
 
+  @Get('session/:sessionId/quick-status')
+  getSessionStatusQuick(@Param('sessionId') sessionId: string) {
+    return this.paymentsService.getSessionStatusQuick(sessionId);
+  }
+
   @Post('test/create-manual-subscription')
   createManualSubscription(
     @Body()

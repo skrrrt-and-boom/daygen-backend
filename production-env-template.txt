@@ -32,6 +32,8 @@ STRIPE_BEST_VALUE_PRICE_ID="price_best_value_1000_credits"
 # Subscription plans
 STRIPE_PRO_PRICE_ID="price_pro_monthly"
 STRIPE_ENTERPRISE_PRICE_ID="price_enterprise_monthly"
+STRIPE_PRO_YEARLY_PRICE_ID="price_pro_yearly"
+STRIPE_ENTERPRISE_YEARLY_PRICE_ID="price_enterprise_yearly"
 
 # Cloudflare R2 Configuration
 CLOUDFLARE_R2_ACCOUNT_ID="your-account-id"
