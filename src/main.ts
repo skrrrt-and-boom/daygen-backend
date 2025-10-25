@@ -38,6 +38,33 @@ async function bootstrap() {
       'X-Requested-With',
     ],
   });
+
+  // Additional CORS middleware to ensure headers are sent even for error responses
+  app.use((req: any, res: any, next: any) => {
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:5175',
+      'http://localhost:3000',
+      'https://www.daygen.ai',
+      'https://daygen.ai',
+    ];
+    
+    const origin = req.headers.origin;
+    if (allowedOrigins.includes(origin)) {
+      res.header('Access-Control-Allow-Origin', origin);
+    }
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+    
+    if (req.method === 'OPTIONS') {
+      res.status(200).end();
+      return;
+    }
+    
+    next();
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
