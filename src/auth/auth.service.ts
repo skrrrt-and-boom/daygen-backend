@@ -78,17 +78,15 @@ export class AuthService {
   async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
     try {
       // Verify the reset token
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
       const payload = await this.jwtService.verifyAsync(dto.token);
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (payload.type !== 'password-reset') {
         throw new BadRequestException('Invalid reset token');
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       const userId = payload.sub;
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
       const user = await this.usersService.findById(userId);
 
       if (!user) {

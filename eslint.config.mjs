@@ -36,7 +36,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.spec.ts', '**/payments/**/*.ts', '**/stripe-*.ts', '**/users/**/*.ts', '**/main.ts', '**/supabase/**/*.ts'],
+    files: ['**/*.spec.ts', '**/payments/**/*.ts', '**/stripe-*.ts', '**/users/**/*.ts', '**/main.ts', '**/supabase/**/*.ts', '**/auth/**/*.ts'],
     rules: {
       '@typescript-eslint/no-unsafe-argument': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',

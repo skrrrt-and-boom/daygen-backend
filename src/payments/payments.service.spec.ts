@@ -76,8 +76,10 @@ describe('PaymentsService', () => {
         update: jest.fn().mockResolvedValue({}),
       },
     };
-    prisma.$transaction = jest.fn().mockImplementation((callback) => callback(mockTransaction));
-    
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((callback) => callback(mockTransaction));
+
     await service.handleSuccessfulPayment(session);
 
     expect(mockTransaction.payment.update).toHaveBeenCalledWith({
