@@ -45,7 +45,7 @@ async function bootstrap() {
       }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
       'Authorization',
@@ -54,9 +54,14 @@ async function bootstrap() {
       'X-Requested-With',
       'X-Correlation-Id',
     ],
-    exposedHeaders: ['X-Correlation-Id'],
+    exposedHeaders: ['X-Correlation-Id', 'Retry-After'],
     preflightContinue: false,
     optionsSuccessStatus: 204,
+    maxAge: 86400,
+  });
+  app.use((req: any, res: any, next: any) => {
+    res.setHeader('Vary', 'Origin');
+    next();
   });
   app.useGlobalPipes(
     new ValidationPipe({
