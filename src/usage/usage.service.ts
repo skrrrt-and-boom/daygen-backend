@@ -55,7 +55,7 @@ export class UsageService {
       const newBalanceRows = await this.prisma.$queryRawUnsafe<
         { apply_credit_delta: number }[]
       >(
-        'SELECT public.apply_credit_delta($1, $2, $3::"CreditReason", $4::"CreditSourceType", $5, $6, $7, $8, $9::jsonb) as apply_credit_delta',
+        'SELECT public.apply_credit_delta($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb) as apply_credit_delta',
         user.authUserId,
         -cost,
         'JOB',

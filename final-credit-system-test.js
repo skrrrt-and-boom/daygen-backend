@@ -54,7 +54,7 @@ async function finalCreditSystemTest() {
     
     // Create ledger entry using the working apply_credit_delta function
     const result = await prisma.$queryRawUnsafe(
-      'SELECT public.apply_credit_delta($1, $2::INTEGER, $3::"CreditReason", $4::"CreditSourceType", $5, $6, $7, $8, $9::jsonb) as apply_credit_delta',
+      'SELECT public.apply_credit_delta($1, $2::INTEGER, $3, $4, $5, $6, $7, $8, $9::jsonb) as apply_credit_delta',
       user.authUserId,
       creditsToAdd,
       'PAYMENT',
