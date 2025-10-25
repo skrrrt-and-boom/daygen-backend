@@ -18,7 +18,10 @@ export class PaymentsTestController {
   @Post('complete-payment/:sessionId')
   async completeTestPayment(@Param('sessionId') sessionId: string) {
     if (process.env.NODE_ENV === 'production') {
-      throw new HttpException('Not available in production', HttpStatus.FORBIDDEN);
+      throw new HttpException(
+        'Not available in production',
+        HttpStatus.FORBIDDEN,
+      );
     }
     console.log(
       `🎯 TEST CONTROLLER: Manual payment completion requested for session: ${sessionId}`,
@@ -40,7 +43,10 @@ export class PaymentsTestController {
   @Post('add-credits-direct')
   async addCreditsDirect() {
     if (process.env.NODE_ENV === 'production') {
-      throw new HttpException('Not available in production', HttpStatus.FORBIDDEN);
+      throw new HttpException(
+        'Not available in production',
+        HttpStatus.FORBIDDEN,
+      );
     }
     console.log(`🧪 DIRECT CREDIT ADDITION endpoint called`);
     this.logger.log(`🧪 DIRECT CREDIT ADDITION endpoint called`);
@@ -64,7 +70,10 @@ export class PaymentsTestController {
     @Body() body: { userId: string; sessionId: string; credits?: number },
   ) {
     if (process.env.NODE_ENV === 'production') {
-      throw new HttpException('Not available in production', HttpStatus.FORBIDDEN);
+      throw new HttpException(
+        'Not available in production',
+        HttpStatus.FORBIDDEN,
+      );
     }
     try {
       console.log(`🎯 SYSTEMATIC PAYMENT COMPLETION for user: ${body.userId}`);

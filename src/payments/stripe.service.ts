@@ -15,7 +15,7 @@ export class StripeService {
     }
 
     this.stripe = new Stripe(secretKey, {
-      apiVersion: '2023-10-16',
+      apiVersion: '2025-09-30.clover',
       timeout: 15000,
       maxNetworkRetries: 2,
     });
@@ -90,7 +90,7 @@ export class StripeService {
         .join(':');
       const session = await this.stripe.checkout.sessions.create(
         sessionParams,
-        { idempotencyKey }
+        { idempotencyKey },
       );
       this.logger.log(
         `Created checkout session ${session.id} for user ${userId}`,

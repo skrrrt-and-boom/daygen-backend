@@ -2,6 +2,8 @@ import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import express from 'express';
+import { randomUUID } from 'node:crypto';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -45,35 +47,27 @@ async function bootstrap() {
     }),
   );
 
-  // Configure body parser with larger limits for gallery images
-  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-  const express = require('express');
   // Correlation ID middleware
-  app.use((req, _res, next) => {
-    const id = (req.headers['x-correlation-id'] as string) || require('node:crypto').randomUUID();
-    (req as any).correlationId = id;
+  app.use((req: any, _res: any, next: any) => {
+    const id = (req.headers?.['x-correlation-id'] as string) || randomUUID();
+    req.correlationId = id;
     next();
   });
 
   // Raw body parser for Stripe webhooks
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   app.use('/webhooks/stripe', express.raw({ type: 'application/json' }));
 
   // JSON parser for all other routes
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   app.use(express.json({ limit: '50mb' }));
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // Increase request timeout for long-running generation requests
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const server = app.getHttpServer();
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  server.timeout = 10 * 60 * 1000; // 10 minutes
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  server.keepAliveTimeout = 10 * 60 * 1000; // 10 minutes
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  server.headersTimeout = 10 * 60 * 1000; // 10 minutes
+  if (server) {
+    server.timeout = 10 * 60 * 1000; // 10 minutes
+    server.keepAliveTimeout = 10 * 60 * 1000; // 10 minutes
+    server.headersTimeout = 10 * 60 * 1000; // 10 minutes
+  }
 
   const port = process.env.PORT ?? 3000;
 
@@ -90,8 +84,12 @@ async function bootstrap() {
     console.log(`✅ Health check available at http://0.0.0.0:${port}/health`);
   } catch (error) {
     console.error(`❌ Failed to start server:`, error);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    if (error.code === 'EADDRINUSE') {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === 'EADDRINUSE'
+    ) {
       console.error(
         `❌ Port ${port} is already in use. Please kill the existing process or use a different port.`,
       );

@@ -19,7 +19,7 @@ export class SupabaseService {
     }
 
     // Client for user operations (uses anon key)
-    this.supabase = createClient(supabaseUrl, supabaseAnonKey) as any;
+    this.supabase = createClient(supabaseUrl, supabaseAnonKey);
 
     // Admin client for server-side operations (uses service role key)
     this.supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
@@ -27,7 +27,7 @@ export class SupabaseService {
         autoRefreshToken: false,
         persistSession: false,
       },
-    }) as any;
+    });
   }
 
   getClient(): SupabaseClient {

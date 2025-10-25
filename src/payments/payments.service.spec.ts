@@ -11,6 +11,7 @@ describe('PaymentsService', () => {
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn(),
       payment: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
@@ -61,23 +62,32 @@ describe('PaymentsService', () => {
 
   it('updates pending payment to completed on successful checkout payment', async () => {
     const session = { id: 'cs_123', payment_intent: 'pi_123' } as any;
-    prisma.payment.findUnique = jest.fn().mockResolvedValue({
-      id: 'pay_1',
-      userId: 'user_1',
-      status: 'PENDING',
-      credits: 1000,
-    });
-    const addSpy = jest
-      .spyOn(service as any, 'addCreditsToUser')
-      .mockResolvedValue(undefined);
-
+    const mockTransaction = {
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'pay_1',
+          userId: 'user_1',
+          status: 'PENDING',
+          credits: 1000,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      user: {
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    prisma.$transaction = jest.fn().mockImplementation((callback) => callback(mockTransaction));
+    
     await service.handleSuccessfulPayment(session);
 
-    expect(prisma.payment.update).toHaveBeenCalledWith({
+    expect(mockTransaction.payment.update).toHaveBeenCalledWith({
       where: { id: 'pay_1' },
       data: { status: 'COMPLETED', stripePaymentIntentId: 'pi_123' },
     });
-    expect(addSpy).toHaveBeenCalledWith('user_1', expect.any(Number), 'pay_1');
+    expect(mockTransaction.user.update).toHaveBeenCalledWith({
+      where: { authUserId: 'user_1' },
+      data: { credits: { increment: 1000 } },
+    });
   });
 
   it('verifies payment status before granting credits in subscription checkout handler', async () => {

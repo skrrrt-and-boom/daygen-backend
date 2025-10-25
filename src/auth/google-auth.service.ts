@@ -5,14 +5,22 @@ import { UsersService } from '../users/users.service';
 import type { SanitizedUser } from '../users/types';
 
 interface GoogleAuthResult {
-  user: any; // Supabase User type
+  user: {
+    id: string;
+    email?: string;
+    [key: string]: unknown;
+  };
   profile: SanitizedUser;
   accessToken: string;
   refreshToken: string;
 }
 
 interface CreateUserResult {
-  authUser: any; // Supabase User type
+  authUser: {
+    id: string;
+    email?: string;
+    [key: string]: unknown;
+  };
   profile: SanitizedUser;
 }
 
@@ -68,7 +76,11 @@ export class GoogleAuthService {
         googleUserInfo.email,
       );
 
-      let authUser: any;
+      let authUser: {
+        id: string;
+        email?: string;
+        [key: string]: unknown;
+      } | null = null;
 
       if (existingProfile) {
         try {
@@ -78,7 +90,11 @@ export class GoogleAuthService {
           if (error) {
             console.error('Error loading existing Supabase user:', error);
           } else {
-            authUser = data.user;
+            authUser = data.user as unknown as {
+              id: string;
+              email?: string;
+              [key: string]: unknown;
+            };
           }
         } catch (lookupError) {
           console.error('Failed to look up Supabase auth user:', lookupError);
@@ -102,10 +118,14 @@ export class GoogleAuthService {
           console.error('Error creating user:', createError);
           throw createError;
         }
-        authUser = newUser.user;
+        authUser = newUser.user as unknown as {
+          id: string;
+          email?: string;
+          [key: string]: unknown;
+        };
       }
 
-      const profile = await this.usersService.upsertFromSupabaseUser(authUser, {
+      const profile = await this.usersService.upsertFromSupabaseUser(authUser as any, {
         displayName: googleUserInfo.name || 'Google User',
         profileImage: googleUserInfo.picture ?? undefined,
       });

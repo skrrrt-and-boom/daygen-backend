@@ -58,9 +58,11 @@ export class StripeWebhookController {
         await (this.prisma as any).webhookEvent.create({
           data: { eventId: event.id, type: event.type },
         });
-      } catch (e) {
+      } catch {
         this.logger.log(`Duplicate webhook event ${event.id}; acknowledging`);
-        return res.status(HttpStatus.OK).json({ received: true, duplicate: true });
+        return res
+          .status(HttpStatus.OK)
+          .json({ received: true, duplicate: true });
       }
 
       // Handle the event
