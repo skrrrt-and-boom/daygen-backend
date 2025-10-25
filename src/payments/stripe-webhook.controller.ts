@@ -10,6 +10,7 @@ import {
 import type { Request, Response } from 'express';
 import { StripeService } from './stripe.service';
 import { PaymentsService } from './payments.service';
+import { PrismaService } from '../prisma/prisma.service';
 import Stripe from 'stripe';
 
 @Controller('webhooks/stripe')
@@ -19,6 +20,7 @@ export class StripeWebhookController {
   constructor(
     private readonly stripeService: StripeService,
     private readonly paymentsService: PaymentsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Post()
@@ -50,6 +52,16 @@ export class StripeWebhookController {
       this.logger.log(
         `Received webhook event: ${event.type} (ID: ${event.id}) at ${new Date().toISOString()}`,
       );
+
+      // Idempotency: persist event.id and skip duplicates
+      try {
+        await (this.prisma as any).webhookEvent.create({
+          data: { eventId: event.id, type: event.type },
+        });
+      } catch (e) {
+        this.logger.log(`Duplicate webhook event ${event.id}; acknowledging`);
+        return res.status(HttpStatus.OK).json({ received: true, duplicate: true });
+      }
 
       // Handle the event
       switch (event.type) {

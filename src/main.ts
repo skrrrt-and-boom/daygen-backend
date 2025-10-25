@@ -48,6 +48,12 @@ async function bootstrap() {
   // Configure body parser with larger limits for gallery images
   // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
   const express = require('express');
+  // Correlation ID middleware
+  app.use((req, _res, next) => {
+    const id = (req.headers['x-correlation-id'] as string) || require('node:crypto').randomUUID();
+    (req as any).correlationId = id;
+    next();
+  });
 
   // Raw body parser for Stripe webhooks
   // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access

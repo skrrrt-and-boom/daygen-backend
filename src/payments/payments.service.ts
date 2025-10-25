@@ -196,37 +196,36 @@ export class PaymentsService {
   async handleSuccessfulPayment(
     session: Stripe.Checkout.Session,
   ): Promise<void> {
-    const payment = await this.prisma.payment.findUnique({
-      where: { stripeSessionId: session.id },
+    await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.findUnique({
+        where: { stripeSessionId: session.id },
+      });
+
+      if (!payment) {
+        this.logger.error(`Payment not found for session ${session.id}`);
+        return;
+      }
+
+      if (payment.status === 'COMPLETED') {
+        this.logger.warn(`Payment ${payment.id} already processed`);
+        return;
+      }
+
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'COMPLETED',
+          stripePaymentIntentId: session.payment_intent as string,
+        },
+      });
+
+      await tx.user.update({
+        where: { authUserId: payment.userId },
+        data: { credits: { increment: payment.credits } },
+      });
     });
 
-    if (!payment) {
-      this.logger.error(`Payment not found for session ${session.id}`);
-      return;
-    }
-
-    if (payment.status === 'COMPLETED') {
-      this.logger.warn(`Payment ${payment.id} already processed`);
-      return;
-    }
-
-    // Update existing pending payment for this session
-    await this.prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: 'COMPLETED',
-        stripePaymentIntentId: session.payment_intent as string,
-      },
-    });
-
-    // Add credits to user
-    await this.addCreditsToUser(payment.userId, payment.credits, payment.id);
-
-    this.logger.log(
-      `Successfully processed payment ${payment.id} for user ${payment.userId}`,
-    );
-
-    // Invalidate cache since payment status changed
+    this.logger.log(`Successfully processed session ${session.id}`);
     this.invalidateSessionCache(session.id);
   }
 

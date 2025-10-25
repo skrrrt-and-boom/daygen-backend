@@ -15,7 +15,9 @@ export class StripeService {
     }
 
     this.stripe = new Stripe(secretKey, {
-      apiVersion: '2025-09-30.clover',
+      apiVersion: '2023-10-16',
+      timeout: 15000,
+      maxNetworkRetries: 2,
     });
   }
 
@@ -77,7 +79,19 @@ export class StripeService {
     }
 
     try {
-      const session = await this.stripe.checkout.sessions.create(sessionParams);
+      // Provide deterministic idempotency to avoid duplicate sessions on client retries
+      const idempotencyKey = [
+        userId,
+        type,
+        priceId,
+        metadata.packageId || metadata.planId || 'na',
+      ]
+        .filter(Boolean)
+        .join(':');
+      const session = await this.stripe.checkout.sessions.create(
+        sessionParams,
+        { idempotencyKey }
+      );
       this.logger.log(
         `Created checkout session ${session.id} for user ${userId}`,
       );
