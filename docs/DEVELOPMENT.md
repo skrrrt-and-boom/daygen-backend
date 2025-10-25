@@ -129,7 +129,7 @@ NODE_ENV=development
 - `POST /api/users/me/remove-profile-picture` - Remove profile picture
 
 ### Image Generation
-- `POST /api/unified-generate` - Unified image generation endpoint
+- `POST /api/image/gemini` - Gemini 2.5 Flash image generation
 - `POST /api/image/flux` - FLUX model generation
 - `POST /api/image/gemini` - Gemini generation
 - `POST /api/image/ideogram` - Ideogram generation

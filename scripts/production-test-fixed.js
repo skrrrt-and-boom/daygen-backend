@@ -98,7 +98,7 @@ async function testGeminiGeneration(token) {
   }
   
   try {
-    const response = await fetch(`${BASE_URL}/api/unified-generate`, {
+    const response = await fetch(`${BASE_URL}/api/image/gemini`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -106,7 +106,7 @@ async function testGeminiGeneration(token) {
       },
       body: JSON.stringify({
         prompt: 'Generate a simple red apple on a white background',
-        model: 'gemini-2.5-flash-image-preview'
+        model: 'gemini-2.5-flash-image'
       })
     });
     
@@ -229,7 +229,7 @@ async function testAPIEndpoints() {
     { path: '/api/users/profile', method: 'GET', requiresAuth: true },
     { path: '/api/r2files', method: 'GET', requiresAuth: true },
     { path: '/api/usage/events', method: 'GET', requiresAuth: true },
-    { path: '/api/unified-generate', method: 'POST', requiresAuth: true }
+    { path: '/api/image/gemini', method: 'POST', requiresAuth: true }
   ];
   
   let passed = 0;

@@ -85,7 +85,7 @@ async function testGeminiGeneration(token) {
   }
   
   try {
-    const response = await fetch(`${BASE_URL}/api/unified-generate`, {
+    const response = await fetch(`${BASE_URL}/api/image/gemini`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -93,7 +93,7 @@ async function testGeminiGeneration(token) {
       },
       body: JSON.stringify({
         prompt: 'Generate a simple red apple on a white background',
-        model: 'gemini-2.5-flash-image-preview'
+        model: 'gemini-2.5-flash-image'
       })
     });
     

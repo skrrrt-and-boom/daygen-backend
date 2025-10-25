@@ -15,7 +15,6 @@ import type { SanitizedUser } from '../users/types';
 import { R2FilesService } from '../r2files/r2files.service';
 import { R2Service } from '../upload/r2.service';
 import { ProviderGenerateDto } from './dto/base-generate.dto';
-import { UnifiedGenerateDto } from './dto/unified-generate.dto';
 import { UsageService } from '../usage/usage.service';
 import { PaymentsService } from '../payments/payments.service';
 
@@ -261,7 +260,7 @@ export class GenerationService {
     );
   }
 
-  async generate(user: SanitizedUser, dto: UnifiedGenerateDto) {
+  async generate(user: SanitizedUser, dto: ProviderGenerateDto) {
     const prompt = dto.prompt?.trim();
     if (!prompt) {
       this.throwBadRequest('Prompt is required');
@@ -370,17 +369,15 @@ export class GenerationService {
       this.throwBadRequest('Model is required');
     }
 
-    const mergedDto = {
+    return this.generate(user, {
       ...dto,
       model: normalizedModel,
-    } as UnifiedGenerateDto;
-
-    return this.generate(user, mergedDto);
+    });
   }
 
   private async dispatch(
     model: string,
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
   ): Promise<ProviderResult> {
     // Handle FLUX models
     if (model.startsWith('flux-')) {
@@ -418,7 +415,7 @@ export class GenerationService {
     }
   }
 
-  private async handleFlux(dto: UnifiedGenerateDto): Promise<ProviderResult> {
+  private async handleFlux(dto: ProviderGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('BFL_API_KEY');
     if (!apiKey) {
       throw new ServiceUnavailableException('BFL_API_KEY is not configured');
@@ -540,7 +537,7 @@ export class GenerationService {
 
     return {
       provider: 'flux',
-      model: dto.model,
+      model: dto.model || 'flux-pro-1.1',
       clientPayload: {
         dataUrl,
         contentType: asset.mimeType,
@@ -560,7 +557,7 @@ export class GenerationService {
     };
   }
 
-  private async handleGemini(dto: UnifiedGenerateDto): Promise<ProviderResult> {
+  private async handleGemini(dto: ProviderGenerateDto): Promise<ProviderResult> {
     const apiKey = this.getGeminiApiKey();
     if (!apiKey) {
       throw new ServiceUnavailableException({
@@ -596,7 +593,9 @@ export class GenerationService {
       contents: [{ role: 'user', parts }],
     };
 
-    const generationConfig: Record<string, number> = {};
+    const generationConfig: Record<string, unknown> = {
+      responseModalities: ['IMAGE'],
+    };
     if (dto.temperature !== undefined) {
       generationConfig.temperature = dto.temperature;
     }
@@ -606,9 +605,15 @@ export class GenerationService {
     if (dto.outputLength !== undefined) {
       generationConfig.maxOutputTokens = dto.outputLength;
     }
-    if (Object.keys(generationConfig).length > 0) {
-      requestPayload.generationConfig = generationConfig;
+
+    const aspectRatio = this.extractAspectRatio(dto);
+    if (aspectRatio) {
+      generationConfig.imageConfig = {
+        aspectRatio,
+      };
     }
+
+    requestPayload.generationConfig = generationConfig;
 
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
     const response = await fetch(endpoint, {
@@ -926,7 +931,7 @@ export class GenerationService {
   }
 
   private async handleIdeogram(
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
   ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('IDEOGRAM_API_KEY');
     if (!apiKey) {
@@ -1077,7 +1082,7 @@ export class GenerationService {
     };
   }
 
-  private async handleQwen(dto: UnifiedGenerateDto): Promise<ProviderResult> {
+  private async handleQwen(dto: ProviderGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('DASHSCOPE_API_KEY');
     if (!apiKey) {
       throw new ServiceUnavailableException(
@@ -1154,7 +1159,7 @@ export class GenerationService {
     };
   }
 
-  private async handleRunway(dto: UnifiedGenerateDto): Promise<ProviderResult> {
+  private async handleRunway(dto: ProviderGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('RUNWAY_API_KEY');
     if (!apiKey) {
       throw new ServiceUnavailableException('Runway API key not configured');
@@ -1285,7 +1290,7 @@ export class GenerationService {
   }
 
   private async handleSeedream(
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
   ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('ARK_API_KEY');
     if (!apiKey) {
@@ -1348,7 +1353,7 @@ export class GenerationService {
   }
 
   private async handleChatGpt(
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
   ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('OPENAI_API_KEY');
     if (!apiKey) {
@@ -1416,7 +1421,7 @@ export class GenerationService {
     };
   }
 
-  private async handleReve(dto: UnifiedGenerateDto): Promise<ProviderResult> {
+  private async handleReve(dto: ProviderGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('REVE_API_KEY');
     if (!apiKey) {
       this.logger.error('REVE_API_KEY environment variable is not configured');
@@ -1754,7 +1759,7 @@ export class GenerationService {
   }
 
   private async handleRecraft(
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
   ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('RECRAFT_API_KEY');
     if (!apiKey) {
@@ -1825,7 +1830,7 @@ export class GenerationService {
     };
   }
 
-  private async handleLuma(dto: UnifiedGenerateDto): Promise<ProviderResult> {
+  private async handleLuma(dto: ProviderGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('LUMAAI_API_KEY');
     if (!apiKey) {
       this.logger.error(
@@ -1844,11 +1849,11 @@ export class GenerationService {
   }
 
   private async handleLumaPhoton(
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
     apiKey: string,
   ): Promise<ProviderResult> {
     const luma = new LumaAI({ authToken: apiKey });
-    const normalizedModel = dto.model.replace(/^luma-/, '');
+    const normalizedModel = (dto.model || 'luma-photon-1').replace(/^luma-/, '');
 
     const payload: ImageCreateParams = {
       prompt: dto.prompt,
@@ -1917,7 +1922,7 @@ export class GenerationService {
 
     return {
       provider: 'luma',
-      model: dto.model,
+      model: dto.model || 'luma-photon-1',
       clientPayload: {
         dataUrl,
         mimeType,
@@ -1934,7 +1939,7 @@ export class GenerationService {
   }
 
   private async handleLegacyLuma(
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
     apiKey: string,
   ): Promise<ProviderResult> {
     const model =
@@ -2064,7 +2069,7 @@ export class GenerationService {
     user: SanitizedUser,
     prompt: string,
     providerResult: ProviderResult,
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
   ) {
     // Do not record another usage event here to avoid double-charging
     // and do not persist raw provider responses into the database
@@ -2369,7 +2374,7 @@ export class GenerationService {
   }
 
   private buildRunwayReferenceImages(
-    dto: UnifiedGenerateDto,
+    dto: ProviderGenerateDto,
   ): Array<{ uri: string; tag?: string }> {
     const providerOptions = dto.providerOptions ?? {};
     const referenceImages: Array<{ uri: string; tag?: string }> = [];
@@ -3816,6 +3821,22 @@ export class GenerationService {
       return '';
     }
     return `.${withoutWildcard}`;
+  }
+
+  private extractAspectRatio(dto: ProviderGenerateDto): string | undefined {
+    // Check config.imageConfig.aspectRatio first
+    const configAspectRatio = (dto as any).config?.imageConfig?.aspectRatio;
+    if (configAspectRatio && typeof configAspectRatio === 'string') {
+      return configAspectRatio;
+    }
+    
+    // Fallback to providerOptions.aspectRatio
+    const providerAspectRatio = dto.providerOptions?.aspectRatio;
+    if (providerAspectRatio && typeof providerAspectRatio === 'string') {
+      return providerAspectRatio;
+    }
+    
+    return undefined;
   }
 
   private async wait(ms: number): Promise<void> {

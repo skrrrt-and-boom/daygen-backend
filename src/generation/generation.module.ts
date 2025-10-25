@@ -1,6 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { GenerationController } from './generation.controller';
 import { ImageGenerationController } from './image-generation.controller';
 import { GenerationService } from './generation.service';
 import { AuthModule } from '../auth/auth.module';
@@ -19,7 +18,7 @@ import { JobsModule } from '../jobs/jobs.module';
     PaymentsModule,
     forwardRef(() => JobsModule),
   ],
-  controllers: [GenerationController, ImageGenerationController],
+  controllers: [ImageGenerationController],
   providers: [GenerationService, R2Service],
   exports: [GenerationService],
 })

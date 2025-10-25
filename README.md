@@ -119,7 +119,7 @@ Configure API keys for the providers you want to use:
 - `PATCH /api/users/me` - Update user profile
 
 ### Image Generation
-- `POST /api/unified-generate` - Unified image generation endpoint
+- `POST /api/image/gemini` - Gemini 2.5 Flash image generation
 - `POST /api/image/flux` - FLUX model generation
 - `POST /api/image/gemini` - Gemini generation
 - `POST /api/image/ideogram` - Ideogram generation

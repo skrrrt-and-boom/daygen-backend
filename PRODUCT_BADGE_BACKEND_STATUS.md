@@ -158,7 +158,7 @@ private async persistResult(
   user: SanitizedUser,
   prompt: string,
   providerResult: ProviderResult,
-  dto: UnifiedGenerateDto,
+  dto: ProviderGenerateDto,
 ) {
   // ... usage recording ...
   

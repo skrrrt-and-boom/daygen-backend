@@ -114,7 +114,7 @@ private async persistResult(
   user: SanitizedUser,
   prompt: string,
   providerResult: ProviderResult,
-  dto: UnifiedGenerateDto,
+  dto: ProviderGenerateDto,
 )
 ```
 
@@ -131,6 +131,8 @@ const r2File = await this.r2FilesService.create(user.authUserId, {
 Fixed `editReveImage` method to pass DTO to `persistResult`.
 
 ### 7. Interface Updates ✅
+
+> **Note:** The DayGen backend no longer exposes the `/api/unified-generate` route. The historical references to `UnifiedGenerateDto` remain here for archival purposes. Modern code paths use provider-specific DTOs when calling `GenerationService`.
 
 **File:** `src/generation/generation.service.ts`
 
