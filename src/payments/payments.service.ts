@@ -812,7 +812,7 @@ export class PaymentsService {
     reason: string,
   ): Promise<void> {
     await this.prisma.$executeRawUnsafe(
-      'SELECT public.apply_credit_delta($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)',
+      'SELECT public.apply_credit_delta($1, $2::INTEGER, $3, $4, $5, $6, $7, $8, $9::jsonb)',
       userId,
       credits,
       'REFUND',
