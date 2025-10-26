@@ -27,7 +27,10 @@ app.post('/api/test/complete-payment/:sessionId', async (req, res) => {
       return res.status(404).json({ message: 'Test user not found' });
     }
 
-    const creditsToAdd = 12000; // Pro plan credits
+    // Resolve plan from DB by a test price id or code if provided
+    const priceId = req.query.priceId || 'price_pro_yearly';
+    const plan = await prisma.plan.findUnique({ where: { stripePriceId: priceId } });
+    const creditsToAdd = plan ? plan.creditsPerPeriod : 12000;
     const newBalance = testUser.credits + creditsToAdd;
 
     console.log(`💰 Processing payment for user ${testUser.email} (${testUser.credits} → ${newBalance})`);
@@ -42,8 +45,8 @@ app.post('/api/test/complete-payment/:sessionId', async (req, res) => {
         status: 'COMPLETED',
         type: 'SUBSCRIPTION',
         metadata: {
-          planId: 'pro-yearly',
-          planName: 'Pro Yearly',
+          planId: plan ? plan.code : 'pro-yearly',
+          planName: plan ? plan.name : 'Pro Yearly',
           testMode: true
         }
       }
@@ -56,7 +59,7 @@ app.post('/api/test/complete-payment/:sessionId', async (req, res) => {
       data: {
         userId: testUser.authUserId, // Use authUserId as per the relation
         stripeSubscriptionId: `sub_test_${Date.now()}`,
-        stripePriceId: 'price_pro_yearly',
+        stripePriceId: priceId,
         status: 'ACTIVE',
         currentPeriodStart: new Date(),
         currentPeriodEnd: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year from now

@@ -49,20 +49,26 @@ async function bootstrap() {
       'https://www.daygen.ai',
       'https://daygen.ai',
     ];
-    
+
     const origin = req.headers.origin;
     if (allowedOrigins.includes(origin)) {
       res.header('Access-Control-Allow-Origin', origin);
     }
     res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-    
+    res.header(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+    );
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, Accept, Origin, X-Requested-With',
+    );
+
     if (req.method === 'OPTIONS') {
       res.status(200).end();
       return;
     }
-    
+
     next();
   });
   app.useGlobalPipes(

@@ -43,6 +43,7 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
+Display info account already exists
 Go thru payment, make faster stripe checkout, make all else work
 Why sybscription info is stored in usageEvent table - there are images
 Add credit logic
