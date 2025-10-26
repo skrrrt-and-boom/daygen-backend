@@ -30,13 +30,13 @@ async function bootstrap() {
         'https://www.daygen.ai',
         'https://daygen.ai',
       ];
-      
+
       // Allow requests with no origin (mobile apps, Postman, etc.)
       if (!origin) {
         callback(null, true);
         return;
       }
-      
+
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {

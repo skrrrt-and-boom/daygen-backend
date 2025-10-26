@@ -557,7 +557,9 @@ export class GenerationService {
     };
   }
 
-  private async handleGemini(dto: ProviderGenerateDto): Promise<ProviderResult> {
+  private async handleGemini(
+    dto: ProviderGenerateDto,
+  ): Promise<ProviderResult> {
     const apiKey = this.getGeminiApiKey();
     if (!apiKey) {
       throw new ServiceUnavailableException({
@@ -1159,7 +1161,9 @@ export class GenerationService {
     };
   }
 
-  private async handleRunway(dto: ProviderGenerateDto): Promise<ProviderResult> {
+  private async handleRunway(
+    dto: ProviderGenerateDto,
+  ): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('RUNWAY_API_KEY');
     if (!apiKey) {
       throw new ServiceUnavailableException('Runway API key not configured');
@@ -1853,7 +1857,10 @@ export class GenerationService {
     apiKey: string,
   ): Promise<ProviderResult> {
     const luma = new LumaAI({ authToken: apiKey });
-    const normalizedModel = (dto.model || 'luma-photon-1').replace(/^luma-/, '');
+    const normalizedModel = (dto.model || 'luma-photon-1').replace(
+      /^luma-/,
+      '',
+    );
 
     const payload: ImageCreateParams = {
       prompt: dto.prompt,
@@ -3825,17 +3832,20 @@ export class GenerationService {
 
   private extractAspectRatio(dto: ProviderGenerateDto): string | undefined {
     // Check config.imageConfig.aspectRatio first
-    const configAspectRatio = (dto as any).config?.imageConfig?.aspectRatio;
+    const dtoWithConfig = dto as ProviderGenerateDto & {
+      config?: { imageConfig?: { aspectRatio?: string } };
+    };
+    const configAspectRatio = dtoWithConfig.config?.imageConfig?.aspectRatio;
     if (configAspectRatio && typeof configAspectRatio === 'string') {
       return configAspectRatio;
     }
-    
+
     // Fallback to providerOptions.aspectRatio
     const providerAspectRatio = dto.providerOptions?.aspectRatio;
     if (providerAspectRatio && typeof providerAspectRatio === 'string') {
       return providerAspectRatio;
     }
-    
+
     return undefined;
   }
 
