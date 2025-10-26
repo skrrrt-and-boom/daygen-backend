@@ -55,7 +55,7 @@ export class UsageService {
       const newBalanceRows = await this.prisma.$queryRawUnsafe<
         { apply_credit_delta: number }[]
       >(
-        'SELECT public.apply_credit_delta($1, $2::INTEGER, $3, $4, $5, $6, $7, $8, $9::jsonb) as apply_credit_delta',
+        'SELECT public.apply_credit_delta($1, $2::BIGINT, $3, $4, $5, $6, $7, $8, $9::jsonb)::INTEGER as apply_credit_delta',
         user.authUserId,
         -cost,
         'JOB',
@@ -69,7 +69,11 @@ export class UsageService {
           ...sanitizedMetadata,
         }),
       );
-      const balanceAfter = newBalanceRows?.[0]?.apply_credit_delta ?? 0;
+      const balanceAfterRaw = newBalanceRows?.[0]?.apply_credit_delta ?? 0;
+      const balanceAfter =
+        typeof balanceAfterRaw === 'bigint'
+          ? Number(balanceAfterRaw)
+          : Number(balanceAfterRaw);
 
       // Write a lightweight usage event for audit and pagination
       await this.prisma.usageEvent.create({
