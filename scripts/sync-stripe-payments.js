@@ -124,16 +124,22 @@ async function syncCheckoutSession(session) {
     const lineItem = sessionDetails.line_items?.data[0];
     const amount = sessionDetails.amount_total || 0;
     
-    // Calculate credits based on metadata or default values
+    // Calculate credits using Plan when possible
     let credits = 0;
-    if (metadata.credits) {
-      credits = parseInt(metadata.credits);
-    } else if (isSubscription) {
-      // Default subscription credits
-      credits = amount >= 2900 ? 1000 : 5000; // Pro: 1000, Enterprise: 5000
+    if (isSubscription) {
+      // Use line item price id or metadata priceId
+      const priceId = lineItem?.price?.id || metadata.priceId;
+      if (priceId) {
+        const plan = await prisma.plan.findUnique({ where: { stripePriceId: priceId } });
+        if (plan) {
+          credits = plan.creditsPerPeriod;
+        }
+      }
+      if (!credits && metadata.credits) {
+        credits = parseInt(metadata.credits);
+      }
     } else {
-      // Default credit package credits
-      credits = Math.floor(amount / 10); // $0.10 per credit
+      credits = metadata.credits ? parseInt(metadata.credits) : Math.floor(amount / 10);
     }
 
     if (config.dryRun) {
@@ -236,15 +242,12 @@ async function syncSubscription(subscription) {
 
     // Get subscription plan details
     const priceId = subscription.items.data[0]?.price.id;
-    const plan = {
-      pro: { credits: 1000, price: 2900 },
-      enterprise: { credits: 5000, price: 9900 },
-    };
-
-    let credits = 1000; // Default to Pro
-    if (priceId?.includes('enterprise')) {
-      credits = 5000;
+    let credits = 0;
+    if (priceId) {
+      const plan = await prisma.plan.findUnique({ where: { stripePriceId: priceId } });
+      credits = plan ? plan.creditsPerPeriod : 0;
     }
+    if (!credits) credits = 1000; // fallback
 
     if (config.dryRun) {
       log(`[DRY RUN] Would sync subscription for user ${user.authUserId}: ${credits} credits/month`);

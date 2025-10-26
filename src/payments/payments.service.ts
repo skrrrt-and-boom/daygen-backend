@@ -10,7 +10,6 @@ import { UsersService } from '../users/users.service';
 import {
   CREDIT_PACKAGES,
   SUBSCRIPTION_PLANS,
-  SubscriptionPlan,
   getCreditPackageById,
   getSubscriptionPlanById,
 } from './credit-packages.config';
@@ -64,7 +63,7 @@ export class PaymentsService {
 
   // In-memory cache for session status with TTL
   private sessionCache = new Map<string, { data: any; expires: number }>();
-  private readonly CACHE_TTL = 60 * 1000; // 60 seconds;
+  private readonly CACHE_TTL = 120 * 1000; // 120 seconds;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -121,7 +120,22 @@ export class PaymentsService {
     user: SanitizedUser,
     planId: string,
   ): Promise<{ sessionId: string; url: string }> {
-    const subscriptionPlan = getSubscriptionPlanById(planId);
+    // Prefer DB-backed Plan; fallback to static config only if not found
+    const dbPlan = await (this.prisma as any).plan?.findUnique({
+      where: { code: planId },
+    });
+    const subscriptionPlan = dbPlan
+      ? {
+          id: planId,
+          name: dbPlan.name,
+          credits: dbPlan.creditsPerPeriod,
+          price: 0,
+          interval:
+            dbPlan.interval === 'yearly'
+              ? ('year' as const)
+              : ('month' as const),
+        }
+      : getSubscriptionPlanById(planId);
     if (!subscriptionPlan) {
       throw new BadRequestException('Invalid subscription plan');
     }
@@ -151,7 +165,9 @@ export class PaymentsService {
       );
     }
 
-    const priceId = this.getPriceIdForSubscription(subscriptionPlan);
+    const priceId =
+      (dbPlan && dbPlan.stripePriceId) ||
+      this.getPriceIdForSubscription(subscriptionPlan);
 
     const session = await this.stripeService.createCheckoutSession(
       user.authUserId,
@@ -160,17 +176,16 @@ export class PaymentsService {
       {
         planId,
         credits: subscriptionPlan.credits.toString(),
-        amount: subscriptionPlan.price.toString(),
+        amount: (subscriptionPlan as any).price?.toString?.() || '0',
       },
     );
 
     // CREATE PENDING PAYMENT RECORD - THIS IS THE FIX
-    // This ensures getSessionStatus() can find the payment record
     await this.prisma.payment.create({
       data: {
         userId: user.authUserId,
         stripeSessionId: session.id,
-        amount: subscriptionPlan.price,
+        amount: (subscriptionPlan as any).price || 0,
         credits: subscriptionPlan.credits,
         status: 'PENDING',
         type: 'SUBSCRIPTION',
@@ -259,9 +274,7 @@ export class PaymentsService {
 
     // Get subscription plan details
     const priceId = subscription.items.data[0]?.price.id;
-    const plan = SUBSCRIPTION_PLANS.find(
-      (p) => this.getPriceIdForSubscription(p) === priceId,
-    );
+    const plan = await this.getPlanByStripePriceId(priceId);
 
     if (!plan) {
       this.logger.error(`Plan not found for price ID ${priceId}`);
@@ -269,11 +282,17 @@ export class PaymentsService {
     }
 
     // Create subscription record (without adding credits)
+    const planRecord = priceId
+      ? await (this.prisma as any).plan?.findUnique({
+          where: { stripePriceId: priceId },
+        })
+      : null;
     await this.prisma.subscription.create({
       data: {
         userId: user.authUserId,
         stripeSubscriptionId: subscription.id,
         stripePriceId: priceId,
+        ...(planRecord ? { planId: planRecord.id } : {}),
         status: this.mapStripeStatusToDb(subscription.status),
         currentPeriodStart: new Date(
           ((subscription as any).current_period_start ||
@@ -284,7 +303,7 @@ export class PaymentsService {
             Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
         ),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
-        credits: 0, // Will be updated when payment is processed
+        credits: 0,
       },
     });
 
@@ -336,7 +355,7 @@ export class PaymentsService {
       // Get subscription plan details
       const priceId = subscription.items.data[0]?.price.id;
       console.log(`🔍 Looking for plan with priceId: ${priceId}`);
-      const plan = this.getPlanByStripePriceId(priceId);
+      const plan = await this.getPlanByStripePriceId(priceId);
 
       if (!plan) {
         console.error(`❌ Plan not found for price ID ${priceId}`);
@@ -352,7 +371,6 @@ export class PaymentsService {
         await this.prisma.subscription.findUnique({
           where: { stripeSubscriptionId: subscription.id },
         });
-
       if (existingSubscriptionByStripeId) {
         this.logger.warn(`Subscription ${subscription.id} already exists`);
         return;
@@ -363,7 +381,6 @@ export class PaymentsService {
         await this.prisma.subscription.findUnique({
           where: { userId: user.authUserId },
         });
-
       if (existingUserSubscription) {
         this.logger.warn(
           `User ${user.authUserId} already has subscription ${existingUserSubscription.id}. Upgrading instead.`,
@@ -376,11 +393,17 @@ export class PaymentsService {
       }
 
       // Create subscription; update existing pending payment instead of creating a duplicate
+      const planRecord2 = priceId
+        ? await (this.prisma as any).plan?.findUnique({
+            where: { stripePriceId: priceId },
+          })
+        : null;
       await this.prisma.subscription.create({
         data: {
           userId: user.authUserId,
           stripeSubscriptionId: subscription.id,
           stripePriceId: priceId,
+          ...(planRecord2 ? { planId: planRecord2.id } : {}),
           status: this.mapStripeStatusToDb(subscription.status),
           currentPeriodStart: new Date(
             ((subscription as any).current_period_start ||
@@ -391,7 +414,7 @@ export class PaymentsService {
               Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
           ),
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
-          credits: 0, // Will be updated when payment is processed
+          credits: 0,
         },
       });
 
@@ -401,7 +424,6 @@ export class PaymentsService {
         subscription,
         session,
       );
-
       if (!paymentStatus.isPaid) {
         this.logger.error(
           `❌ Payment not confirmed: ${paymentStatus.status} - ${paymentStatus.reason}`,
@@ -415,14 +437,13 @@ export class PaymentsService {
       let payment = await this.prisma.payment.findUnique({
         where: { stripeSessionId: session.id },
       });
-
       if (!payment) {
         // Create payment record for idempotency tracking
         payment = await this.prisma.payment.create({
           data: {
             userId: user.authUserId,
             stripeSessionId: session.id,
-            amount: plan.price,
+            amount: (plan as any).price || 0,
             credits: plan.credits,
             status: 'COMPLETED',
             type: 'SUBSCRIPTION',
@@ -454,20 +475,9 @@ export class PaymentsService {
       );
     } catch (error) {
       console.error(`💥 ERROR in subscription processing:`, error);
-      console.error(`💥 ERROR details:`, {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        name: error instanceof Error ? error.name : undefined,
-      });
       this.logger.error(
-        `💥 ERROR in subscription processing:`,
-        error instanceof Error ? error.message : String(error),
+        `Error in subscription processing: ${error?.message || error}`,
       );
-      this.logger.error(
-        `💥 ERROR stack:`,
-        error instanceof Error ? error.stack : 'No stack trace',
-      );
-      throw error;
     }
   }
 
@@ -508,7 +518,7 @@ export class PaymentsService {
       }
 
       // Find the plan by price ID
-      const plan = this.getPlanByStripePriceId(priceId);
+      const plan = await this.getPlanByStripePriceId(priceId);
       if (!plan) {
         this.logger.error(`No plan found for price ID ${priceId}`);
         return;
@@ -557,10 +567,10 @@ export class PaymentsService {
       });
 
       // Add credits to user
-      await this.addCreditsToUser(user.authUserId, plan.credits, null);
+      await this.addCreditsToUser(user.authUserId, (plan as any).credits, null);
 
       this.logger.log(
-        `Successfully processed subscription ${subscription.id} for user ${user.authUserId} with ${plan.credits} credits`,
+        `Successfully processed subscription ${subscription.id} for user ${user.authUserId} with ${(plan as any).credits} credits`,
       );
     } catch (error) {
       this.logger.error(
@@ -833,85 +843,105 @@ export class PaymentsService {
     userId: string,
     limit = 25,
   ): Promise<PaymentHistoryItem[]> {
-    const payments = await this.prisma.payment.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+    try {
+      const payments = await this.prisma.payment.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      });
 
-    return payments.map((payment) => ({
-      id: payment.id,
-      amount: payment.amount,
-      credits: payment.credits,
-      status: payment.status,
-      type: payment.type,
-      createdAt: payment.createdAt,
-      metadata: payment.metadata,
-    }));
+      return payments.map((payment) => ({
+        id: payment.id,
+        amount: payment.amount,
+        credits: payment.credits,
+        status: payment.status,
+        type: payment.type,
+        createdAt: payment.createdAt,
+        metadata: payment.metadata,
+      }));
+    } catch (error) {
+      this.logger.error(
+        `Error fetching payment history for user ${userId}:`,
+        error,
+      );
+      // Return empty array for users with no payment history
+      return [];
+    }
   }
 
   async getUserSubscription(userId: string): Promise<SubscriptionInfo | null> {
-    const subscription = await this.prisma.subscription.findUnique({
-      where: { userId },
-    });
+    try {
+      const subscription = await this.prisma.subscription.findUnique({
+        where: { userId },
+      });
 
-    if (!subscription) {
+      if (!subscription) {
+        return null;
+      }
+
+      // Log diagnostic information
+      this.logger.log(`Getting subscription for user ${userId}`);
+      this.logger.log(`Database stripePriceId: ${subscription.stripePriceId}`);
+
+      // Log all environment price IDs for comparison
+      const envPriceIds = {
+        STRIPE_PRO_PRICE_ID: process.env.STRIPE_PRO_PRICE_ID,
+        STRIPE_ENTERPRISE_PRICE_ID: process.env.STRIPE_ENTERPRISE_PRICE_ID,
+        STRIPE_PRO_YEARLY_PRICE_ID: process.env.STRIPE_PRO_YEARLY_PRICE_ID,
+        STRIPE_ENTERPRISE_YEARLY_PRICE_ID:
+          process.env.STRIPE_ENTERPRISE_YEARLY_PRICE_ID,
+      };
+      this.logger.log('Environment price IDs:', envPriceIds);
+
+      // Find the plan details from the stripePriceId using reverse lookup
+      const plan = await this.getPlanByStripePriceId(
+        subscription.stripePriceId,
+      );
+
+      if (!plan) {
+        this.logger.error(
+          `Plan not found for stripePriceId: ${subscription.stripePriceId}`,
+        );
+        this.logger.error('Available price IDs from environment:');
+        this.logger.error(
+          `  STRIPE_PRO_PRICE_ID: ${process.env.STRIPE_PRO_PRICE_ID}`,
+        );
+        this.logger.error(
+          `  STRIPE_ENTERPRISE_PRICE_ID: ${process.env.STRIPE_ENTERPRISE_PRICE_ID}`,
+        );
+        this.logger.error(
+          `  STRIPE_PRO_YEARLY_PRICE_ID: ${process.env.STRIPE_PRO_YEARLY_PRICE_ID}`,
+        );
+        this.logger.error(
+          `  STRIPE_ENTERPRISE_YEARLY_PRICE_ID: ${process.env.STRIPE_ENTERPRISE_YEARLY_PRICE_ID}`,
+        );
+      } else {
+        this.logger.log(
+          `Found plan: ${plan.id} (${plan.name}) with ${plan.credits} credits`,
+        );
+      }
+
+      return {
+        id: subscription.id,
+        status: subscription.status,
+        currentPeriodStart: subscription.currentPeriodStart,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+        cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+        credits: plan?.credits ?? 0,
+        createdAt: subscription.createdAt,
+        stripePriceId: subscription.stripePriceId,
+        planId: plan?.id || null,
+        planName: plan?.name || null,
+        billingPeriod: plan?.id?.includes('yearly') ? 'yearly' : 'monthly',
+      };
+    } catch (error) {
+      this.logger.error(
+        `Error fetching subscription for user ${userId}:`,
+        error,
+      );
+      // Return null on error to gracefully handle users without subscriptions
       return null;
     }
-
-    // Log diagnostic information
-    this.logger.log(`Getting subscription for user ${userId}`);
-    this.logger.log(`Database stripePriceId: ${subscription.stripePriceId}`);
-
-    // Log all environment price IDs for comparison
-    const envPriceIds = {
-      STRIPE_PRO_PRICE_ID: process.env.STRIPE_PRO_PRICE_ID,
-      STRIPE_ENTERPRISE_PRICE_ID: process.env.STRIPE_ENTERPRISE_PRICE_ID,
-      STRIPE_PRO_YEARLY_PRICE_ID: process.env.STRIPE_PRO_YEARLY_PRICE_ID,
-      STRIPE_ENTERPRISE_YEARLY_PRICE_ID:
-        process.env.STRIPE_ENTERPRISE_YEARLY_PRICE_ID,
-    };
-    this.logger.log('Environment price IDs:', envPriceIds);
-
-    // Find the plan details from the stripePriceId using reverse lookup
-    const plan = this.getPlanByStripePriceId(subscription.stripePriceId);
-
-    if (!plan) {
-      this.logger.error(
-        `Plan not found for stripePriceId: ${subscription.stripePriceId}`,
-      );
-      this.logger.error('Available price IDs from environment:');
-      this.logger.error(
-        `  STRIPE_PRO_PRICE_ID: ${process.env.STRIPE_PRO_PRICE_ID}`,
-      );
-      this.logger.error(
-        `  STRIPE_ENTERPRISE_PRICE_ID: ${process.env.STRIPE_ENTERPRISE_PRICE_ID}`,
-      );
-      this.logger.error(
-        `  STRIPE_PRO_YEARLY_PRICE_ID: ${process.env.STRIPE_PRO_YEARLY_PRICE_ID}`,
-      );
-      this.logger.error(
-        `  STRIPE_ENTERPRISE_YEARLY_PRICE_ID: ${process.env.STRIPE_ENTERPRISE_YEARLY_PRICE_ID}`,
-      );
-    } else {
-      this.logger.log(
-        `Found plan: ${plan.id} (${plan.name}) with ${plan.credits} credits`,
-      );
-    }
-
-    return {
-      id: subscription.id,
-      status: subscription.status,
-      currentPeriodStart: subscription.currentPeriodStart,
-      currentPeriodEnd: subscription.currentPeriodEnd,
-      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-      credits: plan?.credits ?? 0,
-      createdAt: subscription.createdAt,
-      stripePriceId: subscription.stripePriceId,
-      planId: plan?.id || null,
-      planName: plan?.name || null,
-      billingPeriod: plan?.id?.includes('yearly') ? 'yearly' : 'monthly',
-    };
   }
 
   async cancelUserSubscription(userId: string): Promise<void> {
@@ -1144,11 +1174,15 @@ export class PaymentsService {
     // Check cache first
     const cached = this.sessionCache.get(sessionId);
     if (cached && cached.expires > Date.now()) {
-      console.log(`📦 Using cached session data for ${sessionId}`);
+      if (process.env.LOG_LEVEL === 'debug') {
+        console.log(`📦 Using cached session data for ${sessionId}`);
+      }
       return cached.data;
     }
 
-    console.log(`🌐 Fetching fresh session data for ${sessionId}`);
+    if (process.env.LOG_LEVEL === 'debug') {
+      console.log(`🌐 Fetching fresh session data for ${sessionId}`);
+    }
 
     const session = await this.stripeService.retrieveSession(sessionId);
 
@@ -1262,10 +1296,26 @@ export class PaymentsService {
     return priceId;
   }
 
-  private getPlanByStripePriceId(
-    stripePriceId: string,
-  ): SubscriptionPlan | null {
-    // First try: Real Stripe price IDs from environment variables
+  private async getPlanByStripePriceId(stripePriceId: string): Promise<{
+    id: string;
+    name: string;
+    credits: number;
+    price?: number;
+    interval: 'month' | 'year';
+  } | null> {
+    const dbPlan = await (this.prisma as any).plan?.findUnique({
+      where: { stripePriceId },
+    });
+    if (dbPlan) {
+      return {
+        id: dbPlan.code,
+        name: dbPlan.name,
+        credits: dbPlan.creditsPerPeriod,
+        interval: dbPlan.interval === 'yearly' ? 'year' : 'month',
+      };
+    }
+
+    // Fallback to legacy mapping
     const reversePriceIdMap: Record<string, string> = {
       [process.env.STRIPE_PRO_PRICE_ID || '']: 'pro',
       [process.env.STRIPE_ENTERPRISE_PRICE_ID || '']: 'enterprise',
@@ -1273,58 +1323,31 @@ export class PaymentsService {
       [process.env.STRIPE_ENTERPRISE_YEARLY_PRICE_ID || '']:
         'enterprise-yearly',
     };
-
     let planId = reversePriceIdMap[stripePriceId];
-
-    // Second try: Handle placeholder/test price IDs
     if (!planId) {
       const placeholderMap: Record<string, string> = {
         price_pro: 'pro',
         price_enterprise: 'enterprise',
         price_pro_yearly: 'pro-yearly',
         price_enterprise_yearly: 'enterprise-yearly',
-        // Legacy formats
         pro: 'pro',
         enterprise: 'enterprise',
         'pro-yearly': 'pro-yearly',
         'enterprise-yearly': 'enterprise-yearly',
       };
-
       planId = placeholderMap[stripePriceId];
-
-      if (planId) {
-        this.logger.log(
-          `Found plan using placeholder mapping: ${stripePriceId} -> ${planId}`,
-        );
-      }
-    } else {
-      this.logger.log(
-        `Found plan using real Stripe price ID: ${stripePriceId} -> ${planId}`,
-      );
     }
-
-    if (!planId) {
-      this.logger.error(`No plan found for price ID: ${stripePriceId}`);
-      this.logger.error(
-        'Available real Stripe price IDs:',
-        Object.keys(reversePriceIdMap).filter((k) => k),
-      );
-      this.logger.error(
-        'Available placeholder mappings: price_pro, price_enterprise, price_pro_yearly, price_enterprise_yearly',
-      );
-      return null;
-    }
-
-    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId);
-    if (!plan) {
-      this.logger.error(`Plan configuration not found for plan ID: ${planId}`);
-      return null;
-    }
-
-    this.logger.log(
-      `Successfully mapped to plan: ${plan.id} (${plan.name}) with ${plan.credits} credits`,
-    );
-    return plan;
+    if (!planId) return null;
+    const legacy = SUBSCRIPTION_PLANS.find((p) => p.id === planId);
+    return legacy
+      ? {
+          id: legacy.id,
+          name: legacy.name,
+          credits: legacy.credits,
+          price: legacy.price,
+          interval: legacy.interval,
+        }
+      : null;
   }
 
   async updateSubscriptionStatus(

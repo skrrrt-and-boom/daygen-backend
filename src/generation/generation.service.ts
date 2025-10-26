@@ -3831,18 +3831,24 @@ export class GenerationService {
   }
 
   private extractAspectRatio(dto: ProviderGenerateDto): string | undefined {
-    // Check config.imageConfig.aspectRatio first
-    const dtoWithConfig = dto as ProviderGenerateDto & {
-      config?: { imageConfig?: { aspectRatio?: string } };
-    };
-    const configAspectRatio = dtoWithConfig.config?.imageConfig?.aspectRatio;
-    if (configAspectRatio && typeof configAspectRatio === 'string') {
+    // Check config.imageConfig.aspectRatio first (safe access)
+    const dtoRecord = optionalJsonRecord(dto);
+    const configRecord = dtoRecord
+      ? optionalJsonRecord(dtoRecord['config'])
+      : undefined;
+    const imageConfigRecord = configRecord
+      ? optionalJsonRecord(configRecord['imageConfig'])
+      : undefined;
+    const configAspectRatio = asString(imageConfigRecord?.['aspectRatio']);
+    if (configAspectRatio) {
       return configAspectRatio;
     }
 
     // Fallback to providerOptions.aspectRatio
-    const providerAspectRatio = dto.providerOptions?.aspectRatio;
-    if (providerAspectRatio && typeof providerAspectRatio === 'string') {
+    const providerAspectRatio = asString(
+      optionalJsonRecord(dto.providerOptions)?.['aspectRatio'],
+    );
+    if (providerAspectRatio) {
       return providerAspectRatio;
     }
 

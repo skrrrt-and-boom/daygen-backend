@@ -39,12 +39,14 @@ async function main() {
     await prisma.plan.upsert({
       where: { stripePriceId },
       update: {
+        code: p.id,
         name: p.name,
         interval: toInterval(p.interval),
         creditsPerPeriod: p.credits,
         active: true,
       },
       create: {
+        code: p.id,
         name: p.name,
         interval: toInterval(p.interval),
         creditsPerPeriod: p.credits,

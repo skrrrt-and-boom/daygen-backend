@@ -46,16 +46,37 @@ export class PaymentsController {
   }
 
   @Get('history')
-  getPaymentHistory(@CurrentUser() user: SanitizedUser) {
-    return this.paymentsService.getUserPaymentHistory(user.authUserId);
+  async getPaymentHistory(@CurrentUser() user: SanitizedUser) {
+    try {
+      const history = await this.paymentsService.getUserPaymentHistory(
+        user.authUserId,
+      );
+      return history;
+    } catch (error) {
+      this.logger.error(
+        `Error fetching payment history for user ${user.authUserId}:`,
+        error,
+      );
+      // Return empty array instead of throwing to handle users with no payments gracefully
+      return [];
+    }
   }
 
   @Get('subscription')
   async getSubscription(@CurrentUser() user: SanitizedUser) {
-    const subscription = await this.paymentsService.getUserSubscription(
-      user.authUserId,
-    );
-    return subscription || null;
+    try {
+      const subscription = await this.paymentsService.getUserSubscription(
+        user.authUserId,
+      );
+      return subscription || null;
+    } catch (error) {
+      this.logger.error(
+        `Error fetching subscription for user ${user.authUserId}:`,
+        error,
+      );
+      // Return null to gracefully handle errors (e.g., no subscription)
+      return null;
+    }
   }
 
   @Post('subscription/cancel')
