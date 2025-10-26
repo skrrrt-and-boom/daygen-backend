@@ -34,7 +34,14 @@
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "smoke:server": "node scripts/smoke-server.js",
+    "smoke:db": "node scripts/smoke-db.js",
+    "smoke:payments": "node scripts/smoke-payments.js",
+    "smoke:queue": "node scripts/smoke-queue.js",
+    "smoke:generate": "node scripts/smoke-generate.js",
+    "smoke:frontend": "node scripts/smoke-frontend-integration.js",
+    "smoke:auth": "node scripts/smoke-google-auth.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.913.0",

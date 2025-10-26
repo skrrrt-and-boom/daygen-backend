@@ -1,5 +1,7 @@
 # DayGen Backend
 
+See the concise guide at `docs/BACKEND_GUIDE.md` for day-to-day development, envs, queue, payments, and deployment pointers. For a full architecture map, open `/Users/dominiknowak/code/backend.md`.
+
 A comprehensive NestJS backend service for the DayGen AI-powered content generation platform. Provides image and video generation, user authentication, payment processing, and gallery management.
 
 ## 🚀 Features

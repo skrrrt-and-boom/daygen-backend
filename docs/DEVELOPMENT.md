@@ -1,4 +1,8 @@
-# Development Guide
+# [Archived] Development Guide
+
+This document has been consolidated into `docs/BACKEND_GUIDE.md`.
+
+The content below is preserved for reference.
 
 ## Quick Start
 

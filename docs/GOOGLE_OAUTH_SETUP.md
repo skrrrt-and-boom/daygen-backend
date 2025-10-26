@@ -1,4 +1,6 @@
-# Google OAuth Setup Guide
+# [Archived] Google OAuth Setup Guide
+
+See quick notes in `docs/BACKEND_GUIDE.md` and use this document for the full setup and troubleshooting.
 
 This guide will help you set up Google OAuth authentication for your DayGen application.
 

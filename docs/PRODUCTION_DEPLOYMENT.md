@@ -1,4 +1,6 @@
-# Production Deployment Guide
+# [Archived] Production Deployment Guide
+
+This deployment guide has been summarized in `docs/BACKEND_GUIDE.md` (Deployment pointer). Keep this file for detailed steps.
 
 ## 🚀 Complete Production Setup
 

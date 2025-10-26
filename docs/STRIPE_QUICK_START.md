@@ -1,4 +1,6 @@
-# Stripe Quick Start Guide
+# [Archived] Stripe Quick Start Guide
+
+This quick start has its key actions summarized in `docs/BACKEND_GUIDE.md` → Payments. Keep this file for detailed product lists and reference.
 
 Quick setup checklist for developers familiar with Stripe.
 

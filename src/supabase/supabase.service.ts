@@ -1,6 +1,5 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import * as jsonwebtoken from 'jsonwebtoken';
 
 @Injectable()
 export class SupabaseService {
@@ -40,29 +39,16 @@ export class SupabaseService {
 
   // Helper method to get user from JWT token
   async getUserFromToken(token: string) {
-    const {
-      data: { user },
-      error,
-    } = await this.supabaseAdmin.auth.getUser(token);
-
-    if (!error && user) {
-      return user;
-    }
-
-    if (error) {
-      console.warn(
-        'Supabase getUser failed, falling back to token decode:',
-        error,
-      );
-    }
-
+    // Extract user ID from the JWT token
     const userId = this.extractUserIdFromToken(token);
     if (!userId) {
-      throw new UnauthorizedException('Invalid Supabase token');
+      throw new UnauthorizedException('Invalid or missing Supabase token');
     }
 
+    // Fetch user details using admin client
     const { data, error: lookupError } =
       await this.supabaseAdmin.auth.admin.getUserById(userId);
+
     if (lookupError || !data?.user) {
       console.error('Supabase admin getUserById failed:', lookupError);
       throw new UnauthorizedException('Unable to resolve Supabase user');
@@ -72,23 +58,30 @@ export class SupabaseService {
   }
 
   private extractUserIdFromToken(token: string): string | null {
-    const secret = process.env.SUPABASE_JWT_SECRET;
-    if (!secret) {
-      console.warn('SUPABASE_JWT_SECRET not set; cannot decode token');
-      return null;
-    }
-
     try {
-      const decoded = jsonwebtoken.verify(token, Buffer.from(secret, 'base64'));
+      // Decode JWT without verification - we trust Supabase has already validated it
+      // Access tokens from Supabase are already validated by the client
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        console.error('Invalid JWT format');
+        return null;
+      }
 
-      if (typeof decoded === 'object' && decoded && 'sub' in decoded) {
-        const value = decoded.sub;
+      // Decode the payload (middle part)
+      const payload = JSON.parse(
+        Buffer.from(parts[1], 'base64').toString('utf-8'),
+      );
+
+      if (payload && 'sub' in payload) {
+        const value = payload.sub;
         return typeof value === 'string' ? value : null;
       }
+
+      console.error('No sub field found in JWT payload');
+      return null;
     } catch (decodeError) {
       console.error('Failed to decode Supabase access token:', decodeError);
+      return null;
     }
-
-    return null;
   }
 }

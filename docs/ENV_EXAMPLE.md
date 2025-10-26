@@ -19,6 +19,7 @@ JWT_SECRET="your-super-secret-jwt-key-here"
 SUPABASE_URL="https://your-project.supabase.co"
 SUPABASE_ANON_KEY="your-supabase-anon-key"
 SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
+SUPABASE_JWT_SECRET="your-base64-encoded-jwt-secret"
 
 # Stripe Configuration
 # Get these from Stripe Dashboard → Developers → API keys
@@ -72,6 +73,7 @@ VITE_API_URL="http://localhost:3000/api"
 - `SUPABASE_URL`: Your Supabase project URL
 - `SUPABASE_ANON_KEY`: Supabase anonymous key
 - `SUPABASE_SERVICE_ROLE_KEY`: Supabase service role key
+- `SUPABASE_JWT_SECRET`: Base64-encoded JWT secret from Supabase (found in Supabase Dashboard → Settings → API → JWT Secret)
 
 ### Stripe Variables
 - `STRIPE_SECRET_KEY`: Stripe secret key (server-side only)

@@ -1,4 +1,6 @@
-# Queue System Implementation
+# [Archived] Queue System Implementation
+
+This deep-dive is preserved. For a practical quickstart, see `docs/BACKEND_GUIDE.md` → Queue System.
 
 This document describes the complete queue system implementation using Google Cloud Tasks.
 

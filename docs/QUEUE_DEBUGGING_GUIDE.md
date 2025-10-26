@@ -1,4 +1,6 @@
-# Queue System Debugging & Development Guide
+# [Archived] Queue System Debugging & Development Guide
+
+This deep-dive is preserved. For a practical quickstart, see `docs/BACKEND_GUIDE.md` → Queue System and Observability.
 
 This guide covers the enhanced debugging and development capabilities added to the queue system.
 

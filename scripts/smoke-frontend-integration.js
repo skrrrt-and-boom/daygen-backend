@@ -69,7 +69,7 @@ async function testFrontendIntegration() {
   // Test 4: Check frontend accessibility
   console.log('\n4️⃣ Checking frontend accessibility...');
   try {
-    const frontendResponse = await makeRequest('http://localhost:5173');
+    await makeRequest('http://localhost:5173');
     console.log('✅ Frontend is accessible at http://localhost:5173');
   } catch (error) {
     console.log('❌ Frontend is not accessible');
@@ -87,10 +87,7 @@ async function testFrontendIntegration() {
   console.log('1. Open http://localhost:5173 in your browser');
   console.log('2. Generate a new image');
   console.log('3. Check that it appears in the gallery');
-  console.log('4. Verify the image URL starts with:');
-  console.log('   https://pub-82eeb6c8781b41e6ad18622c727f1cfc.r2.dev');
-  console.log('\n💡 If you want to migrate existing base64 images:');
-  console.log('   Use the migration endpoint: POST /api/upload/migrate-base64-batch');
+  console.log('4. Verify the image URL starts with your R2 public URL');
 }
 
 // Helper function to make HTTP requests
@@ -131,3 +128,5 @@ function testUrlAccess(url) {
 
 // Run the test
 testFrontendIntegration();
+
+

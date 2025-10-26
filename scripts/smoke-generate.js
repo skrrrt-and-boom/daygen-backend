@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Test script to create a real job and test the queue system
+ * Create a real job and poll status.
  */
 
 const axios = require('axios');
@@ -87,3 +87,5 @@ if (require.main === module) {
 }
 
 module.exports = { testRealJob };
+
+
