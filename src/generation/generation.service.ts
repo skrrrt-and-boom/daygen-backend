@@ -2140,25 +2140,25 @@ export class GenerationService {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
-        
-        this.logger.error(
-          `Failed to upload to R2 during Gemini generation`,
-          {
-            error: errorMessage,
-            provider: 'gemini',
-            userId: user?.authUserId,
-          },
-        );
-        
+
+        this.logger.error(`Failed to upload to R2 during Gemini generation`, {
+          error: errorMessage,
+          provider: 'gemini',
+          userId: user?.authUserId,
+        });
+
         // Check if this is a signature error specifically
-        if (errorMessage.includes('signature') || errorMessage.includes('Signature')) {
+        if (
+          errorMessage.includes('signature') ||
+          errorMessage.includes('Signature')
+        ) {
           throw new Error(
             `R2 upload failed due to signature mismatch: ${errorMessage}. ` +
-            `This typically indicates malformed credentials in Google Cloud Run environment variables. ` +
-            `Please check that CLOUDFLARE_R2_SECRET_ACCESS_KEY has no extra spaces, newlines, or encoding issues.`,
+              `This typically indicates malformed credentials in Google Cloud Run environment variables. ` +
+              `Please check that CLOUDFLARE_R2_SECRET_ACCESS_KEY has no extra spaces, newlines, or encoding issues.`,
           );
         }
-        
+
         throw new Error(
           `R2 upload failed: ${errorMessage}. Please ensure R2 is properly configured and bucket has public access enabled.`,
         );

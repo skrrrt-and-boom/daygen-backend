@@ -21,8 +21,12 @@ export class R2Service {
     // Trim all credentials to remove any whitespace or newlines
     this.accountId = (process.env.CLOUDFLARE_R2_ACCOUNT_ID || '').trim();
     this.accessKeyId = (process.env.CLOUDFLARE_R2_ACCESS_KEY_ID || '').trim();
-    this.secretAccessKey = (process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY || '').trim();
-    this.bucketName = (process.env.CLOUDFLARE_R2_BUCKET_NAME || 'daygen-assets').trim();
+    this.secretAccessKey = (
+      process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY || ''
+    ).trim();
+    this.bucketName = (
+      process.env.CLOUDFLARE_R2_BUCKET_NAME || 'daygen-assets'
+    ).trim();
     this.publicUrl = (process.env.CLOUDFLARE_R2_PUBLIC_URL || '').trim();
 
     // Log warnings for validation issues but don't throw errors
@@ -32,7 +36,7 @@ export class R2Service {
 
     if (validationIssues.length > 0) {
       this.logger.warn(
-        `R2 configuration issues detected (backend will still start, but R2 uploads may fail):\n${validationIssues.join('\n')}`
+        `R2 configuration issues detected (backend will still start, but R2 uploads may fail):\n${validationIssues.join('\n')}`,
       );
     } else {
       this.logger.log('R2 credentials validated successfully');
@@ -42,8 +46,10 @@ export class R2Service {
     // This allows the service to exist even if credentials are missing
     if (this.accountId && this.accessKeyId && this.secretAccessKey) {
       const endpoint = `https://${this.accountId}.r2.cloudflarestorage.com`;
-      
-      this.logger.log(`Initializing R2Service with account: ${this.accountId}, bucket: ${this.bucketName}`);
+
+      this.logger.log(
+        `Initializing R2Service with account: ${this.accountId}, bucket: ${this.bucketName}`,
+      );
 
       this.s3Client = new S3Client({
         region: 'auto',
@@ -57,7 +63,9 @@ export class R2Service {
         disableHostPrefix: true,
       });
     } else {
-      this.logger.warn('R2Service initialized without full credentials - R2 uploads will fail until credentials are configured');
+      this.logger.warn(
+        'R2Service initialized without full credentials - R2 uploads will fail until credentials are configured',
+      );
       // Create a dummy S3Client to prevent null reference errors
       this.s3Client = new S3Client({
         region: 'auto',
@@ -81,19 +89,25 @@ export class R2Service {
     if (!this.accountId) {
       errors.push('CLOUDFLARE_R2_ACCOUNT_ID is missing');
     } else if (this.accountId.length < 32) {
-      errors.push('CLOUDFLARE_R2_ACCOUNT_ID appears to be malformed (too short)');
+      errors.push(
+        'CLOUDFLARE_R2_ACCOUNT_ID appears to be malformed (too short)',
+      );
     }
 
     if (!this.accessKeyId) {
       errors.push('CLOUDFLARE_R2_ACCESS_KEY_ID is missing');
     } else if (this.accessKeyId.length < 20) {
-      errors.push('CLOUDFLARE_R2_ACCESS_KEY_ID appears to be malformed (too short)');
+      errors.push(
+        'CLOUDFLARE_R2_ACCESS_KEY_ID appears to be malformed (too short)',
+      );
     }
 
     if (!this.secretAccessKey) {
       errors.push('CLOUDFLARE_R2_SECRET_ACCESS_KEY is missing');
     } else if (this.secretAccessKey.length < 40) {
-      errors.push('CLOUDFLARE_R2_SECRET_ACCESS_KEY appears to be malformed (too short)');
+      errors.push(
+        'CLOUDFLARE_R2_SECRET_ACCESS_KEY appears to be malformed (too short)',
+      );
     }
 
     if (!this.bucketName) {
@@ -159,25 +173,29 @@ export class R2Service {
       this.logger.log(`Successfully uploaded file to R2: ${fileName}`);
       return `${this.publicUrl}/${fileName}`;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
       // Check for signature-related errors
-      if (errorMessage.includes('signature') || errorMessage.includes('Signature')) {
+      if (
+        errorMessage.includes('signature') ||
+        errorMessage.includes('Signature')
+      ) {
         this.logger.error(
           `R2 signature error during upload. This usually indicates:\n` +
-          `1. Malformed credentials (check for extra spaces/newlines in Cloud Run env vars)\n` +
-          `2. Clock skew between server and R2 (check server time)\n` +
-          `3. Incorrect AWS SDK configuration\n` +
-          `Error: ${errorMessage}`,
+            `1. Malformed credentials (check for extra spaces/newlines in Cloud Run env vars)\n` +
+            `2. Clock skew between server and R2 (check server time)\n` +
+            `3. Incorrect AWS SDK configuration\n` +
+            `Error: ${errorMessage}`,
         );
-        
+
         throw new Error(
           `R2 upload signature error: ${errorMessage}. ` +
-          `Please verify R2 credentials in Google Cloud Run are correctly formatted (no extra spaces or newlines). ` +
-          `Original error: ${errorMessage}`,
+            `Please verify R2 credentials in Google Cloud Run are correctly formatted (no extra spaces or newlines). ` +
+            `Original error: ${errorMessage}`,
         );
       }
-      
+
       this.logger.error(`Failed to upload file to R2: ${errorMessage}`, error);
       throw new Error(`R2 upload failed: ${errorMessage}`);
     }
