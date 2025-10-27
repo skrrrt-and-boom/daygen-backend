@@ -974,7 +974,10 @@ export class GenerationService {
     ) {
       return this.geminiAccessTokenCache.token;
     }
-    if (this.geminiAccessTokenRetryAfter && now < this.geminiAccessTokenRetryAfter) {
+    if (
+      this.geminiAccessTokenRetryAfter &&
+      now < this.geminiAccessTokenRetryAfter
+    ) {
       return null;
     }
 
@@ -993,9 +996,10 @@ export class GenerationService {
         this.geminiAccessTokenRetryAfter = now + 5 * 60 * 1000;
         return null;
       }
-      const json = (await res.json().catch(() => null)) as
-        | { access_token?: string; expires_in?: number }
-        | null;
+      const json = (await res.json().catch(() => null)) as {
+        access_token?: string;
+        expires_in?: number;
+      } | null;
       const token = json?.access_token;
       if (!token) {
         this.geminiAccessTokenRetryAfter = now + 5 * 60 * 1000;
@@ -3356,7 +3360,7 @@ export class GenerationService {
                 if (converted) {
                   const asset = await this.fetchGeminiBinary(
                     converted,
-                    apiKey,
+                    authContext,
                     visited,
                   );
                   if (asset) {
@@ -3372,7 +3376,7 @@ export class GenerationService {
               ) {
                 const nested = await this.downloadGeminiFileById(
                   candidate,
-                  apiKey,
+                  authContext,
                   visited,
                 );
                 if (nested) {
@@ -3383,7 +3387,7 @@ export class GenerationService {
 
               const directAsset = await this.fetchGeminiBinary(
                 candidate,
-                apiKey,
+                authContext,
                 visited,
               );
               if (directAsset) {
@@ -3507,10 +3511,7 @@ export class GenerationService {
       return null;
     }
 
-    const effectiveUrl = this.maybeAttachGeminiApiKey(
-      url,
-      authContext.apiKey,
-    );
+    const effectiveUrl = this.maybeAttachGeminiApiKey(url, authContext.apiKey);
     const visitSet = visited ?? new Set<string>();
     const visitKey = this.normalizeGeminiFilePath(effectiveUrl) ?? effectiveUrl;
     if (visitSet.has(visitKey)) {
@@ -3535,7 +3536,9 @@ export class GenerationService {
         let redirectedUrl = location;
         try {
           redirectedUrl = new URL(location, effectiveUrl).toString();
-        } catch {}
+        } catch {
+          // URL parsing failed, use location as-is
+        }
         return this.fetchGeminiBinary(
           redirectedUrl,
           authContext,
