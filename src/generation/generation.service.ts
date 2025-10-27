@@ -385,8 +385,12 @@ export class GenerationService {
     }
 
     switch (model) {
+      case 'gemini-2.5-flash-image':
       case 'gemini-2.5-flash-image-preview':
-        return this.handleGemini(dto);
+        return this.handleGemini({
+          ...dto,
+          model: 'gemini-2.5-flash-image',
+        });
       case 'ideogram':
         return this.handleIdeogram(dto);
       case 'qwen-image':
@@ -568,7 +572,7 @@ export class GenerationService {
       });
     }
 
-    const targetModel = 'gemini-2.5-flash-image-preview';
+    const targetModel = 'gemini-2.5-flash-image';
     const parts: Array<{
       text?: string;
       inlineData?: { mimeType: string; data: string };

@@ -54,14 +54,14 @@ export class ImageGenerationController {
     if (!this.shouldQueueGemini(dto)) {
       const requestedModel = this.resolveModel(
         dto.model,
-        'gemini-2.5-flash-image-preview',
+        'gemini-2.5-flash-image',
       );
       const normalizedModel =
-        requestedModel === 'gemini-2.5-flash-image'
-          ? 'gemini-2.5-flash-image-preview'
+        requestedModel === 'gemini-2.5-flash-image-preview'
+          ? 'gemini-2.5-flash-image'
           : requestedModel;
 
-      if (normalizedModel !== 'gemini-2.5-flash-image-preview') {
+      if (normalizedModel !== 'gemini-2.5-flash-image') {
         throw new BadRequestException(
           `Unsupported Gemini model: ${requestedModel}`,
         );
@@ -74,7 +74,7 @@ export class ImageGenerationController {
 
       return this.generationService.generateForModel(
         user,
-        'gemini-2.5-flash-image-preview',
+        'gemini-2.5-flash-image',
         {
           ...dto,
           model: normalizedModel,
@@ -87,7 +87,7 @@ export class ImageGenerationController {
       user,
       dto,
       'gemini',
-      'gemini-2.5-flash-image-preview',
+      'gemini-2.5-flash-image',
     );
   }
 
