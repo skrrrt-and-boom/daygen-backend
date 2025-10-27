@@ -83,12 +83,7 @@ export class ImageGenerationController {
       );
     }
 
-    return this.enqueueImageJob(
-      user,
-      dto,
-      'gemini',
-      'gemini-2.5-flash-image',
-    );
+    return this.enqueueImageJob(user, dto, 'gemini', 'gemini-2.5-flash-image');
   }
 
   @Post('flux')
