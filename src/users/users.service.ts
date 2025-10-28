@@ -201,6 +201,15 @@ export class UsersService {
 
     const desiredProfileImage = options.profileImage ?? metaAvatarUrl ?? null;
 
+    // First, try to find existing user by authUserId
+    const existingUser = await this.prisma.user.findUnique({
+      where: { authUserId: authUser.id },
+    });
+
+    // Build update payload with safe rules
+    // - Always update email and optionally display name
+    // - Only update profileImage from metadata when creating a new user
+    // - For existing users, only change profileImage if an explicit override was provided
     const updateData: Prisma.UserUpdateInput = {
       email: normalizedEmail,
     };
@@ -209,16 +218,15 @@ export class UsersService {
       updateData.displayName = desiredDisplayName;
     }
 
-    if (desiredProfileImage !== undefined) {
+    if (!existingUser) {
+      // New user: allow setting profile image from desiredProfileImage (metadata or override)
       updateData.profileImage = desiredProfileImage;
+    } else if (options.profileImage !== undefined) {
+      // Existing user: only update if explicitly provided by caller (e.g., profile upload)
+      updateData.profileImage = options.profileImage;
     }
 
-    // First, try to find existing user by authUserId
-    const user = await this.prisma.user.findUnique({
-      where: { authUserId: authUser.id },
-    });
-
-    if (user) {
+    if (existingUser) {
       // Update existing user
       await this.prisma.user.update({
         where: { authUserId: authUser.id },

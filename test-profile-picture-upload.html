@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile Picture Upload Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ccc; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button { padding: 10px 20px; margin: 5px; }
+        input[type="file"] { margin: 10px 0; }
+        #result { margin-top: 20px; padding: 10px; background: #f5f5f5; }
+    </style>
+</head>
+<body>
+    <h1>Profile Picture Upload Test</h1>
+    
+    <div class="test-section">
+        <h2>Test 1: CORS Preflight</h2>
+        <button onclick="testCorsPreflight()">Test OPTIONS Request</button>
+        <div id="cors-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 2: Profile Picture Upload (Mock)</h2>
+        <input type="file" id="fileInput" accept="image/*">
+        <button onclick="testProfilePictureUpload()">Test Upload</button>
+        <div id="upload-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 3: Backend Health Check</h2>
+        <button onclick="testBackendHealth()">Test Backend</button>
+        <div id="health-result"></div>
+    </div>
+
+    <div id="result"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000';
+        
+        async function testCorsPreflight() {
+            const resultDiv = document.getElementById('cors-result');
+            resultDiv.innerHTML = '<div class="info">Testing CORS preflight...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/users/me/profile-picture`, {
+                    method: 'OPTIONS',
+                    headers: {
+                        'Origin': 'http://localhost:5173',
+                        'Access-Control-Request-Method': 'POST',
+                        'Access-Control-Request-Headers': 'Content-Type,Authorization'
+                    }
+                });
+                
+                if (response.status === 204) {
+                    resultDiv.innerHTML = '<div class="success">✅ CORS preflight successful (204 No Content)</div>';
+                } else {
+                    resultDiv.innerHTML = `<div class="error">❌ CORS preflight failed: ${response.status}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ CORS preflight error: ${error.message}</div>`;
+            }
+        }
+        
+        async function testBackendHealth() {
+            const resultDiv = document.getElementById('health-result');
+            resultDiv.innerHTML = '<div class="info">Testing backend health...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                
+                if (response.ok && data.status === 'ok') {
+                    resultDiv.innerHTML = '<div class="success">✅ Backend is healthy</div>';
+                } else {
+                    resultDiv.innerHTML = `<div class="error">❌ Backend health check failed: ${response.status}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Backend health check error: ${error.message}</div>`;
+            }
+        }
+        
+        async function testProfilePictureUpload() {
+            const fileInput = document.getElementById('fileInput');
+            const resultDiv = document.getElementById('upload-result');
+            
+            if (!fileInput.files[0]) {
+                resultDiv.innerHTML = '<div class="error">❌ Please select a file first</div>';
+                return;
+            }
+            
+            resultDiv.innerHTML = '<div class="info">Testing profile picture upload...</div>';
+            
+            try {
+                const file = fileInput.files[0];
+                const reader = new FileReader();
+                
+                reader.onload = async function(e) {
+                    const dataUrl = e.target.result;
+                    const mimeType = dataUrl.match(/^data:([^;]+);/)?.[1] || 'image/png';
+                    
+                    try {
+                        // Test with a mock token (this will fail with 401, but we can see if CORS works)
+                        const response = await fetch(`${API_BASE}/api/users/me/profile-picture`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': 'Bearer mock-token'
+                            },
+                            body: JSON.stringify({
+                                base64Data: dataUrl,
+                                mimeType: mimeType
+                            })
+                        });
+                        
+                        if (response.status === 401) {
+                            resultDiv.innerHTML = '<div class="success">✅ Upload endpoint is reachable (401 Unauthorized - expected with mock token)</div>';
+                        } else if (response.status === 200) {
+                            resultDiv.innerHTML = '<div class="success">✅ Upload successful!</div>';
+                        } else {
+                            resultDiv.innerHTML = `<div class="error">❌ Upload failed: ${response.status} ${response.statusText}</div>`;
+                        }
+                    } catch (error) {
+                        resultDiv.innerHTML = `<div class="error">❌ Upload error: ${error.message}</div>`;
+                    }
+                };
+                
+                reader.readAsDataURL(file);
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ File processing error: ${error.message}</div>`;
+            }
+        }
+        
+        // Auto-run health check on page load
+        window.onload = function() {
+            testBackendHealth();
+        };
+    </script>
+</body>
+</html>

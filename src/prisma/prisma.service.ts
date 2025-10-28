@@ -15,11 +15,25 @@ export class PrismaService
       );
     }
 
+    // Check if using Supabase pooler or PgBouncer (port 6543 or pooler.supabase.com)
+    const isUsingPooler = databaseUrl && (
+      databaseUrl.includes(':6543/') || 
+      databaseUrl.includes('pooler.supabase.com')
+    );
+
+    // Add pgbouncer=true parameter to disable prepared statements when using poolers
+    let processedDatabaseUrl = databaseUrl;
+    if (isUsingPooler && !databaseUrl.includes('pgbouncer=true')) {
+      const separator = databaseUrl.includes('?') ? '&' : '?';
+      processedDatabaseUrl = `${databaseUrl}${separator}pgbouncer=true`;
+      console.log('🔧 Added pgbouncer=true to DATABASE_URL to disable prepared statements');
+    }
+
     super({
       datasources: {
         db: {
           url:
-            databaseUrl ||
+            processedDatabaseUrl ||
             'postgresql://placeholder:placeholder@localhost:5432/placeholder',
         },
       },
@@ -29,6 +43,10 @@ export class PrismaService
         timeout: 30000, // 30 seconds
       },
     });
+
+    if (isUsingPooler) {
+      console.log('🔧 Using connection pooler - prepared statements disabled via pgbouncer=true');
+    }
   }
 
   async onModuleInit() {

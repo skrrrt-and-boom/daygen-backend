@@ -5,7 +5,7 @@
  */
 
 const { S3Client } = require('@aws-sdk/client-s3');
-require('dotenv').config({ path: '/Users/jakubst/Desktop/daygen-backend/.env' });
+require('dotenv').config();
 
 async function testR2Service() {
   console.log('🔍 Testing R2 Service Directly\n');
