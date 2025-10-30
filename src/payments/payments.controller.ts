@@ -7,6 +7,7 @@ import {
   UseGuards,
   Logger,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import type { CreateCheckoutSessionDto } from './payments.service';
@@ -107,9 +108,25 @@ export class PaymentsController {
     return { message: 'Subscription upgraded successfully' };
   }
 
+  @Post('portal')
+  async createPortal(@CurrentUser() user: SanitizedUser) {
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const { url } = await this.paymentsService.createCustomerPortalSession(
+      user.authUserId,
+      `${baseUrl}/account/billing`,
+    );
+    return { url };
+  }
+
   @Post('test/complete-payment/:sessionId')
-  @UseGuards() // Override the class-level guard for this test endpoint
   completeTestPayment(@Param('sessionId') sessionId: string) {
+    // Security: Block test endpoints in production
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException(
+        'Test endpoints are not available in production',
+      );
+    }
+    
     console.log(
       `🎯 CONTROLLER: Manual payment completion requested for session: ${sessionId}`,
     );
@@ -136,6 +153,13 @@ export class PaymentsController {
 
   @Post('test/complete-by-intent/:paymentIntentId')
   completePaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
+    // Security: Block test endpoints in production
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException(
+        'Test endpoints are not available in production',
+      );
+    }
+    
     return this.paymentsService.completePaymentByIntentId(paymentIntentId);
   }
 
@@ -152,6 +176,13 @@ export class PaymentsController {
       stripePriceId: string;
     },
   ) {
+    // Security: Block test endpoints in production
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException(
+        'Test endpoints are not available in production',
+      );
+    }
+    
     return this.paymentsService.createManualSubscription(body);
   }
 }

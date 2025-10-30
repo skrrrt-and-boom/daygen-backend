@@ -43,8 +43,8 @@ Done looks like
 📋 NEXT DEVELOPMENT PLAN
 
 Phase 1: Core Features (Week 1-2)
-Go thru payment, make faster stripe checkout, make all else work
-Why sybscription info is stored in usageEvent table - there are images
+Make google auth faster and simpler
+Make stripe chekout faster
 Add credit logic
 Image generation overall
 Gemini first job is always failing

@@ -71,19 +71,12 @@ export class StripeWebhookController {
           this.handleCheckoutSessionCompleted(event.data.object);
           break;
 
-        case 'customer.subscription.created':
-          await this.handleSubscriptionCreated(event.data.object);
-          break;
-
-        case 'customer.subscription.updated':
-          await this.handleSubscriptionUpdated(event.data.object);
-          break;
-
         case 'customer.subscription.deleted':
           await this.handleSubscriptionDeleted(event.data.object);
           break;
 
-        case 'invoice.payment_succeeded':
+        case 'invoice.paid':
+        case 'invoice.payment_succeeded': // backward compatibility
           await this.handleInvoicePaymentSucceeded(event.data.object);
           break;
 

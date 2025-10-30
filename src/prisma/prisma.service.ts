@@ -9,6 +9,28 @@ export class PrismaService
   constructor() {
     const databaseUrl = process.env.DATABASE_URL;
 
+    // Respect DATABASE_URL, but if Supabase pooler is detected, ensure required params
+    let effectiveUrl = databaseUrl;
+    try {
+      if (effectiveUrl) {
+        const eu = new URL(effectiveUrl);
+        const isSupabase = /supabase\.co$/i.test(eu.hostname);
+        const port = Number(eu.port || '5432');
+        if (isSupabase && (port === 6543 || port === 6532)) {
+          if (!eu.searchParams.get('sslmode')) eu.searchParams.set('sslmode', 'require');
+          if (!eu.searchParams.get('pgbouncer')) eu.searchParams.set('pgbouncer', 'true');
+          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '1');
+          effectiveUrl = eu.toString();
+        }
+        const logUrl = new URL(effectiveUrl);
+        console.log(
+          `PrismaService: using db ${logUrl.hostname}:${logUrl.port || '5432'} (sslmode=${
+            logUrl.searchParams.get('sslmode') || 'n/a'
+          }, pgbouncer=${logUrl.searchParams.get('pgbouncer') || 'n/a'})`,
+        );
+      }
+    } catch {}
+
     if (!databaseUrl) {
       console.warn(
         '⚠️  DATABASE_URL not provided. Database features will be disabled.',
@@ -19,7 +41,7 @@ export class PrismaService
       datasources: {
         db: {
           url:
-            databaseUrl ||
+            effectiveUrl ||
             'postgresql://placeholder:placeholder@localhost:5432/placeholder',
         },
       },

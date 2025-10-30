@@ -25,9 +25,7 @@ describe('PaymentsService', () => {
         update: jest.fn(),
         updateMany: jest.fn(),
       },
-      subscriptionCycle: {
-        create: jest.fn(),
-      },
+      // subscriptionCycle removed in metered billing
       user: {
         findUnique: jest.fn(),
         update: jest.fn(),
@@ -92,7 +90,7 @@ describe('PaymentsService', () => {
     });
   });
 
-  it('verifies payment status before granting credits in subscription checkout handler', async () => {
+  it('verifies payment status in subscription checkout handler (no credits granted)', async () => {
     const subscription = {
       id: 'sub_1',
       status: 'active',
@@ -146,11 +144,7 @@ describe('PaymentsService', () => {
         metadata: expect.any(Object),
       },
     });
-    expect(creditsSpy).toHaveBeenCalledWith(
-      'user_1',
-      expect.any(Number),
-      expect.any(String),
-    );
+    expect(creditsSpy).not.toHaveBeenCalled();
   });
 
   it('does not grant credits when payment verification fails', async () => {
@@ -188,7 +182,7 @@ describe('PaymentsService', () => {
     expect(creditsSpy).not.toHaveBeenCalled();
   });
 
-  it('grants credits once on invoice and creates subscription cycle', async () => {
+  it('records invoice payment without credit grants or subscription cycles', async () => {
     prisma.subscription.findUnique = jest.fn().mockResolvedValue({
       id: 'sub_db_1',
       userId: 'user_1',
@@ -212,24 +206,23 @@ describe('PaymentsService', () => {
     await service.handleRecurringPayment(invoice);
 
     expect(prisma.payment.create).toHaveBeenCalled();
-    expect(prisma.subscriptionCycle.create).toHaveBeenCalled();
-    expect(addSpy).toHaveBeenCalledWith(
-      'user_1',
-      expect.any(Number),
-      expect.any(String),
-    );
+    // subscriptionCycle no longer created
+    expect((prisma as any).subscriptionCycle?.create).toBeUndefined();
+    expect(addSpy).not.toHaveBeenCalled();
 
     // Idempotency: second call sees existing payment by intent and skips
     prisma.payment.findUnique = jest
       .fn()
       .mockResolvedValue({ id: 'pay_existing' });
     await service.handleRecurringPayment(invoice);
-    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(addSpy).not.toHaveBeenCalled();
   });
 
-  it('refundCredits increments credits using centralized function', async () => {
+  it('refundCredits decrements user credits via prisma update', async () => {
+    prisma.user.findUnique = jest.fn().mockResolvedValue({ credits: 50, email: 'x@y.z' });
+    prisma.user.update = jest.fn().mockResolvedValue({ credits: 40 });
     await service.refundCredits('user_1', 10, 'test');
-    expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(1);
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
   });
 
   it('skips duplicate credit grant when first invoice arrives after checkout', async () => {
@@ -283,5 +276,105 @@ describe('PaymentsService', () => {
       where: { authUserId: userId },
       data: { credits: 1020 },
     });
+  });
+
+  it('completes enterprise monthly pending payment preserving plan and price', async () => {
+    const userId = 'user_1';
+    const sessionId = 'cs_test_abc123';
+
+    // Pending payment with enterprise monthly plan
+    const pendingPayment = {
+      id: 'pay_pending',
+      userId,
+      status: 'PENDING',
+      credits: 5000,
+      amount: 9900,
+      type: 'SUBSCRIPTION',
+      metadata: { planId: 'enterprise', planName: 'Enterprise', billingPeriod: 'monthly' },
+    };
+
+    // Mock lookups
+    prisma.payment.findUnique = jest
+      .fn()
+      .mockResolvedValue(pendingPayment);
+    prisma.user.findUnique = jest.fn().mockResolvedValue({ authUserId: userId, email: 't@t.t', credits: 20 });
+
+    // Transaction mocks
+    const tx = {
+      payment: {
+        update: jest.fn().mockImplementation(async ({ data }: any) => ({ ...pendingPayment, ...data })),
+        create: jest.fn(),
+      },
+      subscription: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'sub_new' }),
+        update: jest.fn(),
+      },
+      user: {
+        update: jest.fn().mockResolvedValue({}),
+      },
+    } as any;
+
+    prisma.$transaction = jest.fn().mockImplementation(async (cb) => cb(tx));
+
+    // Call
+    const result = await service.completePaymentForUser(userId, sessionId);
+
+    // Expect payment was completed with preserved plan metadata
+    expect(tx.payment.update).toHaveBeenCalled();
+    const updateArgs = (tx.payment.update as jest.Mock).mock.calls[0][0];
+    expect(updateArgs.data.amount).toBe(9900);
+    expect(updateArgs.data.credits).toBe(5000);
+    expect(updateArgs.data.metadata.planId).toBe('enterprise');
+    expect(updateArgs.data.metadata.billingPeriod).toBe('monthly');
+
+    // Expect subscription created with enterprise monthly price id
+    expect(tx.subscription.create).toHaveBeenCalled();
+    const createArgs = (tx.subscription.create as jest.Mock).mock.calls[0][0];
+    expect(createArgs.data.stripePriceId).toBe('price_ent');
+
+    // User credits updated correctly
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { authUserId: userId },
+      data: { credits: 5020 },
+    });
+
+    // Response includes IDs
+    expect(result.paymentId).toBe('pay_pending');
+    expect(result.subscriptionId).toBe('sub_new');
+  });
+
+  it('is idempotent when creating subscription session for the same session id', async () => {
+    const user = { authUserId: 'user_1' } as any;
+    const dtoPlanId = 'enterprise';
+
+    // Mock no active subscription
+    (service as any).getUserSubscription = jest.fn().mockResolvedValue(null);
+
+    // Mock plan price id mapping
+    process.env.STRIPE_ENTERPRISE_PRICE_ID = 'price_ent';
+
+    // Stripe returns same session.id
+    (stripe.createCheckoutSession as jest.Mock) = jest
+      .fn()
+      .mockResolvedValue({ id: 'cs_same', url: 'https://stripe/session' });
+
+    // First call: no existing by session, allow create
+    prisma.payment.findUnique = jest
+      .fn()
+      .mockResolvedValueOnce(null) // before create
+      .mockResolvedValueOnce({ id: 'pay_existing', stripeSessionId: 'cs_same' }); // second call sees existing
+    prisma.payment.create = jest.fn().mockResolvedValue({ id: 'pay_new' });
+
+    // Act: first call
+    const first = await service.createSubscriptionSession(user, dtoPlanId);
+    expect(first.sessionId).toBe('cs_same');
+    expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+
+    // Act: second call (same inputs)
+    const second = await service.createSubscriptionSession(user, dtoPlanId);
+    expect(second.sessionId).toBe('cs_same');
+    // Still only one create due to idempotent guard
+    expect(prisma.payment.create).toHaveBeenCalledTimes(1);
   });
 });

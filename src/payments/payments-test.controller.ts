@@ -81,7 +81,7 @@ export class PaymentsTestController {
         `🎯 SYSTEMATIC PAYMENT COMPLETION for user: ${body.userId}`,
       );
 
-      const { userId, sessionId, credits = 12000 } = body;
+      const { userId, sessionId, credits } = body;
       console.log(
         `📝 Request details: userId=${userId}, sessionId=${sessionId}, credits=${credits}`,
       );

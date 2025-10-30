@@ -15,7 +15,7 @@ export class StripeService {
     }
 
     this.stripe = new Stripe(secretKey, {
-      apiVersion: '2025-09-30.clover',
+      // Use account default API version to avoid incompatibilities
       timeout: 15000,
       maxNetworkRetries: 2,
     });
@@ -30,6 +30,7 @@ export class StripeService {
     type: 'one_time' | 'subscription',
     priceId: string,
     metadata: Record<string, string> = {},
+    options?: { idempotencyKey?: string },
   ): Promise<StripeType.Checkout.Session> {
     // Environment-aware URL configuration
     const nodeEnv = this.configService.get<string>('NODE_ENV') || 'development';
@@ -79,21 +80,18 @@ export class StripeService {
     }
 
     try {
-      // Provide deterministic idempotency to avoid duplicate sessions on client retries
-      const idempotencyKey = [
-        userId,
-        type,
-        priceId,
-        metadata.packageId || metadata.planId || 'na',
-      ]
-        .filter(Boolean)
-        .join(':');
+      // Deterministic idempotency unless overridden (e.g., to force a fresh session)
+      const idempotencyKey =
+        options?.idempotencyKey ||
+        [userId, type, metadata.packageId || metadata.planId || 'na']
+          .filter(Boolean)
+          .join(':');
       const session = await this.stripe.checkout.sessions.create(
         sessionParams,
         { idempotencyKey },
       );
       this.logger.log(
-        `Created checkout session ${session.id} for user ${userId}`,
+        `Created checkout session ${session.id} for user ${userId} with key: ${idempotencyKey}`,
       );
       return session;
     } catch (error) {
@@ -268,6 +266,55 @@ export class StripeService {
     } catch (error) {
       this.logger.error(
         `Failed to list subscriptions for customer ${customerId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async createUsageRecord(
+    subscriptionItemId: string,
+    quantity: number,
+    idempotencyKey: string,
+    timestamp?: Date,
+  ): Promise<any> {
+    try {
+      const params: any = {
+        quantity,
+        action: 'increment',
+      } as any;
+      if (timestamp) {
+        // seconds since epoch
+        (params as any).timestamp = Math.floor(timestamp.getTime() / 1000);
+      }
+      // Note: createUsageRecord returns a UsageRecord; summaries are listed separately
+      return await (this.stripe as any).subscriptionItems.createUsageRecord(
+        subscriptionItemId,
+        params,
+        { idempotencyKey },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to create usage record for item ${subscriptionItemId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async createBillingPortalSession(
+    customerId: string,
+    returnUrl: string,
+  ): Promise<StripeType.BillingPortal.Session> {
+    try {
+      // @ts-ignore - typings may differ across Stripe versions
+      return await (this.stripe as any).billingPortal.sessions.create({
+        customer: customerId,
+        return_url: returnUrl,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to create billing portal session for customer ${customerId}:`,
         error,
       );
       throw error;

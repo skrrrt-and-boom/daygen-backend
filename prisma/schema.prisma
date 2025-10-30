@@ -14,6 +14,7 @@ model User {
   email        String         @unique
   createdAt    DateTime       @default(now())
   authUserId   String         @unique
+  stripeCustomerId String?    @unique
   displayName  String?
   credits      Int            @default(20)
   profileImage String?
@@ -109,6 +110,7 @@ model Subscription {
   userId               String              @unique
   stripeSubscriptionId String              @unique
   stripePriceId        String
+  stripeSubscriptionItemId String?         @unique
   status               SubscriptionStatus  @default(ACTIVE)
   currentPeriodStart   DateTime
   currentPeriodEnd     DateTime
@@ -117,14 +119,10 @@ model Subscription {
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
   user                 User                @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
-  cycles               SubscriptionCycle[]
-  planId               String?
-  plan                 Plan?               @relation(fields: [planId], references: [id])
 
   @@index([userId])
   @@index([stripeSubscriptionId])
   @@index([stripePriceId])
-  @@index([planId])
 }
 
 
@@ -185,32 +183,5 @@ model WebhookEvent {
   createdAt DateTime @default(now())
 }
 
-model SubscriptionCycle {
-  id               String   @id @default(cuid())
-  subscriptionId   String
-  stripeInvoiceId  String   @unique
-  periodStart      DateTime
-  periodEnd        DateTime
-  creditsGranted   Int
-  createdAt        DateTime @default(now())
-
-  subscription     Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-
-  @@index([subscriptionId, periodStart])
-}
-
-model Plan {
-  id               String   @id @default(dbgenerated("(gen_random_uuid())::text"))
-  code             String   @unique
-  name             String
-  interval         String
-  creditsPerPeriod Int
-  graceCredits     Int      @default(0)
-  stripePriceId    String   @unique
-  active           Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  subscriptions    Subscription[]
-}
+// Plan table removed – plans now live in code
 

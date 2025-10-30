@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, Body } from '@nestjs/common';
+import { Controller, Get, Param, Post, Body, ForbiddenException } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 
 @Controller('public-payments')
@@ -36,6 +36,22 @@ export class PublicPaymentsController {
       stripePriceId: string;
     },
   ) {
+    // CRITICAL SECURITY: Block this endpoint entirely or add authentication
+    // This endpoint is completely unprotected and allows unauthenticated subscription creation
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException(
+        'This endpoint is disabled in production',
+      );
+    }
+    
+    // Additional check: Verify we're using test Stripe keys
+    const stripeKey = process.env.STRIPE_SECRET_KEY || '';
+    if (stripeKey.startsWith('sk_live_')) {
+      throw new ForbiddenException(
+        'This endpoint is only available with test Stripe keys',
+      );
+    }
+    
     return this.paymentsService.createManualSubscription(body);
   }
 

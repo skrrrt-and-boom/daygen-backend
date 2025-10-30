@@ -101,42 +101,37 @@ For test mode, you can skip verification. For production, you'll need:
 3. **Save**: Click **Save product**
 4. **Copy Price ID**: Copy the Price ID
 
-### Step 3: Create Subscription Plans
+### Step 3: Create Subscription Plans (Metered)
 
-#### Pro Subscription
+#### Pro Subscription (Metered)
 1. **Product Information**:
    - Product name: `Pro Subscription`
-   - Description: `Monthly subscription with 1000 credits`
+   - Description: `Monthly subscription (metered usage)`
 2. **Pricing**:
-   - Pricing model: `Recurring`
-   - Price: `$29.00`
+   - Pricing model: `Recurring (Metered)`
+   - Price: `$29.00` base with metered price
    - Billing period: `Monthly`
    - Currency: USD
 3. **Save**: Click **Save product**
-4. **Copy Price ID**: Copy the Price ID
+4. **Copy Price ID**: Copy the metered Price ID
 
-#### Enterprise Subscription
+#### Enterprise Subscription (Metered)
 1. **Product Information**:
    - Product name: `Enterprise Subscription`
-   - Description: `Monthly subscription with 5000 credits`
+   - Description: `Monthly subscription (metered usage)`
 2. **Pricing**:
-   - Pricing model: `Recurring`
-   - Price: `$99.00`
+   - Pricing model: `Recurring (Metered)`
+   - Price: `$99.00` base with metered price
    - Billing period: `Monthly`
    - Currency: USD
 3. **Save**: Click **Save product**
-4. **Copy Price ID**: Copy the Price ID
+4. **Copy Price ID**: Copy the metered Price ID
 
-### Step 4: Record Price IDs
-Create a temporary note with all Price IDs:
-```
-Test Pack: price_xxxxx
-Starter Pack: price_xxxxx
-Popular Pack: price_xxxxx
-Best Value Pack: price_xxxxx
-Pro Subscription: price_xxxxx
-Enterprise Subscription: price_xxxxx
-```
+### 3.1 Enable Smart Retries & Dunning
+- In Dashboard → Billing → Subscriptions and emails:
+  - Enable Smart Retries
+  - Configure dunning emails and retry schedule
+  - Enable Customer Portal
 
 ## 4. Webhook Configuration
 
@@ -150,14 +145,12 @@ Enterprise Subscription: price_xxxxx
    - For local development: `https://your-ngrok-url.ngrok.io/webhooks/stripe`
 2. **Description**: `DayGen Payment Webhooks`
 
-### Step 3: Select Events
-Select the following events to listen for:
-- `checkout.session.completed` - One-time payments completed
-- `customer.subscription.created` - New subscription created
-- `customer.subscription.updated` - Subscription status changed
-- `customer.subscription.deleted` - Subscription cancelled
-- `invoice.payment_succeeded` - Recurring payment successful
-- `invoice.payment_failed` - Recurring payment failed
+### Step 3: Select Events (Metered Billing)
+Listen to:
+- `checkout.session.completed` — initial checkout completion
+- `invoice.paid` — recurring invoice successfully paid (alias of `invoice.payment_succeeded`)
+- `invoice.payment_failed` — recurring payment failed
+- `customer.subscription.deleted` — subscription canceled
 
 ### Step 4: Create Endpoint
 1. Click **Add endpoint**
@@ -272,9 +265,10 @@ Use these test card numbers in Stripe test mode:
 - [ ] Verify webhook signatures
 - [ ] Use HTTPS in production
 - [ ] Monitor webhook events and errors
-- [ ] Set up proper error handling and logging
 - [ ] Enable Stripe Radar for fraud detection
 - [ ] Set up webhook retry policies
+- [ ] Enable Smart Retries and Dunning emails
+- [ ] Enable Customer Portal
 
 ## 8. Related Documentation
 
