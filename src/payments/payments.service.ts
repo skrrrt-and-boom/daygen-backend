@@ -1293,7 +1293,7 @@ export class PaymentsService {
 
     // Add metadata for subscriptions
     if (session.mode === 'subscription' && payment?.metadata) {
-      const metadata = payment.metadata as any; // Type assertion for metadata object
+      const metadata = payment.metadata as any; // Treat Prisma JsonValue as object for known keys
       result.metadata = {
         planName: metadata.planName,
         billingPeriod: metadata.billingPeriod || 'monthly',
@@ -1330,7 +1330,7 @@ export class PaymentsService {
       status: payment.status === 'COMPLETED' ? 'paid' : 'unpaid',
       paymentStatus: payment.status,
       mode: payment.type === 'SUBSCRIPTION' ? 'subscription' : 'payment',
-      metadata: payment.metadata as any,
+      metadata: payment.metadata,
     };
   }
 
@@ -1934,9 +1934,14 @@ export class PaymentsService {
       }
 
       // Get the session to determine if it's a subscription
-      const session = await this.stripeService.retrieveSession(
-        payment.stripeSessionId!,
-      );
+      if (!payment.stripeSessionId) {
+        this.logger.error(
+          `No stripeSessionId on payment ${payment.id} to complete by intent`,
+        );
+        return { message: 'No session associated with this payment' };
+      }
+
+      const session = await this.stripeService.retrieveSession(payment.stripeSessionId);
 
       if (session.mode === 'subscription') {
         // Handle subscription payment

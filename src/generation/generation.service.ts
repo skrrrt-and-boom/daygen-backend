@@ -34,6 +34,11 @@ interface GeminiRemoteCandidate {
   mimeType?: string;
 }
 
+interface GeminiAuthContext {
+  apiKey?: string;
+  accessToken?: string;
+}
+
 interface ProviderResult {
   provider: string;
   model: string;
@@ -129,6 +134,10 @@ const GEMINI_API_KEY_CANDIDATES = [
 ] as const;
 
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const GEMINI_METADATA_TOKEN_URL =
+  'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
+const GEMINI_OAUTH_SCOPE =
+  'https://www.googleapis.com/auth/generative-language';
 
 const RUNWAY_API_VERSION = '2024-11-06';
 const RUNWAY_POLL_INTERVAL_MS = 6000;
@@ -240,6 +249,9 @@ export class GenerationService {
   private readonly fluxExtraDownloadHosts: Set<string>;
   private readonly fluxExtraPollSuffixes: string[];
   private readonly fluxExtraDownloadSuffixes: string[];
+  private geminiAccessTokenCache: { token: string; expiresAt: number } | null =
+    null;
+  private geminiAccessTokenRetryAfter = 0;
 
   constructor(
     private readonly configService: ConfigService,
@@ -385,8 +397,12 @@ export class GenerationService {
     }
 
     switch (model) {
+      case 'gemini-2.5-flash-image':
       case 'gemini-2.5-flash-image-preview':
-        return this.handleGemini(dto);
+        return this.handleGemini({
+          ...dto,
+          model: 'gemini-2.5-flash-image',
+        });
       case 'ideogram':
         return this.handleIdeogram(dto);
       case 'qwen-image':
@@ -568,7 +584,8 @@ export class GenerationService {
       });
     }
 
-    const targetModel = 'gemini-2.5-flash-image-preview';
+    const authContext = await this.getGeminiAuthContext(apiKey);
+    const targetModel = 'gemini-2.5-flash-image';
     const parts: Array<{
       text?: string;
       inlineData?: { mimeType: string; data: string };
@@ -880,7 +897,10 @@ export class GenerationService {
 
     if (!base64) {
       for (const candidate of remoteCandidates) {
-        const asset = await this.tryResolveGeminiCandidate(candidate, apiKey);
+        const asset = await this.tryResolveGeminiCandidate(
+          candidate,
+          authContext,
+        );
         if (asset) {
           base64 = asset.base64;
           mimeType = asset.mimeType ?? mimeType;
@@ -893,6 +913,9 @@ export class GenerationService {
     }
 
     if (!base64) {
+      this.logger.warn('Gemini response missing downloadable image payload', {
+        candidateCount: remoteCandidates.length,
+      });
       this.throwBadRequest('No image returned from Gemini 2.5 Flash Image');
     }
 
@@ -930,6 +953,71 @@ export class GenerationService {
       }
     }
     return undefined;
+  }
+
+  private async getGeminiAuthContext(
+    apiKey: string,
+  ): Promise<GeminiAuthContext> {
+    const context: GeminiAuthContext = {};
+    if (apiKey?.trim()) context.apiKey = apiKey.trim();
+
+    const accessToken = await this.getGeminiAccessToken().catch(() => null);
+    if (accessToken) context.accessToken = accessToken;
+    return context;
+  }
+
+  private async getGeminiAccessToken(): Promise<string | null> {
+    const now = Date.now();
+    if (
+      this.geminiAccessTokenCache &&
+      this.geminiAccessTokenCache.expiresAt - now > 60_000
+    ) {
+      return this.geminiAccessTokenCache.token;
+    }
+    if (
+      this.geminiAccessTokenRetryAfter &&
+      now < this.geminiAccessTokenRetryAfter
+    ) {
+      return null;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+    try {
+      const tokenUrl = `${GEMINI_METADATA_TOKEN_URL}?scopes=${encodeURIComponent(
+        GEMINI_OAUTH_SCOPE,
+      )}`;
+      const res = await fetch(tokenUrl, {
+        method: 'GET',
+        headers: { 'Metadata-Flavor': 'Google' },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        this.geminiAccessTokenRetryAfter = now + 5 * 60 * 1000;
+        return null;
+      }
+      const json = (await res.json().catch(() => null)) as {
+        access_token?: string;
+        expires_in?: number;
+      } | null;
+      const token = json?.access_token;
+      if (!token) {
+        this.geminiAccessTokenRetryAfter = now + 5 * 60 * 1000;
+        return null;
+      }
+      const expiresIn = json?.expires_in ?? 300;
+      this.geminiAccessTokenCache = {
+        token,
+        expiresAt: now + Math.max(expiresIn - 30, 60) * 1000,
+      };
+      this.geminiAccessTokenRetryAfter = 0;
+      return token;
+    } catch {
+      this.geminiAccessTokenRetryAfter = now + 5 * 60 * 1000;
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private async handleIdeogram(
@@ -2138,9 +2226,27 @@ export class GenerationService {
           );
         }
       } catch (error) {
-        this.logger.error(`Failed to upload to R2: ${String(error)}`);
         const errorMessage =
           error instanceof Error ? error.message : String(error);
+
+        this.logger.error(`Failed to upload to R2 during Gemini generation`, {
+          error: errorMessage,
+          provider: 'gemini',
+          userId: user?.authUserId,
+        });
+
+        // Check if this is a signature error specifically
+        if (
+          errorMessage.includes('signature') ||
+          errorMessage.includes('Signature')
+        ) {
+          throw new Error(
+            `R2 upload failed due to signature mismatch: ${errorMessage}. ` +
+              `This typically indicates malformed credentials in Google Cloud Run environment variables. ` +
+              `Please check that CLOUDFLARE_R2_SECRET_ACCESS_KEY has no extra spaces, newlines, or encoding issues.`,
+          );
+        }
+
         throw new Error(
           `R2 upload failed: ${errorMessage}. Please ensure R2 is properly configured and bucket has public access enabled.`,
         );
@@ -2985,7 +3091,7 @@ export class GenerationService {
 
   private async tryResolveGeminiCandidate(
     candidate: GeminiRemoteCandidate,
-    apiKey: string,
+    authContext: GeminiAuthContext,
   ): Promise<GeneratedAsset | null> {
     if (candidate.url?.startsWith('data:')) {
       const asset = this.assetFromDataUrl(candidate.url);
@@ -3007,7 +3113,7 @@ export class GenerationService {
     if (fileReference) {
       const downloaded = await this.downloadGeminiFileById(
         fileReference,
-        apiKey,
+        authContext,
       );
       if (downloaded) {
         if (candidate.mimeType && downloaded.mimeType !== candidate.mimeType) {
@@ -3050,7 +3156,10 @@ export class GenerationService {
         resolvedUrl = this.convertGsUriToHttps(url) ?? url;
       }
 
-      const directAsset = await this.fetchGeminiBinary(resolvedUrl, apiKey);
+      const directAsset = await this.fetchGeminiBinary(
+        resolvedUrl,
+        authContext,
+      );
       if (directAsset) {
         if (candidate.mimeType && directAsset.mimeType !== candidate.mimeType) {
           directAsset.mimeType = candidate.mimeType;
@@ -3066,7 +3175,7 @@ export class GenerationService {
       if (derivedReference) {
         const downloaded = await this.downloadGeminiFileById(
           derivedReference,
-          apiKey,
+          authContext,
         );
         if (downloaded) {
           if (
@@ -3089,13 +3198,16 @@ export class GenerationService {
 
   private async downloadGeminiFileById(
     fileId: string,
-    apiKey: string,
+    authContext: GeminiAuthContext,
     visited = new Set<string>(),
   ): Promise<GeneratedAsset | null> {
     const normalizedPath = this.normalizeGeminiFilePath(fileId);
     if (!normalizedPath) {
-      const directUrl = this.maybeAttachGeminiApiKey(fileId, apiKey);
-      return this.fetchGeminiBinary(directUrl, apiKey, visited);
+      const directUrl = this.maybeAttachGeminiApiKey(
+        fileId,
+        authContext.apiKey,
+      );
+      return this.fetchGeminiBinary(directUrl, authContext, visited);
     }
 
     if (visited.has(normalizedPath)) {
@@ -3110,13 +3222,13 @@ export class GenerationService {
         return null;
       }
       visited.add(url);
-      const asset = await this.fetchGeminiBinary(url, apiKey, visited);
+      const asset = await this.fetchGeminiBinary(url, authContext, visited);
       return asset;
     };
 
     const altMediaUrl = this.maybeAttachGeminiApiKey(
       `${baseEndpoint}?alt=media`,
-      apiKey,
+      authContext.apiKey,
     );
     const altAsset = await attemptDownload(altMediaUrl);
     if (altAsset) {
@@ -3128,7 +3240,7 @@ export class GenerationService {
 
     const downloadUrl = this.maybeAttachGeminiApiKey(
       `${baseEndpoint}:download`,
-      apiKey,
+      authContext.apiKey,
     );
     const downloadAsset = await attemptDownload(downloadUrl);
     if (downloadAsset) {
@@ -3138,12 +3250,15 @@ export class GenerationService {
       return downloadAsset;
     }
 
-    const metadataUrl = this.maybeAttachGeminiApiKey(baseEndpoint, apiKey);
+    const metadataUrl = this.maybeAttachGeminiApiKey(
+      baseEndpoint,
+      authContext.apiKey,
+    );
     if (!visited.has(metadataUrl)) {
       visited.add(metadataUrl);
       try {
         const headers =
-          this.getGeminiDownloadHeaders(metadataUrl, apiKey) ?? {};
+          this.getGeminiDownloadHeaders(metadataUrl, authContext) ?? {};
         const metadataResponse = await fetch(metadataUrl, {
           method: 'GET',
           headers: { accept: 'application/json', ...headers },
@@ -3245,7 +3360,7 @@ export class GenerationService {
                 if (converted) {
                   const asset = await this.fetchGeminiBinary(
                     converted,
-                    apiKey,
+                    authContext,
                     visited,
                   );
                   if (asset) {
@@ -3261,7 +3376,7 @@ export class GenerationService {
               ) {
                 const nested = await this.downloadGeminiFileById(
                   candidate,
-                  apiKey,
+                  authContext,
                   visited,
                 );
                 if (nested) {
@@ -3272,7 +3387,7 @@ export class GenerationService {
 
               const directAsset = await this.fetchGeminiBinary(
                 candidate,
-                apiKey,
+                authContext,
                 visited,
               );
               if (directAsset) {
@@ -3318,7 +3433,7 @@ export class GenerationService {
       .join('/');
   }
 
-  private appendApiKeyQuery(url: string, apiKey: string): string {
+  private appendApiKeyQuery(url: string, apiKey?: string): string {
     if (!apiKey) {
       return url;
     }
@@ -3334,7 +3449,7 @@ export class GenerationService {
     }
   }
 
-  private maybeAttachGeminiApiKey(url: string, apiKey: string): string {
+  private maybeAttachGeminiApiKey(url: string, apiKey?: string): string {
     if (!apiKey || !url) {
       return url;
     }
@@ -3356,36 +3471,47 @@ export class GenerationService {
 
   private getGeminiDownloadHeaders(
     url: string,
-    apiKey: string,
+    context: GeminiAuthContext,
   ): Record<string, string> | undefined {
-    if (!apiKey) {
-      return undefined;
-    }
+    let host: string | undefined;
     try {
-      const host = new URL(url).hostname;
-      if (
-        host.includes('googleapis.com') ||
+      host = new URL(url).hostname;
+    } catch {
+      host = undefined;
+    }
+
+    const headers: Record<string, string> = {};
+    const isGoogleHost = host
+      ? host.includes('googleapis.com') ||
         host.includes('googleusercontent.com') ||
         host.includes('storage.googleapis.com')
-      ) {
-        return { 'x-goog-api-key': apiKey };
-      }
-    } catch {
-      return undefined;
+      : false;
+
+    if (isGoogleHost && context.apiKey) {
+      headers['x-goog-api-key'] = context.apiKey;
     }
-    return undefined;
+    if (context.accessToken) {
+      headers.Authorization = `Bearer ${context.accessToken}`;
+    }
+
+    return Object.keys(headers).length > 0 ? headers : undefined;
   }
 
   private async fetchGeminiBinary(
     url: string,
-    apiKey: string,
+    authContext: GeminiAuthContext,
     visited?: Set<string>,
+    redirectDepth = 0,
   ): Promise<GeneratedAsset | null> {
     if (!url) {
       return null;
     }
 
-    const effectiveUrl = this.maybeAttachGeminiApiKey(url, apiKey);
+    if (redirectDepth > 5) {
+      return null;
+    }
+
+    const effectiveUrl = this.maybeAttachGeminiApiKey(url, authContext.apiKey);
     const visitSet = visited ?? new Set<string>();
     const visitKey = this.normalizeGeminiFilePath(effectiveUrl) ?? effectiveUrl;
     if (visitSet.has(visitKey)) {
@@ -3395,11 +3521,31 @@ export class GenerationService {
 
     try {
       const headers =
-        this.getGeminiDownloadHeaders(effectiveUrl, apiKey) ?? undefined;
+        this.getGeminiDownloadHeaders(effectiveUrl, authContext) ?? undefined;
       const response = await fetch(effectiveUrl, {
         method: 'GET',
         headers,
+        redirect: 'manual',
       });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          return null;
+        }
+        let redirectedUrl = location;
+        try {
+          redirectedUrl = new URL(location, effectiveUrl).toString();
+        } catch {
+          // URL parsing failed, use location as-is
+        }
+        return this.fetchGeminiBinary(
+          redirectedUrl,
+          authContext,
+          visitSet,
+          redirectDepth + 1,
+        );
+      }
 
       if (!response.ok) {
         return null;
@@ -3455,7 +3601,7 @@ export class GenerationService {
               if (converted) {
                 const nested = await this.fetchGeminiBinary(
                   converted,
-                  apiKey,
+                  authContext,
                   visitSet,
                 );
                 if (nested) {
@@ -3471,7 +3617,7 @@ export class GenerationService {
             ) {
               const nested = await this.downloadGeminiFileById(
                 candidate,
-                apiKey,
+                authContext,
                 visitSet,
               );
               if (nested) {
@@ -3482,7 +3628,7 @@ export class GenerationService {
 
             const direct = await this.fetchGeminiBinary(
               candidate,
-              apiKey,
+              authContext,
               visitSet,
             );
             if (direct) {

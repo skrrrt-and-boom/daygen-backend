@@ -607,7 +607,8 @@ export class JobProcessingService {
 
   private mapQueueModelToGenerationModel(model: string): string {
     const modelMappings: Record<string, string> = {
-      'gemini-2.5-flash-image': 'gemini-2.5-flash-image-preview',
+      'gemini-2.5-flash-image': 'gemini-2.5-flash-image',
+      'gemini-2.5-flash-image-preview': 'gemini-2.5-flash-image',
       'flux-1.1': 'flux-pro-1.1',
       'flux-pro-1.1': 'flux-pro-1.1',
       'flux-pro-1.1-ultra': 'flux-pro-1.1-ultra',

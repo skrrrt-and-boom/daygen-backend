@@ -87,6 +87,7 @@
     "undici": "^7.16.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.38.0",
     "@nestjs/cli": "^11.0.10",
     "@nestjs/schematics": "^11.0.7",
     "@nestjs/testing": "^11.1.6",
