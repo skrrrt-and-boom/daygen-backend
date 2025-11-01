@@ -190,7 +190,7 @@ export class PaymentsService {
             url: existingSession.url!,
           };
         }
-      } catch (error) {
+      } catch {
         this.logger.warn('Existing session not found, creating new one');
       }
     }
@@ -1500,7 +1500,7 @@ export class PaymentsService {
 
     // 2) Fallback to Stripe session metadata or subscription price
     const session = await this.stripeService.retrieveSession(sessionId);
-    const metaPlanId = (session.metadata?.planId as string | undefined) || '';
+    const metaPlanId = (session.metadata?.planId) || '';
     let priceIdFromStripe: string | undefined;
     if (session.mode === 'subscription' && session.subscription) {
       try {
@@ -1620,7 +1620,7 @@ export class PaymentsService {
       user.stripeCustomerId,
       returnUrl,
     );
-    return { url: session.url as string };
+    return { url: session.url };
   }
 
   /**
@@ -1660,13 +1660,13 @@ export class PaymentsService {
       units,
       idempotencyKey,
       occurredAt,
-    )) as any;
+    ));
 
     try {
       if (usageEventId) {
         await this.prisma.usageEvent.update({
           where: { id: usageEventId },
-          data: ({ stripeUsageRecordId: (record as any).id || null } as any),
+          data: ({ stripeUsageRecordId: (record).id || null } as any),
         });
       }
     } catch (e) {
@@ -1677,7 +1677,7 @@ export class PaymentsService {
       );
     }
 
-    return { usageRecordId: (record as any).id || '' };
+    return { usageRecordId: (record).id || '' };
   }
 
   async handleRecurringPayment(invoice: Stripe.Invoice): Promise<void> {
@@ -2179,7 +2179,7 @@ export class PaymentsService {
           if (existing?.credits && existing.credits > 0) return existing.credits;
           if (typeof creditsOverride === 'number') return creditsOverride;
           return resolved.credits;
-        })()) as number;
+        })());
 
       const amountToUse =
         (await (async () => {
@@ -2189,7 +2189,7 @@ export class PaymentsService {
           if (typeof existing?.amount === 'number' && existing.amount > 0)
             return existing.amount;
           return resolved.amount;
-        })()) as number;
+        })());
 
       const newBalance = user.credits + creditsToAdd;
 

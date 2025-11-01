@@ -285,7 +285,7 @@ export class StripeService {
       } as any;
       if (timestamp) {
         // seconds since epoch
-        (params as any).timestamp = Math.floor(timestamp.getTime() / 1000);
+        (params).timestamp = Math.floor(timestamp.getTime() / 1000);
       }
       // Note: createUsageRecord returns a UsageRecord; summaries are listed separately
       return await (this.stripe as any).subscriptionItems.createUsageRecord(
@@ -307,7 +307,7 @@ export class StripeService {
     returnUrl: string,
   ): Promise<StripeType.BillingPortal.Session> {
     try {
-      // @ts-ignore - typings may differ across Stripe versions
+      // Typings may differ across Stripe versions
       return await (this.stripe as any).billingPortal.sessions.create({
         customer: customerId,
         return_url: returnUrl,

@@ -40,7 +40,7 @@ export class PrismaService
     }
 
     // Use effectiveUrl if it was successfully processed, otherwise fall back to original databaseUrl
-    let finalUrl = effectiveUrl || databaseUrl;
+    let finalUrl: string | undefined = effectiveUrl || databaseUrl;
 
     // Check if using Supabase pooler or PgBouncer (port 6543 or pooler.supabase.com)
     const isUsingPooler = finalUrl && (
@@ -49,7 +49,7 @@ export class PrismaService
     );
 
     // Add pgbouncer=true parameter to disable prepared statements when using poolers
-    if (isUsingPooler && !finalUrl.includes('pgbouncer=true')) {
+    if (isUsingPooler && finalUrl && !finalUrl.includes('pgbouncer=true')) {
       const separator = finalUrl.includes('?') ? '&' : '?';
       finalUrl = `${finalUrl}${separator}pgbouncer=true`;
       console.log('🔧 Added pgbouncer=true to DATABASE_URL to disable prepared statements');

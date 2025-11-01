@@ -207,7 +207,7 @@ describe('PaymentsService', () => {
 
     expect(prisma.payment.create).toHaveBeenCalled();
     // subscriptionCycle no longer created
-    expect((prisma as any).subscriptionCycle?.create).toBeUndefined();
+    expect((prisma).subscriptionCycle?.create).toBeUndefined();
     expect(addSpy).not.toHaveBeenCalled();
 
     // Idempotency: second call sees existing payment by intent and skips
@@ -359,12 +359,20 @@ describe('PaymentsService', () => {
       .fn()
       .mockResolvedValue({ id: 'cs_same', url: 'https://stripe/session' });
 
-    // First call: no existing by session, allow create
-    prisma.payment.findUnique = jest
+    // First call: no existing pending payment, allow create
+    prisma.payment.findFirst = jest
       .fn()
-      .mockResolvedValueOnce(null) // before create
-      .mockResolvedValueOnce({ id: 'pay_existing', stripeSessionId: 'cs_same' }); // second call sees existing
+      .mockResolvedValueOnce(null) // first call: no existing pending
+      .mockResolvedValueOnce({
+        id: 'pay_existing',
+        stripeSessionId: 'cs_same',
+        userId: 'user_1',
+        type: 'SUBSCRIPTION',
+        status: 'PENDING',
+        metadata: { planId: 'enterprise' },
+      }); // second call sees existing pending payment
     prisma.payment.create = jest.fn().mockResolvedValue({ id: 'pay_new' });
+    prisma.payment.update = jest.fn().mockResolvedValue({ id: 'pay_existing' });
 
     // Act: first call
     const first = await service.createSubscriptionSession(user, dtoPlanId);
