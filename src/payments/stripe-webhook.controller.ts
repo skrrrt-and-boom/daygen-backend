@@ -29,10 +29,16 @@ export class StripeWebhookController {
     @Res() res: Response,
     @Headers('stripe-signature') signature: string,
   ) {
-    this.logger.log('Webhook received - checking signature');
+    // Performance tracking: request arrival
+    const requestStartTime = Date.now();
+    const requestArrivalTime = new Date().toISOString();
+    
+    this.logger.log(`Webhook received at ${requestArrivalTime} - checking signature`);
 
     if (!signature) {
       this.logger.error('Missing Stripe signature');
+      const errorTime = Date.now() - requestStartTime;
+      this.logger.log(`Webhook processing failed (no signature) in ${errorTime}ms`);
       return res
         .status(HttpStatus.BAD_REQUEST)
         .send('Missing Stripe signature');
@@ -43,23 +49,44 @@ export class StripeWebhookController {
     );
 
     try {
+      // Performance tracking: signature verification start
+      const signatureStartTime = Date.now();
+      
       // Construct the event
       const event = this.stripeService.constructWebhookEvent(
         req.body as string | Buffer,
         signature,
       );
-
+      
+      // Performance tracking: signature verification complete
+      const signatureVerificationTime = Date.now() - signatureStartTime;
+      const totalTimeSoFar = Date.now() - requestStartTime;
+      
       this.logger.log(
         `Received webhook event: ${event.type} (ID: ${event.id}) at ${new Date().toISOString()}`,
       );
+      this.logger.log(
+        `Webhook signature verification completed in ${signatureVerificationTime}ms (total: ${totalTimeSoFar}ms)`,
+      );
 
       // Idempotency: persist event.id and skip duplicates
+      const idempotencyStartTime = Date.now();
+      let idempotencyCheckTime = 0;
       try {
         await (this.prisma as any).webhookEvent.create({
           data: { eventId: event.id, type: event.type },
         });
+        idempotencyCheckTime = Date.now() - idempotencyStartTime;
+        this.logger.log(
+          `Webhook idempotency check completed in ${idempotencyCheckTime}ms`,
+        );
       } catch {
+        idempotencyCheckTime = Date.now() - idempotencyStartTime;
+        const totalTime = Date.now() - requestStartTime;
         this.logger.log(`Duplicate webhook event ${event.id}; acknowledging`);
+        this.logger.log(
+          `Webhook duplicate check completed in ${idempotencyCheckTime}ms (total: ${totalTime}ms)`,
+        );
         return res
           .status(HttpStatus.OK)
           .json({ received: true, duplicate: true });
@@ -88,19 +115,44 @@ export class StripeWebhookController {
           await this.handlePaymentIntentFailed(event.data.object);
           break;
 
-        default:
-          this.logger.log(`Unhandled event type: ${event.type}`);
+      default:
+        this.logger.log(`Unhandled event type: ${event.type}`);
       }
 
+      // Performance tracking: response ready
+      const eventProcessingTime = Date.now() - requestStartTime;
       this.logger.log(`Successfully processed webhook event: ${event.type}`);
+      this.logger.log(
+        `Webhook processing completed in ${eventProcessingTime}ms (event: ${event.type}, id: ${event.id})`,
+      );
+      
+      // Log performance metrics
+      this.logger.log({
+        event: 'webhook_performance',
+        eventType: event.type,
+        eventId: event.id,
+        totalProcessingTime: eventProcessingTime,
+        signatureVerificationTime,
+        idempotencyCheckTime,
+        requestArrivalTime,
+        responseTime: new Date().toISOString(),
+      });
+      
       return res.status(HttpStatus.OK).json({ received: true });
     } catch (error) {
+      // Performance tracking: error occurred
+      const errorProcessingTime = Date.now() - requestStartTime;
       this.logger.error('Webhook error:', error);
       this.logger.error('Error details:', {
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         name: error instanceof Error ? error.name : undefined,
+        processingTime: errorProcessingTime,
       });
+      this.logger.log(
+        `Webhook error occurred after ${errorProcessingTime}ms`,
+      );
+      
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       return res

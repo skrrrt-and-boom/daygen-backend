@@ -1,3 +1,5 @@
+Stripe v: 2025-09-30
+
 THIS IS CRITICAL FILE! DO NOT TOUCH IT!!!
 
 harden usage accounting: automated resets/top-ups, Stripe or internal billing hooks, rate-limits per provider, admin dashboards.
