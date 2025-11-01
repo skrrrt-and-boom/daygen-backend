@@ -47,9 +47,19 @@ const priceIdToPlanMap = {
 
 For each successful subscription:
 1. **Payment Record**: Updated from `PENDING` to `COMPLETED`
-2. **Subscription Record**: Created with proper plan mapping
+2. **Subscription Record**: Created with proper plan mapping and correct credits (NOT 0)
+   - Credits are calculated from Plan table or code config before subscription creation
+   - Safety fallback updates subscription if credits are still 0 after creation
 3. **User Credits**: Added to user account
 4. **Logging**: Comprehensive logging for debugging
+
+**Credit Calculation Flow:**
+1. Extract `priceId` from Stripe subscription
+2. Look up plan in Plan table first (if available)
+3. Fallback to code config if Plan table lookup fails
+4. Calculate `creditsToAdd` from plan's `creditsPerPeriod`
+5. Create subscription with calculated credits
+6. If credits still 0, safety fallback attempts to update
 
 ## Testing
 
@@ -144,7 +154,13 @@ Look for these log messages in production:
 
 Check these tables after each subscription:
 - `payments` - Should have `COMPLETED` status
-- `subscriptions` - Should have new record
+- `subscriptions` - Should have new record with `credits > 0` (NOT 0) ⚠️
+  ```sql
+  SELECT id, "stripeSubscriptionId", "stripePriceId", credits, status 
+  FROM "Subscription" 
+  WHERE "stripeSubscriptionId" = '<subscription_id>' 
+  AND credits > 0;
+  ```
 - `users` - Credits should be updated
 
 ## Troubleshooting

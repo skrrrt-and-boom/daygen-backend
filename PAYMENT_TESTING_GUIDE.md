@@ -100,7 +100,7 @@ Check your Supabase database for:
 **Subscription Table:**
 - Should have a new record with `status: 'ACTIVE'`
 - `stripeSubscriptionId` from Stripe
-- `credits` matching the plan
+- `credits` matching the plan (NOT 0) ✅ **Critical**: Verify credits > 0
 
 **User Table:**
 - User's `credits` field should be updated with the subscription credits
@@ -158,6 +158,31 @@ Check your Supabase database for:
 3. Check `addCreditsToUser` function executed successfully
 4. Look for errors in backend logs
 
+### Subscription Has 0 Credits
+**Symptoms:** Subscription record created but `credits` field is 0 in database
+
+**Root Causes:**
+- Plan lookup failed (Plan table not accessible or priceId doesn't match)
+- Environment variables for Stripe price IDs not set correctly
+- Price ID from Stripe doesn't map to any plan in code config
+
+**Solutions:**
+1. Check backend logs for plan resolution:
+   - Look for "💰 Resolved plan credits for priceId..." (success)
+   - Look for "⚠️ Could not resolve plan for priceId..." (failure)
+2. Verify Plan table exists and has correct priceId mappings:
+   ```sql
+   SELECT * FROM "Plan" WHERE "stripePriceId" = '<price_id_from_stripe>';
+   ```
+3. Check environment variables match Stripe price IDs:
+   - `STRIPE_PRO_PRICE_ID`
+   - `STRIPE_ENTERPRISE_PRICE_ID`
+   - `STRIPE_PRO_YEARLY_PRICE_ID`
+   - `STRIPE_ENTERPRISE_YEARLY_PRICE_ID`
+4. Verify priceId from subscription matches one in Plan table or code config
+5. Check if safety fallback activated: Look for "⚠️ Subscription created with 0 credits, attempting to resolve..."
+6. If still 0, manually update subscription credits based on plan
+
 ## Success Criteria
 
 ✅ **Payment Flow Complete:**
@@ -166,7 +191,7 @@ Check your Supabase database for:
 - [ ] Redirected to success page
 - [ ] Webhook received and processed
 - [ ] Payment record created in database
-- [ ] Subscription record created in database
+- [ ] Subscription record created in database with correct credits (not 0) ⚠️
 - [ ] User credits updated
 - [ ] Frontend shows updated balance
 
