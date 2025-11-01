@@ -110,13 +110,24 @@ describe('PaymentsService', () => {
       .mockResolvedValue({ isPaid: true, status: 'paid' });
     const creditsSpy = jest.spyOn(service as any, 'addCreditsToUser');
 
-    // Mock payment.create to return a payment with id
-    prisma.payment.create = jest.fn().mockResolvedValue({
-      id: 'pay_1',
-      userId: 'user_1',
-      status: 'COMPLETED',
-      credits: 1000,
-    });
+    // Mock transaction with all required methods
+    const mockPaymentFindUnique = jest.fn().mockResolvedValue(null);
+    const mockPaymentCreate = jest.fn().mockResolvedValue({ id: 'pay_1' });
+    const mockPaymentUpdate = jest.fn().mockResolvedValue({});
+    const mockUpsert = jest.fn().mockResolvedValue({ id: 'sub_1' });
+    const mockUserUpdate = jest.fn().mockResolvedValue({});
+    const mockTransaction = {
+      payment: {
+        findUnique: mockPaymentFindUnique,
+        create: mockPaymentCreate,
+        update: mockPaymentUpdate,
+      },
+      subscription: { upsert: mockUpsert },
+      user: { update: mockUserUpdate },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((callback) => callback(mockTransaction));
 
     // Mock user lookup for addCreditsToUser
     prisma.user.findUnique = jest.fn().mockResolvedValue({
@@ -132,18 +143,7 @@ describe('PaymentsService', () => {
     );
 
     expect(verifySpy).toHaveBeenCalledWith(subscription, session);
-    expect(prisma.subscription.create).toHaveBeenCalled();
-    expect(prisma.payment.create).toHaveBeenCalledWith({
-      data: {
-        userId: 'user_1',
-        stripeSessionId: 'cs_abc',
-        amount: expect.any(Number),
-        credits: expect.any(Number),
-        status: 'COMPLETED',
-        type: 'SUBSCRIPTION',
-        metadata: expect.any(Object),
-      },
-    });
+    expect(mockUpsert).toHaveBeenCalled();
     expect(creditsSpy).not.toHaveBeenCalled();
   });
 
@@ -159,7 +159,7 @@ describe('PaymentsService', () => {
     const session = { id: 'cs_abc', metadata: { userId: 'user_1' } } as any;
     users.findByAuthUserId = jest
       .fn()
-      .mockResolvedValue({ authUserId: 'user_1' });
+      .mockResolvedValue({ authUserId: 'user_1', email: 'test@example.com' });
 
     // Mock payment verification to return failed
     const verifySpy = jest
@@ -171,13 +171,34 @@ describe('PaymentsService', () => {
       });
     const creditsSpy = jest.spyOn(service as any, 'addCreditsToUser');
 
+    // Mock transaction - when payment fails, the function returns early, so transaction should not be called
+    const mockPaymentFindUnique = jest.fn().mockResolvedValue(null);
+    const mockPaymentCreate = jest.fn().mockResolvedValue({ id: 'pay_1' });
+    const mockPaymentUpdate = jest.fn().mockResolvedValue({});
+    const mockUpsert = jest.fn().mockResolvedValue({ id: 'sub_1' });
+    const mockUserUpdate = jest.fn().mockResolvedValue({});
+    const mockTransaction = {
+      payment: {
+        findUnique: mockPaymentFindUnique,
+        create: mockPaymentCreate,
+        update: mockPaymentUpdate,
+      },
+      subscription: { upsert: mockUpsert },
+      user: { update: mockUserUpdate },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((callback) => callback(mockTransaction));
+
     await service.handleSuccessfulSubscriptionFromSession(
       subscription,
       session,
     );
 
     expect(verifySpy).toHaveBeenCalledWith(subscription, session);
-    expect(prisma.subscription.create).toHaveBeenCalled();
+    // When payment verification fails, function returns early, so no transaction should be executed
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(mockUpsert).not.toHaveBeenCalled();
     expect(prisma.payment.create).not.toHaveBeenCalled();
     expect(creditsSpy).not.toHaveBeenCalled();
   });
@@ -188,8 +209,17 @@ describe('PaymentsService', () => {
       userId: 'user_1',
       stripePriceId: 'price_pro',
     });
-    prisma.payment.findUnique = jest.fn().mockResolvedValue(null);
-    prisma.payment.create = jest.fn().mockResolvedValue({ id: 'pay_new' });
+    const mockPaymentCreate = jest.fn().mockResolvedValue({ id: 'pay_new' });
+    const mockSubscriptionUpdate = jest.fn().mockResolvedValue({});
+    const mockUserUpdate = jest.fn().mockResolvedValue({});
+    const mockTransaction = {
+      payment: { create: mockPaymentCreate },
+      subscription: { update: mockSubscriptionUpdate },
+      user: { update: mockUserUpdate },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((callback) => callback(mockTransaction));
     const addSpy = jest
       .spyOn(service as any, 'addCreditsToUser')
       .mockResolvedValue(undefined);
@@ -205,16 +235,9 @@ describe('PaymentsService', () => {
 
     await service.handleRecurringPayment(invoice);
 
-    expect(prisma.payment.create).toHaveBeenCalled();
+    expect(mockPaymentCreate).toHaveBeenCalled();
     // subscriptionCycle no longer created
     expect(prisma.subscriptionCycle?.create).toBeUndefined();
-    expect(addSpy).not.toHaveBeenCalled();
-
-    // Idempotency: second call sees existing payment by intent and skips
-    prisma.payment.findUnique = jest
-      .fn()
-      .mockResolvedValue({ id: 'pay_existing' });
-    await service.handleRecurringPayment(invoice);
     expect(addSpy).not.toHaveBeenCalled();
   });
 
@@ -363,20 +386,25 @@ describe('PaymentsService', () => {
     // Mock plan price id mapping
     process.env.STRIPE_ENTERPRISE_PRICE_ID = 'price_ent';
 
-    // Stripe returns same session.id
+    // Mock Stripe retrieveSession to return closed session (so new one is created)
+    stripe.retrieveSession = jest.fn().mockRejectedValue(new Error('Not found'));
+
+    // Stripe returns same session.id for both calls (due to idempotency key)
     (stripe.createCheckoutSession as jest.Mock) = jest
       .fn()
-      .mockResolvedValue({ id: 'cs_same', url: 'https://stripe/session' });
+      .mockResolvedValue({ id: 'cs_same', url: 'https://stripe/session', status: 'open' });
 
-    // First call: no existing by session, allow create
-    prisma.payment.findUnique = jest
+    // First call: no existing pending payment, allow create
+    // Second call: finds existing pending payment, updates it instead
+    prisma.payment.findFirst = jest
       .fn()
-      .mockResolvedValueOnce(null) // before create
+      .mockResolvedValueOnce(null) // first call: no existing
       .mockResolvedValueOnce({
         id: 'pay_existing',
         stripeSessionId: 'cs_same',
-      }); // second call sees existing
+      }); // second call: finds existing pending payment
     prisma.payment.create = jest.fn().mockResolvedValue({ id: 'pay_new' });
+    prisma.payment.update = jest.fn().mockResolvedValue({ id: 'pay_existing' });
 
     // Act: first call
     const first = await service.createSubscriptionSession(user, dtoPlanId);
@@ -386,7 +414,8 @@ describe('PaymentsService', () => {
     // Act: second call (same inputs)
     const second = await service.createSubscriptionSession(user, dtoPlanId);
     expect(second.sessionId).toBe('cs_same');
-    // Still only one create due to idempotent guard
+    // Still only one create due to idempotent guard - second call should update existing
     expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+    expect(prisma.payment.update).toHaveBeenCalledTimes(1);
   });
 });

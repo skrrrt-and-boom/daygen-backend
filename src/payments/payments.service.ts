@@ -192,7 +192,7 @@ export class PaymentsService {
             url: existingSession.url!,
           };
         }
-      } catch (error) {
+      } catch {
         this.logger.warn('Existing session not found, creating new one');
       }
     }
@@ -613,7 +613,7 @@ export class PaymentsService {
           where: { userId: user.authUserId },
           update: {
             stripeSubscriptionId: subscription.id,
-            stripePriceId: (resolvedPlan?.stripePriceId || priceId) as string,
+            stripePriceId: resolvedPlan?.stripePriceId || priceId,
             stripeSubscriptionItemId: subscriptionItemId,
             status: this.mapStripeStatusToDb(subscription.status),
             currentPeriodStart: new Date(
@@ -630,7 +630,7 @@ export class PaymentsService {
           create: {
             userId: user.authUserId,
             stripeSubscriptionId: subscription.id,
-            stripePriceId: (resolvedPlan?.stripePriceId || priceId) as string,
+            stripePriceId: resolvedPlan?.stripePriceId || priceId,
             stripeSubscriptionItemId: subscriptionItemId,
             status: this.mapStripeStatusToDb(subscription.status),
             currentPeriodStart: new Date(
