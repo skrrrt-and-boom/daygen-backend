@@ -32,13 +32,17 @@ export class StripeWebhookController {
     // Performance tracking: request arrival
     const requestStartTime = Date.now();
     const requestArrivalTime = new Date().toISOString();
-    
-    this.logger.log(`Webhook received at ${requestArrivalTime} - checking signature`);
+
+    this.logger.log(
+      `Webhook received at ${requestArrivalTime} - checking signature`,
+    );
 
     if (!signature) {
       this.logger.error('Missing Stripe signature');
       const errorTime = Date.now() - requestStartTime;
-      this.logger.log(`Webhook processing failed (no signature) in ${errorTime}ms`);
+      this.logger.log(
+        `Webhook processing failed (no signature) in ${errorTime}ms`,
+      );
       return res
         .status(HttpStatus.BAD_REQUEST)
         .send('Missing Stripe signature');
@@ -51,17 +55,17 @@ export class StripeWebhookController {
     try {
       // Performance tracking: signature verification start
       const signatureStartTime = Date.now();
-      
+
       // Construct the event
       const event = this.stripeService.constructWebhookEvent(
         req.body as string | Buffer,
         signature,
       );
-      
+
       // Performance tracking: signature verification complete
       const signatureVerificationTime = Date.now() - signatureStartTime;
       const totalTimeSoFar = Date.now() - requestStartTime;
-      
+
       this.logger.log(
         `Received webhook event: ${event.type} (ID: ${event.id}) at ${new Date().toISOString()}`,
       );
@@ -115,8 +119,8 @@ export class StripeWebhookController {
           await this.handlePaymentIntentFailed(event.data.object);
           break;
 
-      default:
-        this.logger.log(`Unhandled event type: ${event.type}`);
+        default:
+          this.logger.log(`Unhandled event type: ${event.type}`);
       }
 
       // Performance tracking: response ready
@@ -125,7 +129,7 @@ export class StripeWebhookController {
       this.logger.log(
         `Webhook processing completed in ${eventProcessingTime}ms (event: ${event.type}, id: ${event.id})`,
       );
-      
+
       // Log performance metrics
       this.logger.log({
         event: 'webhook_performance',
@@ -137,7 +141,7 @@ export class StripeWebhookController {
         requestArrivalTime,
         responseTime: new Date().toISOString(),
       });
-      
+
       return res.status(HttpStatus.OK).json({ received: true });
     } catch (error) {
       // Performance tracking: error occurred
@@ -149,10 +153,8 @@ export class StripeWebhookController {
         name: error instanceof Error ? error.name : undefined,
         processingTime: errorProcessingTime,
       });
-      this.logger.log(
-        `Webhook error occurred after ${errorProcessingTime}ms`,
-      );
-      
+      this.logger.log(`Webhook error occurred after ${errorProcessingTime}ms`);
+
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       return res

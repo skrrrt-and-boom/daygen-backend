@@ -17,9 +17,12 @@ export class PrismaService
         const isSupabase = /supabase\.co$/i.test(eu.hostname);
         const port = Number(eu.port || '5432');
         if (isSupabase && (port === 6543 || port === 6532)) {
-          if (!eu.searchParams.get('sslmode')) eu.searchParams.set('sslmode', 'require');
-          if (!eu.searchParams.get('pgbouncer')) eu.searchParams.set('pgbouncer', 'true');
-          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '1');
+          if (!eu.searchParams.get('sslmode'))
+            eu.searchParams.set('sslmode', 'require');
+          if (!eu.searchParams.get('pgbouncer'))
+            eu.searchParams.set('pgbouncer', 'true');
+          if (!eu.searchParams.get('connection_limit'))
+            eu.searchParams.set('connection_limit', '1');
           effectiveUrl = eu.toString();
         }
         const logUrl = new URL(effectiveUrl);
@@ -29,7 +32,9 @@ export class PrismaService
           }, pgbouncer=${logUrl.searchParams.get('pgbouncer') || 'n/a'})`,
         );
       }
-    } catch {}
+    } catch {
+      // Ignore URL parsing errors
+    }
 
     if (!databaseUrl) {
       console.warn(

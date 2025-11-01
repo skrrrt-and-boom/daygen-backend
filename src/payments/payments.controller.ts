@@ -126,7 +126,7 @@ export class PaymentsController {
         'Test endpoints are not available in production',
       );
     }
-    
+
     console.log(
       `🎯 CONTROLLER: Manual payment completion requested for session: ${sessionId}`,
     );
@@ -159,7 +159,7 @@ export class PaymentsController {
         'Test endpoints are not available in production',
       );
     }
-    
+
     return this.paymentsService.completePaymentByIntentId(paymentIntentId);
   }
 
@@ -182,7 +182,7 @@ export class PaymentsController {
         'Test endpoints are not available in production',
       );
     }
-    
+
     return this.paymentsService.createManualSubscription(body);
   }
 }
