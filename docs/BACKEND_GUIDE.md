@@ -10,8 +10,8 @@
 # install
 npm ci
 
-# start dev server (safe: resolves port conflicts)
-npm run start:dev:safe
+# start dev server
+npm run start:dev
 
 # health check
 curl -s http://localhost:3000/health | jq
@@ -20,9 +20,7 @@ curl -s http://localhost:3000/health | jq
 Handy dev scripts:
 
 ```bash
-npm run dev:check     # show process using port 3000
-npm run dev:kill      # kill process on port 3000
-npm run dev:restart   # restart dev server
+# Use your OS tooling to manage processes on port 3000 if needed
 ```
 
 ---

@@ -45,6 +45,13 @@ STRIPE_ENTERPRISE_PRICE_ID="price_enterprise_monthly"
 STRIPE_PRO_YEARLY_PRICE_ID="price_pro_yearly"
 STRIPE_ENTERPRISE_YEARLY_PRICE_ID="price_enterprise_yearly"
 
+# Cloudflare R2 Configuration
+CLOUDFLARE_R2_ACCOUNT_ID="your-account-id"
+CLOUDFLARE_R2_ACCESS_KEY_ID="your-access-key-id"
+CLOUDFLARE_R2_SECRET_ACCESS_KEY="your-secret-access-key"
+CLOUDFLARE_R2_BUCKET_NAME="your-bucket-name"
+CLOUDFLARE_R2_PUBLIC_URL="https://your-public-url.r2.dev"
+
 # Image Generation Services
 # Add your other service configurations here...
 ```

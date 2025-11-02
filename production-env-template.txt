@@ -13,6 +13,7 @@ JWT_SECRET="your-super-secure-jwt-secret-here"
 SUPABASE_URL="https://your-project.supabase.co"
 SUPABASE_ANON_KEY="your-supabase-anon-key"
 SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
+SUPABASE_JWT_SECRET="your-base64-encoded-jwt-secret"
 
 # Stripe Configuration (CRITICAL FOR PAYMENT FIXES)
 STRIPE_SECRET_KEY="sk_live_your_live_secret_key_here"

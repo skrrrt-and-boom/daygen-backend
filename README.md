@@ -1,6 +1,6 @@
 # DayGen Backend
 
-See the concise guide at `docs/BACKEND_GUIDE.md` for day-to-day development, envs, queue, payments, and deployment pointers. For a full architecture map, open `/Users/dominiknowak/code/backend.md`.
+See the concise guide at `docs/BACKEND_GUIDE.md` for day-to-day development, envs, queue, payments, and deployment pointers. For a full architecture map, open `./backend.md`.
 
 A comprehensive NestJS backend service for the DayGen AI-powered content generation platform. Provides image and video generation, user authentication, payment processing, and gallery management.
 
@@ -16,6 +16,14 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 - **Runway Gen-4**: Professional image generation with cinematic quality
 - **DALL·E 3**: OpenAI's image generation API with multiple model variants
 - **Luma AI**: Dream Shaper, Realistic Vision, and Photon models for various styles
+### Image Generation
+- `POST /api/image/gemini` - Gemini 2.5 Flash image generation
+- `POST /api/image/flux` - FLUX model generation
+- `POST /api/image/ideogram` - Ideogram generation
+- `POST /api/image/runway` - Runway generation
+- `POST /api/image/recraft` - Recraft generation
+- `POST /api/image/reve` - Reve generation
+- `POST /api/image/luma` - Luma AI generation
 
 ### Video Generation
 - **Veo 3**: Google's latest cinematic video generation with advanced prompting
@@ -151,7 +159,7 @@ Configure API keys for the providers you want to use:
 - `POST /api/payments/create-checkout` - Create Stripe checkout session
 - `GET /api/payments/subscription` - Get user subscription
 - `POST /api/payments/subscription/upgrade` - Upgrade subscription
-- `POST /api/payments/cancel-subscription` - Cancel subscription
+- `POST /api/payments/subscription/cancel` - Cancel subscription
 - `GET /api/payments/history` - Get payment history
 
 ### Health & Monitoring

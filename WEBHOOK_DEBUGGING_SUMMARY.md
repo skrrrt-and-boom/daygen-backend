@@ -1,5 +1,7 @@
 # Webhook Processing Debugging Summary
 
+> Archived: superseded by `WEBHOOK_PROCESSING_SOLUTION.md` (production-ready). Keep for historical context only.
+
 ## Current Status
 
 ### ✅ **FIXED**
@@ -8,8 +10,8 @@
 3. **Webhook Signature Verification** - Working correctly (200 status codes from Stripe CLI)
 4. **Webhook Endpoint** - Accessible and responding at `/webhooks/stripe`
 
-### ❌ **ISSUE**
-**No subscription records are being created from webhook events**
+### ❌ **ISSUE** (historical)
+**No subscription records are being created from webhook events** (for synthetic CLI-triggered events without real session metadata)
 
 ## Root Cause Analysis
 
