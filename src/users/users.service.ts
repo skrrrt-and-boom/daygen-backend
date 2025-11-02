@@ -121,11 +121,37 @@ export class UsersService {
 
     // Delete old profile picture from R2 if exists
     if (currentUser.profileImage) {
-      try {
-        await this.r2Service.deleteFile(currentUser.profileImage);
-      } catch (error) {
-        console.error('Failed to delete old profile picture:', error);
-        // Continue even if deletion fails
+      // Skip deletion for base64 URLs (shouldn't be in R2)
+      if (this.r2Service.isBase64Url(currentUser.profileImage)) {
+        console.log(
+          'Skipping deletion of base64 profile image URL (not stored in R2)',
+        );
+      } else if (this.r2Service.validateR2Url(currentUser.profileImage)) {
+        // Only attempt deletion for valid R2 URLs
+        try {
+          const deleted = await this.r2Service.deleteFile(
+            currentUser.profileImage,
+          );
+          if (deleted) {
+            console.log(
+              'Successfully deleted old profile picture from R2:',
+              currentUser.profileImage,
+            );
+          } else {
+            console.warn(
+              'Failed to delete old profile picture from R2 (returned false):',
+              currentUser.profileImage,
+            );
+          }
+        } catch (error) {
+          console.error('Error deleting old profile picture from R2:', error);
+          // Continue even if deletion fails - don't block the upload
+        }
+      } else {
+        console.log(
+          'Skipping deletion of non-R2 profile image URL:',
+          currentUser.profileImage,
+        );
       }
     }
 
@@ -150,11 +176,37 @@ export class UsersService {
 
     // Delete profile picture from R2 if exists
     if (currentUser.profileImage) {
-      try {
-        await this.r2Service.deleteFile(currentUser.profileImage);
-      } catch (error) {
-        console.error('Failed to delete profile picture from R2:', error);
-        // Continue even if deletion fails
+      // Skip deletion for base64 URLs (shouldn't be in R2)
+      if (this.r2Service.isBase64Url(currentUser.profileImage)) {
+        console.log(
+          'Skipping deletion of base64 profile image URL (not stored in R2)',
+        );
+      } else if (this.r2Service.validateR2Url(currentUser.profileImage)) {
+        // Only attempt deletion for valid R2 URLs
+        try {
+          const deleted = await this.r2Service.deleteFile(
+            currentUser.profileImage,
+          );
+          if (deleted) {
+            console.log(
+              'Successfully deleted profile picture from R2:',
+              currentUser.profileImage,
+            );
+          } else {
+            console.warn(
+              'Failed to delete profile picture from R2 (returned false):',
+              currentUser.profileImage,
+            );
+          }
+        } catch (error) {
+          console.error('Error deleting profile picture from R2:', error);
+          // Continue even if deletion fails - don't block the removal
+        }
+      } else {
+        console.log(
+          'Skipping deletion of non-R2 profile image URL:',
+          currentUser.profileImage,
+        );
       }
     }
 
