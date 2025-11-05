@@ -31,28 +31,29 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
       if (typeof val === 'number' && Number.isFinite(val)) form.set(name, String(val));
     };
 
-    const opts = dto.providerOptions ?? {} as Record<string, unknown>;
-    const aspect = (opts['aspect_ratio'] ?? (opts['aspectRatio'] as unknown)) as string | undefined;
+    const opts: Record<string, unknown> = {};
+    Object.assign(opts, dto.providerOptions ?? {});
+    const aspect = (opts['aspect_ratio'] ?? opts['aspectRatio']) as string | undefined;
     if (aspect && aspect.trim()) {
       form.set('aspect_ratio', aspect.replace(':', 'x'));
     }
     addStr('resolution', opts['resolution']);
-    addStr('rendering_speed', opts['rendering_speed'] ?? (opts['renderingSpeed'] as unknown));
-    addStr('magic_prompt', opts['magic_prompt'] ?? (opts['magicPrompt'] as unknown));
-    addStr('style_preset', opts['style_preset'] ?? (opts['stylePreset'] as unknown));
-    addStr('style_type', opts['style_type'] ?? (opts['styleType'] as unknown));
-    addStr('negative_prompt', opts['negative_prompt'] ?? (opts['negativePrompt'] as unknown));
-    addNum('num_images', opts['num_images'] ?? (opts['numImages'] as unknown));
+    addStr('rendering_speed', opts['rendering_speed'] ?? opts['renderingSpeed']);
+    addStr('magic_prompt', opts['magic_prompt'] ?? opts['magicPrompt']);
+    addStr('style_preset', opts['style_preset'] ?? opts['stylePreset']);
+    addStr('style_type', opts['style_type'] ?? opts['styleType']);
+    addStr('negative_prompt', opts['negative_prompt'] ?? opts['negativePrompt']);
+    addNum('num_images', opts['num_images'] ?? opts['numImages']);
     addNum('seed', opts['seed']);
 
-    const styleCodes = (opts['style_codes'] ?? (opts['styleCodes'] as unknown)) as unknown;
+    const styleCodes = opts['style_codes'] ?? opts['styleCodes'];
     if (Array.isArray(styleCodes)) {
       for (const code of styleCodes) {
         if (typeof code === 'string' && code.trim()) form.append('style_codes', code.trim());
       }
     }
 
-    const colorPalette = opts['color_palette'] ?? (opts['colorPalette'] as unknown);
+    const colorPalette = opts['color_palette'] ?? opts['colorPalette'];
     if (colorPalette !== undefined) {
       const serialized = typeof colorPalette === 'string' ? colorPalette : JSON.stringify(colorPalette);
       if (serialized.trim()) form.set('color_palette', serialized.trim());
@@ -99,10 +100,13 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
   private extractMessage(value: unknown): string | undefined {
     if (!value || typeof value !== 'object') return undefined;
     const v = value as Record<string, unknown>;
-    const direct = typeof v['message'] === 'string' ? (v['message'] as string) : undefined;
+    const direct = typeof v['message'] === 'string' ? v['message'] : undefined;
     if (direct) return direct;
     const err = v['error'];
-    if (err && typeof err === 'object' && typeof (err as any).message === 'string') return (err as any).message;
+    if (err && typeof err === 'object') {
+      const errMsg = (err as { message?: unknown }).message;
+      if (typeof errMsg === 'string') return errMsg;
+    }
     return undefined;
   }
 
@@ -124,10 +128,10 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
       }
     };
 
-    tryArray((payload as any).images);
+    tryArray(payload['images']);
     if (out.length > 0) return out;
 
-    const data = (payload as any).data;
+    const data = payload['data'];
     tryArray(data);
     return out;
   }

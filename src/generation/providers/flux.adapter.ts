@@ -53,9 +53,11 @@ export class FluxImageAdapter implements ImageProviderAdapter {
     const endpoint = `${apiBase}/v1/${model}`;
 
     const providerOptions = dto.providerOptions ?? {};
+    const optionsRecord: Record<string, unknown> = {};
+    Object.assign(optionsRecord, providerOptions);
     const payload: Record<string, unknown> = { prompt: dto.prompt };
     for (const key of FLUX_OPTION_KEYS) {
-      const value = (providerOptions as Record<string, unknown>)[key];
+      const value = optionsRecord[key];
       if (value !== undefined && value !== null) payload[key] = value;
     }
     if (Array.isArray(dto.references) && dto.references.length > 0) {
@@ -219,7 +221,11 @@ export class FluxImageAdapter implements ImageProviderAdapter {
   }
 
   private normalizeStatus(value: unknown): 'QUEUED' | 'PROCESSING' | 'READY' | 'FAILED' | 'ERROR' {
-    const normalized = String(value ?? '').trim().toUpperCase();
+    const raw =
+      typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+        ? String(value)
+        : '';
+    const normalized = raw.trim().toUpperCase();
     if (['READY', 'COMPLETED', 'FINISHED', 'DONE'].includes(normalized)) return 'READY';
     if (['FAILED', 'FAILURE'].includes(normalized)) return 'FAILED';
     if (normalized === 'ERROR') return 'ERROR';

@@ -75,14 +75,18 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     const candidates = Array.isArray((payload as any).candidates) ? (payload as any).candidates : [];
     const first = candidates[0] && typeof candidates[0] === 'object' ? candidates[0] : undefined;
     const content = first && typeof first.content === 'object' ? first.content : undefined;
-    const partsOut: any[] = content && Array.isArray((content as any).parts) ? (content as any).parts : [];
+    const partsProp = (content as { parts?: unknown } | undefined)?.parts;
+    const partsOut: unknown[] = Array.isArray(partsProp) ? partsProp : [];
 
     for (const p of partsOut) {
-      if (p && typeof p === 'object' && p.inlineData && typeof p.inlineData.data === 'string') {
-        const mime = typeof p.inlineData.mimeType === 'string' ? p.inlineData.mimeType : 'image/png';
-        const url = `data:${mime};base64,${p.inlineData.data}`;
-        results.push({ url, mimeType: mime, provider: this.providerName, model: targetModel });
-        break;
+      if (p && typeof p === 'object') {
+        const inline = (p as { inlineData?: { mimeType?: unknown; data?: unknown } }).inlineData;
+        if (inline && typeof inline.data === 'string') {
+          const mime = typeof inline.mimeType === 'string' ? inline.mimeType : 'image/png';
+          const url = `data:${mime};base64,${inline.data}`;
+          results.push({ url, mimeType: mime, provider: this.providerName, model: targetModel });
+          break;
+        }
       }
     }
 

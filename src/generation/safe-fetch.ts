@@ -34,9 +34,7 @@ const DEFAULTS = {
   maxRedirects: 1,
 };
 
-function isIpv6(address: string): boolean {
-  return net.isIP(address) === 6;
-}
+// removed unused isIpv6 helper
 
 function isPrivateIpv4(address: string): boolean {
   // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 127.0.0.0/8
@@ -93,17 +91,7 @@ async function resolveAndAssertPublic(hostname: string): Promise<void> {
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), ms);
-  // Attach controller to fetch via options at call sites; here we just race abort.
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-    }),
-  ]).finally(() => clearTimeout(t));
-}
+// removed unused withTimeout helper
 
 async function fetchOnce(url: string, headers: Record<string, string>, timeoutMs: number, signal?: AbortSignal) {
   const controller = new AbortController();

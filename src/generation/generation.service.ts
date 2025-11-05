@@ -2361,7 +2361,7 @@ export class GenerationService {
         acceptContentTypes: /^image\//i,
       });
       return toDataUrl(result.arrayBuffer, result.mimeType);
-    } catch (err) {
+    } catch {
       // Fallback to legacy downloader that can extract inline JSON-embedded data
       const { dataUrl } = await this.downloadAsDataUrl(normalized, headers);
       return dataUrl;
