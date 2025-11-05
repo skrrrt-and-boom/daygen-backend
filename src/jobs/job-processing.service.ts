@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { JobStatus, JobType } from '@prisma/client';
 import { GenerationService } from '../generation/generation.service';
 import { R2FilesService } from '../r2files/r2files.service';
+import { R2Service } from '../upload/r2.service';
 import { UsageService } from '../usage/usage.service';
 import { PaymentsService } from '../payments/payments.service';
 import { CloudTasksService } from './cloud-tasks.service';
@@ -25,6 +26,7 @@ export class JobProcessingService {
   constructor(
     private readonly generationService: GenerationService,
     private readonly r2FilesService: R2FilesService,
+    private readonly r2Service: R2Service,
     private readonly usageService: UsageService,
     private readonly paymentsService: PaymentsService,
     private readonly structuredLogger: LoggerService,
@@ -290,11 +292,41 @@ export class JobProcessingService {
 
     const { fileUrl, mimeType, r2FileId } = this.extractResultAsset(result);
 
-    // Ensure we have an R2 URL, not base64 data
-    if (fileUrl.startsWith('data:image/')) {
-      throw new Error(
-        'R2 upload failed - base64 data detected instead of R2 URL. Please ensure R2 is properly configured.',
-      );
+    // Normalize to an R2 public URL before completing the job
+    let finalUrl = fileUrl;
+    let finalMime = mimeType;
+
+    // If we received a data URL, upload its contents to R2
+    if (this.isDataImageUrl(finalUrl)) {
+      const parts = this.extractDataUrlParts(finalUrl);
+      if (!parts) {
+        throw new Error('Invalid data URL received from provider result.');
+      }
+      try {
+        finalUrl = await this.r2Service.uploadBase64Image(parts.base64, parts.mimeType || 'image/png', 'generated-images');
+        finalMime = parts.mimeType || finalMime;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `R2 upload failed for data URL: ${message}`,
+        );
+      }
+    } else if (!this.r2Service.validateR2Url(finalUrl)) {
+      // If it's a remote non-R2 URL, download then upload to R2
+      try {
+        const downloaded = await this.downloadUrlAsBase64(finalUrl);
+        finalUrl = await this.r2Service.uploadBase64Image(
+          downloaded.base64,
+          downloaded.mimeType || finalMime || 'image/png',
+          'generated-images',
+        );
+        finalMime = downloaded.mimeType || finalMime;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Failed to persist remote image to R2: ${message}`,
+        );
+      }
     }
 
     let r2File = r2FileId
@@ -304,8 +336,8 @@ export class JobProcessingService {
     if (!r2File) {
       r2File = await this.r2FilesService.create(user.authUserId, {
         fileName: `generated-${Date.now()}.png`,
-        fileUrl,
-        mimeType,
+        fileUrl: finalUrl,
+        mimeType: finalMime,
         prompt,
         model,
         jobId,
@@ -603,6 +635,36 @@ export class JobProcessingService {
       mimeType: mimeType ?? 'image/jpeg',
       r2FileId,
     };
+  }
+
+  private isDataImageUrl(url: string): boolean {
+    return typeof url === 'string' && url.startsWith('data:image/');
+  }
+
+  private extractDataUrlParts(url: string): { mimeType: string; base64: string } | null {
+    if (!this.isDataImageUrl(url)) return null;
+    const match = url.match(/^data:([^;,]+);base64,(.*)$/);
+    if (!match) return null;
+    const mimeType = match[1] || 'image/png';
+    const base64 = match[2] || '';
+    return { mimeType, base64 };
+  }
+
+  private async downloadUrlAsBase64(url: string): Promise<{ mimeType: string; base64: string }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} fetching ${url}`);
+      }
+      const contentType = res.headers.get('content-type') || 'image/png';
+      const arrayBuffer = await res.arrayBuffer();
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
+      return { mimeType: contentType, base64 };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private mapQueueModelToGenerationModel(model: string): string {

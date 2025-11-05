@@ -6,6 +6,7 @@ import { JobsGateway } from './jobs.gateway';
 import { PrismaModule } from '../prisma/prisma.module';
 import { GenerationModule } from '../generation/generation.module';
 import { R2FilesModule } from '../r2files/r2files.module';
+import { UploadModule } from '../upload/upload.module';
 import { UsageModule } from '../usage/usage.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { JobProcessingService } from './job-processing.service';
@@ -18,6 +19,7 @@ import { RequestContextService } from '../common/request-context.service';
     PrismaModule,
     forwardRef(() => GenerationModule),
     R2FilesModule,
+    UploadModule,
     UsageModule,
     PaymentsModule,
   ],

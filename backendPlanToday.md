@@ -5,4 +5,4 @@ Stripe webhook: 2025-09-30
 
 Quick notes:
 Clean unneaded code from payments
-Highlight current subscription 
+Highlight current subscription

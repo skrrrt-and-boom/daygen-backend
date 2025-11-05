@@ -17,6 +17,8 @@ import { R2Service } from '../upload/r2.service';
 import { ProviderGenerateDto } from './dto/base-generate.dto';
 import { UsageService } from '../usage/usage.service';
 import { PaymentsService } from '../payments/payments.service';
+import { safeDownload, toDataUrl } from './safe-fetch';
+import { COMMON_ALLOWED_SUFFIXES } from './allowed-hosts';
 
 interface GeneratedAsset {
   dataUrl: string;
@@ -108,21 +110,29 @@ const FLUX_ALLOWED_POLL_HOSTS = new Set([
   'api.us3.bfl.ai',
   'api.eu4.bfl.ai',
   'api.us4.bfl.ai',
+  // Additional hosts observed in the wild / future-proofing
+  'api.bfl.ml',
 ]);
 
 const FLUX_ALLOWED_DOWNLOAD_HOSTS = new Set([
   'delivery.bfl.ai',
   'cdn.bfl.ai',
+  // Additional CDN hosts
+  'delivery.bfl.ml',
+  'cdn.bfl.ml',
   'storage.googleapis.com',
 ]);
 
 const FLUX_POLL_INTERVAL_MS = 5000;
 const FLUX_MAX_ATTEMPTS = 60;
 
-const FLUX_ALLOWED_POLL_SUFFIXES = ['.bfl.ai'] as const;
+const FLUX_ALLOWED_POLL_SUFFIXES = ['.bfl.ai', '.bfl.ml'] as const;
 const FLUX_ALLOWED_DOWNLOAD_SUFFIXES = [
   '.bfl.ai',
+  '.bfl.ml',
   '.googleusercontent.com',
+  // Some regions return Azure Blob Storage signed URLs
+  '.blob.core.windows.net',
 ] as const;
 
 const GEMINI_API_KEY_CANDIDATES = [
@@ -393,39 +403,39 @@ export class GenerationService {
   ): Promise<ProviderResult> {
     // Handle FLUX models
     if (model.startsWith('flux-')) {
-      return this.handleFlux(dto);
+      return this.withCircuit('flux', () => this.handleFlux(dto));
     }
 
     switch (model) {
       case 'gemini-2.5-flash-image':
       case 'gemini-2.5-flash-image-preview':
-        return this.handleGemini({
+        return this.withCircuit('gemini', () => this.handleGemini({
           ...dto,
           model: 'gemini-2.5-flash-image',
-        });
+        }));
       case 'ideogram':
-        return this.handleIdeogram(dto);
+        return this.withCircuit('ideogram', () => this.handleIdeogram(dto));
       case 'qwen-image':
-        return this.handleQwen(dto);
+        return this.withCircuit('qwen', () => this.handleQwen(dto));
       case 'runway-gen4':
       case 'runway-gen4-turbo':
-        return this.handleRunway(dto);
+        return this.withCircuit('runway', () => this.handleRunway(dto));
       case 'seedream-3.0':
-        return this.handleSeedream(dto);
+        return this.withCircuit('seedream', () => this.handleSeedream(dto));
       case 'chatgpt-image':
-        return this.handleChatGpt(dto);
+        return this.withCircuit('openai', () => this.handleChatGpt(dto));
       case 'reve-image':
       case 'reve-image-1.0':
       case 'reve-v1':
-        return this.handleReve(dto);
+        return this.withCircuit('reve', () => this.handleReve(dto));
       case 'recraft-v2':
       case 'recraft-v3':
-        return this.handleRecraft(dto);
+        return this.withCircuit('recraft', () => this.handleRecraft(dto));
       case 'luma-dream-shaper':
       case 'luma-realistic-vision':
       case 'luma-photon-1':
       case 'luma-photon-flash-1':
-        return this.handleLuma(dto);
+        return this.withCircuit('luma', () => this.handleLuma(dto));
       default:
         this.throwBadRequest('Unsupported model', { model });
     }
@@ -458,7 +468,7 @@ export class GenerationService {
       payload.references = dto.references;
     }
 
-    const createResponse = await fetch(endpoint, {
+    const createResponse = await this.fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -466,7 +476,7 @@ export class GenerationService {
         accept: 'application/json',
       },
       body: JSON.stringify(payload),
-    });
+    }, 20000);
 
     const createPayload = (await createResponse.json().catch(async () => {
       const text = await createResponse.text().catch(() => '<unavailable>');
@@ -635,11 +645,15 @@ export class GenerationService {
     requestPayload.generationConfig = generationConfig;
 
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestPayload),
-    });
+    const response = await this.fetchWithTimeout(
+      endpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestPayload),
+      },
+      20000,
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -1123,14 +1137,14 @@ export class GenerationService {
     };
     this.logger.debug('Ideogram request payload', sanitizedIdeogramLog);
 
-    const response = await fetch(endpoint, {
+    const response = await this.fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         'Api-Key': apiKey,
         Accept: 'application/json',
       },
       body: form,
-    });
+    }, 20000);
 
     if (!response.ok) {
       const errorPayload = await this.safeJson(response);
@@ -1205,14 +1219,14 @@ export class GenerationService {
       },
     };
 
-    const response = await fetch(endpoint, {
+    const response = await this.fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-    });
+    }, 20000);
 
     const resultPayload = (await response.json()) as unknown;
     const resultRecord = toJsonRecord(resultPayload);
@@ -1296,7 +1310,7 @@ export class GenerationService {
     };
     this.logger.debug('Runway request payload', sanitizedLog);
 
-    const createResponse = await fetch(
+    const createResponse = await this.fetchWithTimeout(
       'https://api.dev.runwayml.com/v1/text_to_image',
       {
         method: 'POST',
@@ -1307,6 +1321,7 @@ export class GenerationService {
         },
         body: JSON.stringify(requestBody),
       },
+      20000,
     );
 
     const createPayload = await this.safeJson(createResponse);
@@ -1389,7 +1404,7 @@ export class GenerationService {
       throw new ServiceUnavailableException('Seedream API key not configured');
     }
 
-    const response = await fetch(
+    const response = await this.fetchWithTimeout(
       'https://ark.ap-southeast.bytepluses.com/api/v3/image/generate',
       {
         method: 'POST',
@@ -1405,6 +1420,7 @@ export class GenerationService {
           num_images: dto.providerOptions.n ?? 1,
         }),
       },
+      20000,
     );
 
     const resultPayload = (await response.json()) as unknown;
@@ -1452,7 +1468,7 @@ export class GenerationService {
       throw new ServiceUnavailableException('OpenAI API key not configured');
     }
 
-    const response = await fetch(
+    const response = await this.fetchWithTimeout(
       'https://api.openai.com/v1/images/generations',
       {
         method: 'POST',
@@ -1467,6 +1483,7 @@ export class GenerationService {
           size: dto.providerOptions.size ?? '1024x1024',
         }),
       },
+      20000,
     );
 
     const resultPayload = (await response.json()) as unknown;
@@ -1598,7 +1615,7 @@ export class GenerationService {
 
     const endpoint = `${this.getReveApiBase()}/v1/image/create`;
 
-    const response = await fetch(endpoint, {
+    const response = await this.fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -1606,7 +1623,7 @@ export class GenerationService {
         Accept: 'application/json',
       },
       body: JSON.stringify(requestBody),
-    });
+    }, 20000);
 
     const resultPayload = await this.safeJson(response);
 
@@ -1679,13 +1696,13 @@ export class GenerationService {
     }
 
     const endpoint = `${this.getReveApiBase()}/v1/images/${encodeURIComponent(trimmedId)}`;
-    const response = await fetch(endpoint, {
+    const response = await this.fetchWithTimeout(endpoint, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-    });
+    }, 15000);
 
     const textPayload = await response.text();
     let resultPayload: unknown;
@@ -1766,13 +1783,13 @@ export class GenerationService {
       form.set('mask', maskBlob, input.mask.filename ?? 'mask.png');
     }
 
-    const response = await fetch(endpoint, {
+    const response = await this.fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
       body: form,
-    });
+    }, 20000);
 
     const textPayload = await response.text();
     let resultPayload: unknown;
@@ -2328,20 +2345,36 @@ export class GenerationService {
     if (source.startsWith('data:')) {
       return source;
     }
+
     const normalized = source.startsWith('gs://')
       ? (this.convertGsUriToHttps(source) ?? source)
       : source;
-    const { dataUrl } = await this.downloadAsDataUrl(normalized, headers);
-    return dataUrl;
+
+    try {
+      const url = new URL(normalized);
+      const allowedHosts = new Set<string>([url.hostname]);
+      const result = await safeDownload(normalized, {
+        allowedHosts,
+        allowedHostSuffixes: COMMON_ALLOWED_SUFFIXES,
+        headers: headers ?? {},
+        // Accept only images in the fast path; JSON will fall back to legacy path
+        acceptContentTypes: /^image\//i,
+      });
+      return toDataUrl(result.arrayBuffer, result.mimeType);
+    } catch (err) {
+      // Fallback to legacy downloader that can extract inline JSON-embedded data
+      const { dataUrl } = await this.downloadAsDataUrl(normalized, headers);
+      return dataUrl;
+    }
   }
 
   private async downloadAsDataUrl(
     url: string,
     headers?: Record<string, string>,
   ) {
-    const response = await fetch(url, {
+    const response = await this.fetchWithTimeout(url, {
       headers,
-    });
+    }, 10000);
 
     if (!response.ok) {
       const text = await response.text().catch(() => '<no-body>');
@@ -2623,7 +2656,7 @@ export class GenerationService {
 
   private async pollRunwayTask(apiKey: string, taskId: string) {
     for (let attempt = 0; attempt < RUNWAY_MAX_ATTEMPTS; attempt += 1) {
-      const response = await fetch(
+      const response = await this.fetchWithTimeout(
         `https://api.dev.runwayml.com/v1/tasks/${taskId}`,
         {
           headers: {
@@ -2632,6 +2665,7 @@ export class GenerationService {
             Accept: 'application/json',
           },
         },
+        15000,
       );
 
       const payload = await this.safeJson(response);
@@ -3719,13 +3753,13 @@ export class GenerationService {
     let lastPayloadRaw: unknown = null;
 
     for (let attempt = 0; attempt < FLUX_MAX_ATTEMPTS; attempt += 1) {
-      const response = await fetch(pollingUrl, {
+      const response = await this.fetchWithTimeout(pollingUrl, {
         method: 'GET',
         headers: {
           'x-key': apiKey,
           accept: 'application/json',
         },
-      });
+      }, 20000);
 
       const text = await response.text().catch(() => '');
       let payloadRaw: unknown;
@@ -3782,6 +3816,72 @@ export class GenerationService {
       },
       HttpStatus.REQUEST_TIMEOUT,
     );
+  }
+
+  // --- Timeouts, Retries, Circuit Breaker ---
+
+  private circuitMap = new Map<string, { failures: number; openedUntil: number }>();
+
+  private isCircuitOpen(provider: string): boolean {
+    const now = Date.now();
+    const state = this.circuitMap.get(provider);
+    return !!state && state.openedUntil > now;
+  }
+
+  private recordSuccess(provider: string) {
+    this.circuitMap.delete(provider);
+  }
+
+  private recordFailure(provider: string, threshold = 5, openMs = 60_000) {
+    const now = Date.now();
+    const state = this.circuitMap.get(provider) ?? { failures: 0, openedUntil: 0 };
+    state.failures += 1;
+    if (state.failures >= threshold) {
+      state.openedUntil = now + openMs;
+      state.failures = 0;
+    }
+    this.circuitMap.set(provider, state);
+  }
+
+  private async withCircuit<T>(provider: string, fn: () => Promise<T>): Promise<T> {
+    if (this.isCircuitOpen(provider)) {
+      throw new ServiceUnavailableException(`${provider} temporarily unavailable (circuit open)`);
+    }
+    try {
+      const res = await fn();
+      this.recordSuccess(provider);
+      return res;
+    } catch (err) {
+      // Increment on timeouts, 429, 5xx; otherwise keep closed
+      let shouldTrip = false;
+      const message = err instanceof Error ? err.message : String(err);
+      if (/timed out/i.test(message) || /aborted/i.test(message)) {
+        shouldTrip = true;
+      }
+      const status = (err as { status?: number }).status;
+      if (status && (status === 429 || status >= 500)) {
+        shouldTrip = true;
+      }
+      if (shouldTrip) {
+        this.recordFailure(provider);
+      }
+      throw err;
+    }
+  }
+
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      return res;
+    } finally {
+      clearTimeout(t);
+    }
   }
 
   private normalizeFluxStatus(

@@ -4,7 +4,7 @@
  * Upload Frontend Images to R2
  * 
  * Uploads specific frontend images to Cloudflare R2 bucket
- * under 'daygen-assets/website assets' directory.
+ * under 'website-assets' directory.
  */
 
 const fs = require('fs');
@@ -16,7 +16,7 @@ require('dotenv').config();
 
 // Configuration
 const FRONTEND_PUBLIC_DIR = path.join(__dirname, '../../daygen0/public');
-const R2_FOLDER = 'daygen-assets/website assets'; // Note: space in directory name
+const R2_FOLDER = 'website-assets';
 const BUCKET_NAME = process.env.CLOUDFLARE_R2_BUCKET_NAME?.trim() || 'daygen-assets';
 
 // Files to upload (only these specific files)

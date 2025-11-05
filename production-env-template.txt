@@ -54,6 +54,15 @@ OPENAI_API_KEY="sk-proj-your-openai-key"
 GEMINI_API_KEY="your-gemini-key"
 BFL_API_KEY="your-bfl-key"
 BFL_API_BASE="https://api.bfl.ai"
+# Optional: Expand BFL host allowlists if provider returns new domains/regions
+# Comma-separated lists. Suffixes should be plain domains (with or without leading dot/wildcard).
+# Examples below allow both .bfl.ai and .bfl.ml plus common Google CDN.
+# If you see specific concrete hosts in logs (e.g. api.eu5.bfl.ai, delivery.bfl.ml), add them to HOSTS.
+# Note: These are read by GenerationService.ensureFluxHost.
+#BFL_ALLOWED_POLL_SUFFIXES=".bfl.ai,.bfl.ml"
+#BFL_ALLOWED_DOWNLOAD_SUFFIXES=".bfl.ai,.bfl.ml,.googleusercontent.com"
+#BFL_ALLOWED_POLL_HOSTS="api.bfl.ai,api.eu.bfl.ai,api.us.bfl.ai,api.bfl.ml"
+#BFL_ALLOWED_DOWNLOAD_HOSTS="delivery.bfl.ai,cdn.bfl.ai,delivery.bfl.ml,cdn.bfl.ml"
 IDEOGRAM_API_KEY="your-ideogram-key"
 DASHSCOPE_API_KEY="your-dashscope-key"
 RUNWAY_API_KEY="your-runway-key"
