@@ -413,9 +413,13 @@ export class GenerationService {
     switch (model) {
       case 'gemini-2.5-flash-image':
       case 'gemini-2.5-flash-image-preview':
+      case 'imagen-4.0-generate-001':
+      case 'imagen-4.0-fast-generate-001':
+      case 'imagen-4.0-ultra-generate-001':
+      case 'imagen-3.0-generate-002':
         return this.withCircuit('gemini', () => this.handleGemini({
           ...dto,
-          model: 'gemini-2.5-flash-image',
+          model: model, // Pass through the model name to adapter for proper mapping
         }));
       case 'ideogram':
         return this.withCircuit('ideogram', () => this.handleIdeogram(dto));
@@ -479,9 +483,11 @@ export class GenerationService {
       const adapter = new GeminiImageAdapter(() => this.getGeminiApiKey());
       const res = await adapter.generate({} as unknown as SanitizedUser, dto);
       const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      // Use the model from the result (which will be the Imagen model) or fallback to DTO model
+      const modelUsed = res.results[0]?.model || dto.model || 'imagen-4.0-fast-generate-001';
       const out: ProviderResult = {
         provider: 'gemini',
-        model: 'gemini-2.5-flash-image',
+        model: modelUsed,
         clientPayload: res.clientPayload,
         assets,
         rawResponse: res.rawResponse,

@@ -290,7 +290,33 @@ export class JobProcessingService {
 
     await this.cloudTasksService.updateJobProgress(jobId, 75);
 
-    const { fileUrl, mimeType, r2FileId } = this.extractResultAsset(result);
+    let fileUrl: string;
+    let mimeType: string | undefined;
+    let r2FileId: string | undefined;
+    try {
+      const extracted = this.extractResultAsset(result);
+      fileUrl = extracted.fileUrl;
+      mimeType = extracted.mimeType;
+      r2FileId = extracted.r2FileId;
+    } catch (error) {
+      // Refund credits if extraction fails (credits were already charged during generation)
+      try {
+        await this.paymentsService.refundCredits(
+          user.authUserId,
+          1,
+          `Job generation failed during result extraction: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        this.logger.log(
+          `Refunded 1 credit to user ${user.authUserId} due to result extraction failure`,
+        );
+      } catch (refundError) {
+        this.logger.error(
+          `Failed to refund credits to user ${user.authUserId}:`,
+          refundError,
+        );
+      }
+      throw error;
+    }
 
     // Normalize to an R2 public URL before completing the job
     let finalUrl = fileUrl;
@@ -530,6 +556,35 @@ export class JobProcessingService {
     }
 
     const resultObj = result as Record<string, unknown>;
+
+    // Check for Gemini NO_IMAGE finish reason before attempting to extract URLs
+    // Note: The result might be the raw Gemini response directly (when no assets),
+    // or it might be wrapped in a ProviderResult structure (with clientPayload/rawResponse)
+    const checkForNoImage = (payload: unknown): boolean => {
+      if (!payload || typeof payload !== 'object') {
+        return false;
+      }
+      const payloadObj = payload as Record<string, unknown>;
+      const candidates = Array.isArray(payloadObj.candidates) ? payloadObj.candidates : [];
+      const firstCandidate = candidates[0];
+      if (firstCandidate && typeof firstCandidate === 'object') {
+        const candidateObj = firstCandidate as Record<string, unknown>;
+        return candidateObj.finishReason === 'NO_IMAGE';
+      }
+      return false;
+    };
+
+    // Check the result itself (in case it's the raw response directly)
+    // and also check clientPayload/rawResponse (in case it's wrapped in ProviderResult)
+    if (
+      checkForNoImage(resultObj) ||
+      checkForNoImage(resultObj.clientPayload) ||
+      checkForNoImage(resultObj.rawResponse)
+    ) {
+      throw new Error(
+        'Image generation failed: Gemini API returned NO_IMAGE finish reason. The model could not generate an image for this prompt.',
+      );
+    }
 
     const pickString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.trim().length > 0
