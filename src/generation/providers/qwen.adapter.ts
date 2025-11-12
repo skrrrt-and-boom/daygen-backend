@@ -62,19 +62,17 @@ export class QwenImageAdapter implements ImageProviderAdapter {
     const endpoint = `${apiBase}/services/aigc/multimodal-generation/generation`;
 
     const parameters: Record<string, unknown> = {};
-    const raw = dto.providerOptions ?? {};
-    if (raw && typeof raw === 'object') {
-      const size = (raw as Record<string, unknown>)['size'];
-      if (typeof size === 'string' && size.trim()) parameters.size = size.trim();
-      const seed = (raw as Record<string, unknown>)['seed'];
-      if (typeof seed === 'number' && Number.isFinite(seed)) parameters.seed = seed;
-      const negative = (raw as Record<string, unknown>)['negative_prompt'];
-      if (typeof negative === 'string' && negative.trim()) parameters.negative_prompt = negative.trim();
-      const promptExtend = (raw as Record<string, unknown>)['prompt_extend'];
-      if (typeof promptExtend === 'boolean') parameters.prompt_extend = promptExtend;
-      const watermark = (raw as Record<string, unknown>)['watermark'];
-      if (typeof watermark === 'boolean') parameters.watermark = watermark;
-    }
+    const rawOptions = dto.providerOptions ?? {};
+    const size = rawOptions['size'];
+    if (typeof size === 'string' && size.trim()) parameters.size = size.trim();
+    const seed = rawOptions['seed'];
+    if (typeof seed === 'number' && Number.isFinite(seed)) parameters.seed = seed;
+    const negative = rawOptions['negative_prompt'];
+    if (typeof negative === 'string' && negative.trim()) parameters.negative_prompt = negative.trim();
+    const promptExtend = rawOptions['prompt_extend'];
+    if (typeof promptExtend === 'boolean') parameters.prompt_extend = promptExtend;
+    const watermark = rawOptions['watermark'];
+    if (typeof watermark === 'boolean') parameters.watermark = watermark;
 
     const body = {
       model: 'qwen-image',

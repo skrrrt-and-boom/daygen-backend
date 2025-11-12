@@ -48,29 +48,68 @@ export class R2FilesService {
       deletedAt: null, // Only show non-deleted files
     };
 
-    if (cursor) {
-      where.createdAt = {
-        lt: new Date(cursor),
-      };
+    const fetchBatchSize = Math.min(take * 2, 200);
+    const seenKeys = new Set<string>();
+    type R2FileRecord = Awaited<
+      ReturnType<typeof this.prisma.r2File.findMany>
+    >[number];
+    const collected: R2FileRecord[] = [];
+    let pagingCursor = cursor ? new Date(cursor) : undefined;
+    let hasMore = true;
+
+    while (collected.length < take && hasMore) {
+      const batch = await this.prisma.r2File.findMany({
+        where: {
+          ...where,
+          ...(pagingCursor
+            ? {
+                createdAt: {
+                  lt: pagingCursor,
+                },
+              }
+            : {}),
+        },
+        take: fetchBatchSize,
+        orderBy: [
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ],
+      });
+
+      if (batch.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      for (const item of batch) {
+        const dedupeKey = this.getDedupeKey(item);
+        if (!seenKeys.has(dedupeKey)) {
+          seenKeys.add(dedupeKey);
+          collected.push(item);
+        }
+      }
+
+      hasMore = batch.length === fetchBatchSize;
+      pagingCursor = batch[batch.length - 1]?.createdAt;
     }
 
-    const [items, totalCount] = await Promise.all([
-      this.prisma.r2File.findMany({
-        where,
-        take,
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.r2File.count({ where }),
-    ]);
-
+    const paginatedItems = collected.slice(0, take);
     const nextCursor =
-      items.length === take && items.length > 0
-        ? items[items.length - 1].createdAt.toISOString()
+      (hasMore || collected.length > take) && paginatedItems.length > 0
+        ? paginatedItems[paginatedItems.length - 1].createdAt.toISOString()
         : null;
 
+    const totalCountGroups = await this.prisma.r2File.groupBy({
+      where,
+      by: ['fileUrl'],
+      _count: {
+        _all: true,
+      },
+    });
+
     return {
-      items: items.map((item) => this.toResponse(item)),
-      totalCount,
+      items: paginatedItems.map((item) => this.toResponse(item)),
+      totalCount: totalCountGroups.length,
       nextCursor,
     };
   }
@@ -88,11 +127,13 @@ export class R2FilesService {
       throw new Error('Invalid file URL. Only R2 public URLs are allowed.');
     }
 
-    if (dto.fileUrl?.trim()) {
+    const normalizedFileUrl = dto.fileUrl?.trim();
+
+    if (normalizedFileUrl) {
       const existing = await this.prisma.r2File.findFirst({
         where: {
           ownerAuthId,
-          fileUrl: dto.fileUrl,
+          fileUrl: normalizedFileUrl,
         },
       });
 
@@ -101,6 +142,7 @@ export class R2FilesService {
           where: { id: existing.id },
           data: {
             fileName: dto.fileName,
+            fileUrl: normalizedFileUrl,
             fileSize: dto.fileSize,
             mimeType: dto.mimeType,
             prompt: dto.prompt,
@@ -123,7 +165,7 @@ export class R2FilesService {
         id: randomUUID(),
         ownerAuthId,
         fileName: dto.fileName,
-        fileUrl: dto.fileUrl,
+        fileUrl: normalizedFileUrl ?? dto.fileUrl,
         fileSize: dto.fileSize,
         mimeType: dto.mimeType,
         prompt: dto.prompt,
@@ -157,11 +199,22 @@ export class R2FilesService {
     }
 
     // Soft delete: mark as deleted instead of removing from database
-    await this.prisma.r2File.update({
-      where: { id },
+    const now = new Date();
+
+    await this.prisma.r2File.updateMany({
+      where: {
+        ownerAuthId,
+        deletedAt: null,
+        OR: [
+          { id },
+          {
+            fileUrl: file.fileUrl,
+          },
+        ],
+      },
       data: {
-        deletedAt: new Date(),
-        updatedAt: new Date(),
+        deletedAt: now,
+        updatedAt: now,
       },
     });
 
@@ -210,5 +263,13 @@ export class R2FilesService {
     } catch {
       return false;
     }
+  }
+
+  private getDedupeKey(file: { fileUrl: string | null; id: string }) {
+    const normalizedUrl = file.fileUrl?.trim();
+    if (normalizedUrl) {
+      return `url:${normalizedUrl}`;
+    }
+    return `id:${file.id}`;
   }
 }

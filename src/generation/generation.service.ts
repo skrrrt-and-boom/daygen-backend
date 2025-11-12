@@ -85,59 +85,8 @@ interface ReveEditInput {
   productId?: string;
 }
 
-const FLUX_OPTION_KEYS = [
-  'width',
-  'height',
-  'aspect_ratio',
-  'raw',
-  'image_prompt',
-  'image_prompt_strength',
-  'input_image',
-  'input_image_2',
-  'input_image_3',
-  'input_image_4',
-  'seed',
-  'output_format',
-  'prompt_upsampling',
-  'safety_tolerance',
-] as const;
-
-const FLUX_ALLOWED_POLL_HOSTS = new Set([
-  'api.bfl.ai',
-  'api.eu.bfl.ai',
-  'api.us.bfl.ai',
-  'api.eu1.bfl.ai',
-  'api.us1.bfl.ai',
-  'api.eu2.bfl.ai',
-  'api.us2.bfl.ai',
-  'api.eu3.bfl.ai',
-  'api.us3.bfl.ai',
-  'api.eu4.bfl.ai',
-  'api.us4.bfl.ai',
-  // Additional hosts observed in the wild / future-proofing
-  'api.bfl.ml',
-]);
-
-const FLUX_ALLOWED_DOWNLOAD_HOSTS = new Set([
-  'delivery.bfl.ai',
-  'cdn.bfl.ai',
-  // Additional CDN hosts
-  'delivery.bfl.ml',
-  'cdn.bfl.ml',
-  'storage.googleapis.com',
-]);
-
 const FLUX_POLL_INTERVAL_MS = 5000;
 const FLUX_MAX_ATTEMPTS = 60;
-
-const FLUX_ALLOWED_POLL_SUFFIXES = ['.bfl.ai', '.bfl.ml'] as const;
-const FLUX_ALLOWED_DOWNLOAD_SUFFIXES = [
-  '.bfl.ai',
-  '.bfl.ml',
-  '.googleusercontent.com',
-  // Some regions return Azure Blob Storage signed URLs
-  '.blob.core.windows.net',
-] as const;
 
 const GEMINI_API_KEY_CANDIDATES = [
   'GEMINI_API_KEY',
@@ -610,17 +559,15 @@ export class GenerationService {
 
     if (provider === 'ideogram') {
       const num =
-        typeof (opts as Record<string, unknown>)['num_images'] === 'number'
-          ? (opts as Record<string, unknown>)['num_images']
-          : (opts as Record<string, unknown>)['numImages'];
+        typeof opts['num_images'] === 'number'
+          ? opts['num_images']
+          : opts['numImages'];
       if (typeof num === 'number') {
         if (!Number.isInteger(num) || num < 1 || num > 4) {
           throw badRequest('num_images must be an integer between 1 and 4');
         }
       }
-      const arRaw =
-        (opts as Record<string, unknown>)['aspect_ratio'] ??
-        (opts as Record<string, unknown>)['aspectRatio'];
+      const arRaw = opts['aspect_ratio'] ?? opts['aspectRatio'];
       if (typeof arRaw === 'string' && arRaw.trim()) {
         const ar = arRaw.trim();
         if (!/^\d{1,4}[:x]\d{1,4}$/i.test(ar)) {
@@ -630,8 +577,8 @@ export class GenerationService {
     }
 
     if (provider === 'flux') {
-      const width = (opts as Record<string, unknown>)['width'];
-      const height = (opts as Record<string, unknown>)['height'];
+      const width = opts['width'];
+      const height = opts['height'];
       const checkDim = (v: unknown, name: string) => {
         if (v === undefined) return;
         if (typeof v !== 'number' || !Number.isFinite(v)) {
@@ -643,7 +590,7 @@ export class GenerationService {
       };
       checkDim(width, 'width');
       checkDim(height, 'height');
-      const ar = (opts as Record<string, unknown>)['aspect_ratio'];
+      const ar = opts['aspect_ratio'];
       if (typeof ar === 'string' && ar.trim()) {
         if (!/^\d{1,4}[:x]\d{1,4}$/i.test(ar.trim())) {
           throw badRequest('aspect_ratio must be like 1:1, 16:9, or 16x9');
