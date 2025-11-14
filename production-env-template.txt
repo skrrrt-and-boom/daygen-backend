@@ -70,6 +70,7 @@ ARK_API_KEY="your-ark-key"
 REVE_API_KEY="your-reve-key"
 RECRAFT_API_KEY="your-recraft-key"
 LUMAAI_API_KEY="your-luma-key"
+ELEVENLABS_API_KEY="your-elevenlabs-key"
 
 # Server Configuration
 PORT=3000

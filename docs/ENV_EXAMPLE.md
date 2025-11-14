@@ -54,6 +54,9 @@ CLOUDFLARE_R2_PUBLIC_URL="https://your-public-url.r2.dev"
 
 # Image Generation Services
 # Add your other service configurations here...
+
+# Voice Generation
+ELEVENLABS_API_KEY="your-elevenlabs-api-key"
 ```
 
 ## Frontend Environment Variables (.env)
@@ -98,6 +101,9 @@ These are obtained from the Stripe Dashboard after creating products:
 - `STRIPE_ENTERPRISE_PRICE_ID`: Price ID for enterprise subscription (5000 credits/month, $99.00)
 - `STRIPE_PRO_YEARLY_PRICE_ID`: Price ID for pro subscription (12000 credits/year, $290.00)
 - `STRIPE_ENTERPRISE_YEARLY_PRICE_ID`: Price ID for enterprise subscription (60000 credits/year, $990.00)
+
+### Voice Generation
+- `ELEVENLABS_API_KEY`: ElevenLabs API key used for voice cloning and text-to-speech features.
 
 ## Security Notes
 
