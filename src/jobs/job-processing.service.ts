@@ -152,7 +152,8 @@ export class JobProcessingService {
                     return null;
                   }
                 }
-                if (value !== undefined && value !== null) {
+                // Handle primitive types (number, boolean, symbol, bigint)
+                if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'symbol' || typeof value === 'bigint') {
                   const text = String(value).trim();
                   return text.length > 0 ? text : null;
                 }
