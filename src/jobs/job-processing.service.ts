@@ -11,6 +11,7 @@ import { MetricsService } from '../common/metrics.service';
 import { RequestContextService } from '../common/request-context.service';
 import type { SanitizedUser } from '../users/types';
 import type { ProviderGenerateDto } from '../generation/dto/base-generate.dto';
+import { ScenesService, SceneGenerationJobPayload } from '../scenes/scenes.service';
 
 export interface ProcessJobPayload {
   jobId: string;
@@ -34,6 +35,8 @@ export class JobProcessingService {
     private readonly requestContext: RequestContextService,
     @Inject(forwardRef(() => CloudTasksService))
     private readonly cloudTasksService: CloudTasksService,
+    @Inject(forwardRef(() => ScenesService))
+    private readonly scenesService: ScenesService,
   ) {}
 
   async processJob(payload: ProcessJobPayload) {
@@ -77,6 +80,9 @@ export class JobProcessingService {
           break;
         case JobType.BATCH_GENERATION:
           await this.processBatchGeneration(jobId, userId, data);
+          break;
+        case JobType.SCENE_GENERATION:
+          await this.processSceneGeneration(jobId, userId, data);
           break;
         default:
           throw new Error(`Unknown job type: ${String(jobType)}`);
@@ -290,7 +296,33 @@ export class JobProcessingService {
 
     await this.cloudTasksService.updateJobProgress(jobId, 75);
 
-    const { fileUrl, mimeType, r2FileId } = this.extractResultAsset(result);
+    let fileUrl: string;
+    let mimeType: string | undefined;
+    let r2FileId: string | undefined;
+    try {
+      const extracted = this.extractResultAsset(result);
+      fileUrl = extracted.fileUrl;
+      mimeType = extracted.mimeType;
+      r2FileId = extracted.r2FileId;
+    } catch (error) {
+      // Refund credits if extraction fails (credits were already charged during generation)
+      try {
+        await this.paymentsService.refundCredits(
+          user.authUserId,
+          1,
+          `Job generation failed during result extraction: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        this.logger.log(
+          `Refunded 1 credit to user ${user.authUserId} due to result extraction failure`,
+        );
+      } catch (refundError) {
+        this.logger.error(
+          `Failed to refund credits to user ${user.authUserId}:`,
+          refundError,
+        );
+      }
+      throw error;
+    }
 
     // Normalize to an R2 public URL before completing the job
     let finalUrl = fileUrl;
@@ -522,6 +554,71 @@ export class JobProcessingService {
     });
   }
 
+  private async processSceneGeneration(
+    jobId: string,
+    userId: string,
+    data: Record<string, unknown>,
+  ) {
+    const userRecord = await this.cloudTasksService.getUserByAuthId(userId);
+    if (!userRecord) {
+      throw new Error(`User not found: ${userId}`);
+    }
+
+    const payload = this.parseSceneJobPayload(data);
+    const sanitizedUser = { authUserId: userRecord.authUserId } as SanitizedUser;
+
+    await this.cloudTasksService.updateJobProgress(jobId, 10, JobStatus.PROCESSING);
+
+    try {
+      const result = await this.scenesService.runQueuedSceneGeneration(sanitizedUser, payload);
+
+      await this.cloudTasksService.updateJobProgress(jobId, 90);
+
+      await this.cloudTasksService.completeJob(jobId, result.imageUrl, {
+        r2FileId: result.r2FileId,
+        fileUrl: result.imageUrl,
+        prompt: result.prompt,
+        template: result.template,
+        provider: 'scene-placement',
+        model: 'ideogram-remix',
+        mimeType: result.mimeType,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.cloudTasksService.failJob(jobId, message);
+      throw error;
+    }
+  }
+
+  private parseSceneJobPayload(data: Record<string, unknown>): SceneGenerationJobPayload {
+    const dto = data.dto;
+    const characterUpload = data.characterUpload;
+    const sceneTemplate = data.sceneTemplate;
+
+    if (!dto || !characterUpload || !sceneTemplate) {
+      throw new Error('Invalid scene generation job payload.');
+    }
+
+    const prompt = typeof data.prompt === 'string' ? data.prompt : '';
+    const aspectRatio = typeof data.aspectRatio === 'string' ? data.aspectRatio : '1x1';
+    const renderingSpeed = typeof data.renderingSpeed === 'string' ? data.renderingSpeed : 'DEFAULT';
+    const stylePreset = typeof data.stylePreset === 'string' ? data.stylePreset : 'AUTO';
+    const styleTypeRaw = data.styleType;
+    const styleType =
+      styleTypeRaw === 'REALISTIC' || styleTypeRaw === 'FICTION' ? styleTypeRaw : 'AUTO';
+
+    return {
+      dto: dto as SceneGenerationJobPayload['dto'],
+      characterUpload: characterUpload as SceneGenerationJobPayload['characterUpload'],
+      sceneTemplate: sceneTemplate as SceneGenerationJobPayload['sceneTemplate'],
+      prompt,
+      aspectRatio,
+      renderingSpeed,
+      stylePreset,
+      styleType,
+    };
+  }
+
   private extractResultAsset(result: unknown) {
     if (!result || typeof result !== 'object') {
       throw new Error(
@@ -530,6 +627,35 @@ export class JobProcessingService {
     }
 
     const resultObj = result as Record<string, unknown>;
+
+    // Check for Gemini NO_IMAGE finish reason before attempting to extract URLs
+    // Note: The result might be the raw Gemini response directly (when no assets),
+    // or it might be wrapped in a ProviderResult structure (with clientPayload/rawResponse)
+    const checkForNoImage = (payload: unknown): boolean => {
+      if (!payload || typeof payload !== 'object') {
+        return false;
+      }
+      const payloadObj = payload as Record<string, unknown>;
+      const candidates = Array.isArray(payloadObj.candidates) ? payloadObj.candidates : [];
+      const firstCandidate = candidates[0];
+      if (firstCandidate && typeof firstCandidate === 'object') {
+        const candidateObj = firstCandidate as Record<string, unknown>;
+        return candidateObj.finishReason === 'NO_IMAGE';
+      }
+      return false;
+    };
+
+    // Check the result itself (in case it's the raw response directly)
+    // and also check clientPayload/rawResponse (in case it's wrapped in ProviderResult)
+    if (
+      checkForNoImage(resultObj) ||
+      checkForNoImage(resultObj.clientPayload) ||
+      checkForNoImage(resultObj.rawResponse)
+    ) {
+      throw new Error(
+        'Image generation failed: Gemini API returned NO_IMAGE finish reason. The model could not generate an image for this prompt.',
+      );
+    }
 
     const pickString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.trim().length > 0
@@ -690,6 +816,9 @@ export class JobProcessingService {
       'luma-realistic-vision': 'luma-realistic-vision',
       ideogram: 'ideogram',
       'qwen-image': 'qwen-image',
+      'grok-2-image': 'grok-2-image',
+      'grok-2-image-1212': 'grok-2-image-1212',
+      'grok-2-image-latest': 'grok-2-image-latest',
       'runway-gen4': 'runway-gen4',
       'runway-gen4-turbo': 'runway-gen4-turbo',
       'chatgpt-image': 'chatgpt-image',

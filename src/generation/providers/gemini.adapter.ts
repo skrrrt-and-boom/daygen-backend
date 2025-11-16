@@ -3,9 +3,8 @@ import type { ProviderGenerateDto } from '../dto/base-generate.dto';
 import type { SanitizedUser } from '../../users/types';
 
 /**
- * Minimal Gemini image adapter using generateContent IMAGE modality.
- * Note: This adapter returns inline data results when available.
- * Remote file URIs are returned in metadata; upstream may resolve/stream to R2.
+ * Imagen image adapter using Google's Imagen API for reliable image generation.
+ * Uses the dedicated Imagen models instead of Gemini's multimodal API to avoid NO_IMAGE errors.
  */
 export class GeminiImageAdapter implements ImageProviderAdapter {
   readonly providerName = 'gemini';
@@ -13,7 +12,14 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
   constructor(private readonly getApiKey: () => string | undefined) {}
 
   canHandleModel(model: string): boolean {
-    return model === 'gemini-2.5-flash-image' || model === 'gemini-2.5-flash-image-preview';
+    return (
+      model === 'gemini-2.5-flash-image' ||
+      model === 'gemini-2.5-flash-image-preview' ||
+      model === 'imagen-4.0-generate-001' ||
+      model === 'imagen-4.0-fast-generate-001' ||
+      model === 'imagen-4.0-ultra-generate-001' ||
+      model === 'imagen-3.0-generate-002'
+    );
   }
 
   async generate(_user: SanitizedUser, dto: ProviderGenerateDto): Promise<ProviderAdapterResult> {
@@ -22,42 +28,73 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
       throw new Error('Gemini API key not configured');
     }
 
-    const targetModel = 'gemini-2.5-flash-image';
+    // Map legacy model names to Imagen models, default to fast for speed
+    const modelMap: Record<string, string> = {
+      'gemini-2.5-flash-image': 'imagen-4.0-fast-generate-001',
+      'gemini-2.5-flash-image-preview': 'imagen-4.0-fast-generate-001',
+    };
+    const requestedModel = dto.model?.trim() || 'gemini-2.5-flash-image';
+    const targetModel = modelMap[requestedModel] || requestedModel || 'imagen-4.0-fast-generate-001';
 
-    const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
-    const prompt = (dto.prompt ?? '').toString();
-    if (prompt.trim()) {
-      parts.push({ text: prompt });
+    const prompt = (dto.prompt ?? '').toString().trim();
+    if (!prompt) {
+      throw new Error('Prompt is required for Imagen image generation');
     }
 
-    const pushInline = (data?: string | null, mime = 'image/png') => {
-      if (!data || typeof data !== 'string') return;
-      const trimmed = data.trim();
-      if (!trimmed) return;
-      const m = trimmed.match(/^data:([^;,]+);base64,(.*)$/);
-      if (m) {
-        parts.push({ inlineData: { mimeType: m[1] || mime, data: m[2].replace(/\s+/g, '') } });
-      } else {
-        parts.push({ inlineData: { mimeType: mime, data: trimmed.replace(/\s+/g, '') } });
+    // Build Imagen parameters from DTO
+    const providerOptions = dto.providerOptions || {};
+    const parameters: Record<string, unknown> = {
+      sampleCount: 1, // Default to 1 image, can be 1-4
+    };
+
+    // Map aspectRatio from providerOptions or config
+    const aspectRatio = providerOptions.aspectRatio as string | undefined;
+    if (aspectRatio && typeof aspectRatio === 'string') {
+      // Imagen supports: "1:1", "3:4", "4:3", "9:16", "16:9"
+      const validRatios = ['1:1', '3:4', '4:3', '9:16', '16:9'];
+      if (validRatios.includes(aspectRatio)) {
+        parameters.aspectRatio = aspectRatio;
       }
-    };
-
-    pushInline(dto.imageBase64, dto.mimeType || 'image/png');
-    if (Array.isArray(dto.references)) {
-      for (const ref of dto.references) pushInline(ref);
     }
 
-    const generationConfig: Record<string, unknown> = { responseModalities: ['IMAGE'] };
-    if (dto.temperature !== undefined) generationConfig.temperature = dto.temperature;
-    if (dto.topP !== undefined) generationConfig.topP = dto.topP;
-    if (dto.outputLength !== undefined) generationConfig.maxOutputTokens = dto.outputLength;
+    // Map numberOfImages if provided
+    const numberOfImages = providerOptions.numberOfImages as number | undefined;
+    if (numberOfImages !== undefined && typeof numberOfImages === 'number') {
+      const count = Math.max(1, Math.min(4, Math.floor(numberOfImages)));
+      parameters.sampleCount = count;
+    }
 
+    // Map imageSize if provided (1K or 2K, only for Standard and Ultra models)
+    const imageSize = providerOptions.imageSize as string | undefined;
+    if (imageSize && (imageSize === '1K' || imageSize === '2K')) {
+      if (targetModel.includes('ultra') || targetModel.includes('generate-001')) {
+        parameters.imageSize = imageSize;
+      }
+    }
+
+    // Map personGeneration if provided
+    const personGeneration = providerOptions.personGeneration as string | undefined;
+    if (personGeneration && typeof personGeneration === 'string') {
+      const validOptions = ['dont_allow', 'allow_adult', 'allow_all'];
+      if (validOptions.includes(personGeneration)) {
+        parameters.personGeneration = personGeneration;
+      }
+    }
+
+    // Build Imagen request payload
     const requestPayload: Record<string, unknown> = {
-      contents: [{ role: 'user', parts }],
-      generationConfig,
+      instances: [
+        {
+          prompt: prompt,
+        },
+      ],
+      parameters,
     };
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
+    // Note: Imagen API doesn't support reference images in the same way as Gemini multimodal
+    // Reference images would need to be handled differently if needed
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:predict?key=${apiKey}`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -66,26 +103,33 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw Object.assign(new Error(`Gemini error ${response.status}`), { status: response.status, details: text });
+      throw Object.assign(new Error(`Imagen API error ${response.status}`), {
+        status: response.status,
+        details: text,
+      });
     }
 
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     const results: NormalizedImageResult[] = [];
 
-    const candidates = Array.isArray((payload as any).candidates) ? (payload as any).candidates : [];
-    const first = candidates[0] && typeof candidates[0] === 'object' ? candidates[0] : undefined;
-    const content = first && typeof first.content === 'object' ? first.content : undefined;
-    const partsProp = (content as { parts?: unknown } | undefined)?.parts;
-    const partsOut: unknown[] = Array.isArray(partsProp) ? partsProp : [];
+    // Parse Imagen API response format: { predictions: [{ bytesBase64Encoded: string }] }
+    const predictions = Array.isArray(payload.predictions)
+      ? payload.predictions
+      : [];
 
-    for (const p of partsOut) {
-      if (p && typeof p === 'object') {
-        const inline = (p as { inlineData?: { mimeType?: unknown; data?: unknown } }).inlineData;
-        if (inline && typeof inline.data === 'string') {
-          const mime = typeof inline.mimeType === 'string' ? inline.mimeType : 'image/png';
-          const url = `data:${mime};base64,${inline.data}`;
-          results.push({ url, mimeType: mime, provider: this.providerName, model: targetModel });
-          break;
+    for (const prediction of predictions) {
+      if (prediction && typeof prediction === 'object') {
+        const predictionObj = prediction as Record<string, unknown>;
+        const bytesBase64Encoded = predictionObj.bytesBase64Encoded;
+        if (typeof bytesBase64Encoded === 'string' && bytesBase64Encoded.trim()) {
+          const mime = 'image/png'; // Imagen returns PNG format
+          const url = `data:${mime};base64,${bytesBase64Encoded}`;
+          results.push({
+            url,
+            mimeType: mime,
+            provider: this.providerName,
+            model: targetModel,
+          });
         }
       }
     }

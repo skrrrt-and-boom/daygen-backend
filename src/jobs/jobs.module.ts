@@ -13,6 +13,7 @@ import { JobProcessingService } from './job-processing.service';
 import { LoggerService } from '../common/logger.service';
 import { MetricsService } from '../common/metrics.service';
 import { RequestContextService } from '../common/request-context.service';
+import { ScenesModule } from '../scenes/scenes.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { RequestContextService } from '../common/request-context.service';
     UploadModule,
     UsageModule,
     PaymentsModule,
+    forwardRef(() => ScenesModule),
   ],
   providers: [
     CloudTasksService,

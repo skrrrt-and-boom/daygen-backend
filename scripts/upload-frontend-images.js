@@ -19,14 +19,18 @@ const FRONTEND_PUBLIC_DIR = path.join(__dirname, '../../daygen0/public');
 const R2_FOLDER = 'website-assets';
 const BUCKET_NAME = process.env.CLOUDFLARE_R2_BUCKET_NAME?.trim() || 'daygen-assets';
 
-// Files to upload (only these specific files)
-const FILES_TO_UPLOAD = [
+// Preset images to upload to presets/ subfolder
+const PRESET_FILES = [
   'black_suit_studio setup.png',
   'french_balcony.png',
   'boat_in_coastal_town.png',
   'brick_in_the_wall.png',
   'smoking_hot.png',
   'sun_and_sea.png',
+];
+
+// Other files to upload to website-assets/ root
+const OTHER_FILES = [
   'favicon16px.png',
   'favicon32px.png',
   'favicon48.png', // Note: file is favicon48.png but referenced as favicon48px.png
@@ -82,13 +86,15 @@ function getMimeType(filename) {
 /**
  * Upload file to R2
  */
-async function uploadFileToR2(filePath, fileName) {
+async function uploadFileToR2(filePath, fileName, subfolder = '') {
   try {
     const fileBuffer = fs.readFileSync(filePath);
     const mimeType = getMimeType(fileName);
     
     // Create R2 key with folder prefix
-    const r2Key = `${R2_FOLDER}/${fileName}`;
+    const r2Key = subfolder 
+      ? `${R2_FOLDER}/${subfolder}/${fileName}`
+      : `${R2_FOLDER}/${fileName}`;
     
     const command = new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -138,8 +144,31 @@ async function uploadImages() {
   let successCount = 0;
   let errorCount = 0;
 
-  // Upload each file
-  for (const filename of FILES_TO_UPLOAD) {
+  // Upload preset files to presets/ subfolder
+  console.log('📦 Uploading preset images to presets/ subfolder...');
+  for (const filename of PRESET_FILES) {
+    const filePath = path.join(FRONTEND_PUBLIC_DIR, filename);
+    
+    if (!fs.existsSync(filePath)) {
+      console.error(`⚠️  File not found: ${filename}`);
+      errorCount++;
+      continue;
+    }
+
+    try {
+      const result = await uploadFileToR2(filePath, filename, 'presets');
+      uploadResults.push(result);
+      successCount++;
+    } catch (error) {
+      errorCount++;
+      console.error(`❌ Failed to upload ${filename}`);
+    }
+  }
+
+  // Upload other files to website-assets/ root
+  console.log('');
+  console.log('📦 Uploading other files to website-assets/ root...');
+  for (const filename of OTHER_FILES) {
     const filePath = path.join(FRONTEND_PUBLIC_DIR, filename);
     
     if (!fs.existsSync(filePath)) {

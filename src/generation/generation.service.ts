@@ -19,6 +19,11 @@ import { UsageService } from '../usage/usage.service';
 import { PaymentsService } from '../payments/payments.service';
 import { safeDownload, toDataUrl } from './safe-fetch';
 import { COMMON_ALLOWED_SUFFIXES } from './allowed-hosts';
+import { FluxImageAdapter } from './providers/flux.adapter';
+import { GeminiImageAdapter } from './providers/gemini.adapter';
+import { IdeogramImageAdapter } from './providers/ideogram.adapter';
+import { QwenImageAdapter } from './providers/qwen.adapter';
+import { GrokImageAdapter } from './providers/grok.adapter';
 
 interface GeneratedAsset {
   dataUrl: string;
@@ -81,59 +86,8 @@ interface ReveEditInput {
   productId?: string;
 }
 
-const FLUX_OPTION_KEYS = [
-  'width',
-  'height',
-  'aspect_ratio',
-  'raw',
-  'image_prompt',
-  'image_prompt_strength',
-  'input_image',
-  'input_image_2',
-  'input_image_3',
-  'input_image_4',
-  'seed',
-  'output_format',
-  'prompt_upsampling',
-  'safety_tolerance',
-] as const;
-
-const FLUX_ALLOWED_POLL_HOSTS = new Set([
-  'api.bfl.ai',
-  'api.eu.bfl.ai',
-  'api.us.bfl.ai',
-  'api.eu1.bfl.ai',
-  'api.us1.bfl.ai',
-  'api.eu2.bfl.ai',
-  'api.us2.bfl.ai',
-  'api.eu3.bfl.ai',
-  'api.us3.bfl.ai',
-  'api.eu4.bfl.ai',
-  'api.us4.bfl.ai',
-  // Additional hosts observed in the wild / future-proofing
-  'api.bfl.ml',
-]);
-
-const FLUX_ALLOWED_DOWNLOAD_HOSTS = new Set([
-  'delivery.bfl.ai',
-  'cdn.bfl.ai',
-  // Additional CDN hosts
-  'delivery.bfl.ml',
-  'cdn.bfl.ml',
-  'storage.googleapis.com',
-]);
-
 const FLUX_POLL_INTERVAL_MS = 5000;
 const FLUX_MAX_ATTEMPTS = 60;
-
-const FLUX_ALLOWED_POLL_SUFFIXES = ['.bfl.ai', '.bfl.ml'] as const;
-const FLUX_ALLOWED_DOWNLOAD_SUFFIXES = [
-  '.bfl.ai',
-  '.bfl.ml',
-  '.googleusercontent.com',
-  // Some regions return Azure Blob Storage signed URLs
-  '.blob.core.windows.net',
-] as const;
 
 const GEMINI_API_KEY_CANDIDATES = [
   'GEMINI_API_KEY',
@@ -409,14 +363,22 @@ export class GenerationService {
     switch (model) {
       case 'gemini-2.5-flash-image':
       case 'gemini-2.5-flash-image-preview':
+      case 'imagen-4.0-generate-001':
+      case 'imagen-4.0-fast-generate-001':
+      case 'imagen-4.0-ultra-generate-001':
+      case 'imagen-3.0-generate-002':
         return this.withCircuit('gemini', () => this.handleGemini({
           ...dto,
-          model: 'gemini-2.5-flash-image',
+          model: model, // Pass through the model name to adapter for proper mapping
         }));
       case 'ideogram':
         return this.withCircuit('ideogram', () => this.handleIdeogram(dto));
       case 'qwen-image':
         return this.withCircuit('qwen', () => this.handleQwen(dto));
+      case 'grok-2-image':
+      case 'grok-2-image-1212':
+      case 'grok-2-image-latest':
+        return this.withCircuit('grok', () => this.handleGrok(dto));
       case 'runway-gen4':
       case 'runway-gen4-turbo':
         return this.withCircuit('runway', () => this.handleRunway(dto));
@@ -442,521 +404,55 @@ export class GenerationService {
   }
 
   private async handleFlux(dto: ProviderGenerateDto): Promise<ProviderResult> {
-    const apiKey = this.configService.get<string>('BFL_API_KEY');
-    if (!apiKey) {
-      throw new ServiceUnavailableException('BFL_API_KEY is not configured');
-    }
-
-    const apiBase =
-      this.configService.get<string>('BFL_API_BASE') ?? 'https://api.bfl.ai';
-    const endpointBase = apiBase.replace(/\/$/, '');
-    const endpoint = `${endpointBase}/v1/${dto.model}`;
-
-    const providerOptions = dto.providerOptions ?? {};
-    const payload: Record<string, unknown> = {
-      prompt: dto.prompt,
-    };
-
-    for (const key of FLUX_OPTION_KEYS) {
-      const value = providerOptions[key];
-      if (value !== undefined && value !== null) {
-        payload[key] = value;
-      }
-    }
-
-    if (Array.isArray(dto.references) && dto.references.length > 0) {
-      payload.references = dto.references;
-    }
-
-    const createResponse = await this.fetchWithTimeout(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-key': apiKey,
-        accept: 'application/json',
-      },
-      body: JSON.stringify(payload),
-    }, 20000);
-
-    const createPayload = (await createResponse.json().catch(async () => {
-      const text = await createResponse.text().catch(() => '<unavailable>');
-      return { raw: text };
-    })) as unknown;
-    const createRecord = toJsonRecord(createPayload);
-
-    if (createResponse.status === 402) {
-      throw new HttpException(
-        { error: 'BFL credits exceeded (402). Add credits to proceed.' },
-        402,
+    this.validateProviderOptions('flux', dto);
+    try {
+      const adapter = new FluxImageAdapter(
+        () => this.configService.get<string>('BFL_API_KEY'),
+        () => this.configService.get<string>('BFL_API_BASE'),
       );
+      const res = await adapter.generate({} as unknown as SanitizedUser, dto);
+      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      const out: ProviderResult = {
+        provider: 'flux',
+        model: dto.model || 'flux-pro-1.1',
+        clientPayload: res.clientPayload,
+        assets,
+        rawResponse: res.rawResponse,
+        usageMetadata: (res as any)?.usageMetadata as Record<string, unknown> | undefined,
+      };
+      return out;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const details = (err as { details?: unknown }).details;
+      const message = err instanceof Error ? err.message : 'Flux provider error';
+      throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
     }
-
-    if (createResponse.status === 429) {
-      throw new HttpException(
-        { error: 'BFL rate limit: too many active tasks (429). Try later.' },
-        429,
-      );
-    }
-
-    if (!createResponse.ok) {
-      this.logger.error(
-        `Flux create job failed ${createResponse.status}: ${JSON.stringify(createPayload)}`,
-      );
-      throw new HttpException(
-        {
-          error: `BFL error ${createResponse.status}`,
-          details: createPayload,
-        },
-        createResponse.status,
-      );
-    }
-
-    const jobId = getFirstString(createRecord, [
-      'id',
-      'job_id',
-      'task_id',
-      'jobId',
-    ]);
-    const pollingUrl = getFirstString(createRecord, [
-      'polling_url',
-      'pollingUrl',
-      'polling_url_v2',
-    ]);
-
-    if (!pollingUrl || typeof pollingUrl !== 'string') {
-      throw new InternalServerErrorException(
-        'BFL response missing polling URL',
-      );
-    }
-
-    this.ensureFluxHost(
-      pollingUrl,
-      FLUX_ALLOWED_POLL_HOSTS,
-      'polling URL',
-      FLUX_ALLOWED_POLL_SUFFIXES,
-      this.fluxExtraPollHosts,
-      this.fluxExtraPollSuffixes,
-    );
-
-    const pollResult = await this.pollFluxJob(pollingUrl, apiKey);
-    const sampleUrl = this.extractFluxSampleUrl(pollResult.payload);
-
-    if (!sampleUrl) {
-      throw new InternalServerErrorException(
-        'Flux response did not include an image URL',
-      );
-    }
-
-    if (!sampleUrl.startsWith('data:')) {
-      this.ensureFluxHost(
-        sampleUrl,
-        FLUX_ALLOWED_DOWNLOAD_HOSTS,
-        'download URL',
-        FLUX_ALLOWED_DOWNLOAD_SUFFIXES,
-        this.fluxExtraDownloadHosts,
-        this.fluxExtraDownloadSuffixes,
-      );
-    }
-
-    const dataUrl = await this.ensureDataUrl(sampleUrl);
-    const asset = { ...this.assetFromDataUrl(dataUrl), remoteUrl: sampleUrl };
-
-    return {
-      provider: 'flux',
-      model: dto.model || 'flux-pro-1.1',
-      clientPayload: {
-        dataUrl,
-        contentType: asset.mimeType,
-        jobId: jobId ?? null,
-        status: pollResult.status,
-      },
-      assets: [asset],
-      rawResponse: {
-        create: createPayload,
-        final: pollResult.raw,
-      },
-      usageMetadata: {
-        jobId: jobId ?? null,
-        pollingUrl,
-        status: pollResult.status,
-      },
-    };
   }
 
   private async handleGemini(
     dto: ProviderGenerateDto,
   ): Promise<ProviderResult> {
-    const apiKey = this.getGeminiApiKey();
-    if (!apiKey) {
-      throw new ServiceUnavailableException({
-        error: 'Gemini API key not configured',
-        hint: 'Set GEMINI_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY) on the backend.',
-      });
-    }
-
-    const authContext = await this.getGeminiAuthContext(apiKey);
-    const targetModel = 'gemini-2.5-flash-image';
-    const parts: Array<{
-      text?: string;
-      inlineData?: { mimeType: string; data: string };
-    }> = [{ text: dto.prompt }];
-
-    const primaryInline = this.normalizeInlineImage(
-      dto.imageBase64,
-      dto.mimeType || 'image/png',
-    );
-    if (primaryInline) {
-      parts.push({ inlineData: primaryInline });
-    }
-
-    if (Array.isArray(dto.references)) {
-      for (const ref of dto.references) {
-        const referenceInline = this.normalizeInlineImage(ref, 'image/png');
-        if (referenceInline) {
-          parts.push({ inlineData: referenceInline });
-        }
-      }
-    }
-
-    const requestPayload: Record<string, unknown> = {
-      contents: [{ role: 'user', parts }],
-    };
-
-    const generationConfig: Record<string, unknown> = {
-      responseModalities: ['IMAGE'],
-    };
-    if (dto.temperature !== undefined) {
-      generationConfig.temperature = dto.temperature;
-    }
-    if (dto.topP !== undefined) {
-      generationConfig.topP = dto.topP;
-    }
-    if (dto.outputLength !== undefined) {
-      generationConfig.maxOutputTokens = dto.outputLength;
-    }
-
-    const aspectRatio = this.extractAspectRatio(dto);
-    if (aspectRatio) {
-      generationConfig.imageConfig = {
-        aspectRatio,
+    this.validateProviderOptions('gemini', dto);
+    try {
+      const adapter = new GeminiImageAdapter(() => this.getGeminiApiKey());
+      const res = await adapter.generate({} as unknown as SanitizedUser, dto);
+      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      // Use the model from the result (which will be the Imagen model) or fallback to DTO model
+      const modelUsed = res.results[0]?.model || dto.model || 'imagen-4.0-fast-generate-001';
+      const out: ProviderResult = {
+        provider: 'gemini',
+        model: modelUsed,
+        clientPayload: res.clientPayload,
+        assets,
+        rawResponse: res.rawResponse,
       };
+      return out;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const details = (err as { details?: unknown }).details;
+      const message = err instanceof Error ? err.message : 'Gemini provider error';
+      throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
     }
-
-    requestPayload.generationConfig = generationConfig;
-
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
-    const response = await this.fetchWithTimeout(
-      endpoint,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestPayload),
-      },
-      20000,
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      this.logger.error(`Gemini API error ${response.status}: ${errorText}`, {
-        status: response.status,
-        statusText: response.statusText,
-        url: endpoint,
-        requestPayload: requestPayload,
-        errorResponse: errorText,
-      });
-
-      // Try to parse error response for more details
-      let errorDetails = errorText;
-      try {
-        const errorJson = JSON.parse(errorText) as Record<string, unknown>;
-        if (
-          errorJson.error &&
-          typeof errorJson.error === 'object' &&
-          errorJson.error !== null
-        ) {
-          const errorObj = errorJson.error as Record<string, unknown>;
-          if (typeof errorObj.message === 'string') {
-            errorDetails = errorObj.message;
-          }
-        } else if (typeof errorJson.message === 'string') {
-          errorDetails = errorJson.message;
-        }
-      } catch {
-        // Keep original error text if parsing fails
-      }
-
-      throw new HttpException(
-        {
-          error: `Gemini API error: ${response.status}`,
-          details: errorDetails,
-          status: response.status,
-          statusText: response.statusText,
-        },
-        response.status,
-      );
-    }
-
-    const responsePayload = (await response.json()) as unknown;
-    const resultRecord = toJsonRecord(responsePayload);
-    const candidates = asArray(resultRecord['candidates']);
-    const firstCandidate = optionalJsonRecord(candidates[0]);
-    const contentRecord = firstCandidate
-      ? optionalJsonRecord(firstCandidate['content'])
-      : undefined;
-    const partCandidates = contentRecord ? asArray(contentRecord['parts']) : [];
-
-    let base64: string | undefined;
-    let mimeType: string | undefined;
-    let dataUrl: string | undefined;
-    let remoteUrl: string | undefined;
-
-    const remoteCandidates: GeminiRemoteCandidate[] = [];
-    const remoteCandidateKeys = new Set<string>();
-
-    const pushRemoteCandidate = (candidate: GeminiRemoteCandidate) => {
-      const normalizedUrl = candidate.url
-        ? this.normalizeGeminiUri(candidate.url)
-        : undefined;
-      const resolvedUrl = normalizedUrl ?? candidate.url;
-      let resolvedFileId = candidate.fileId;
-      if (!resolvedFileId && resolvedUrl) {
-        resolvedFileId = this.normalizeGeminiFilePath(resolvedUrl) ?? undefined;
-      }
-      if (!resolvedFileId && candidate.rawUrl) {
-        resolvedFileId =
-          this.normalizeGeminiFilePath(candidate.rawUrl) ?? undefined;
-      }
-      if (!resolvedUrl && !candidate.fileId) {
-        return;
-      }
-      const key = `${resolvedUrl ?? ''}|${resolvedFileId ?? ''}`;
-      if (remoteCandidateKeys.has(key)) {
-        return;
-      }
-      remoteCandidateKeys.add(key);
-      const entry: GeminiRemoteCandidate = {
-        url: resolvedUrl,
-        rawUrl: candidate.rawUrl ?? candidate.url ?? resolvedUrl,
-        fileId: resolvedFileId,
-        mimeType: candidate.mimeType,
-      };
-      remoteCandidates.push(entry);
-      if (!remoteUrl && entry.url) {
-        remoteUrl = entry.url;
-      }
-    };
-
-    for (const part of partCandidates) {
-      const partRecord = optionalJsonRecord(part);
-      if (!partRecord) {
-        continue;
-      }
-
-      if (!base64) {
-        const inlineRecord = optionalJsonRecord(partRecord['inlineData']);
-        if (inlineRecord) {
-          const data = asString(inlineRecord['data']);
-          if (data) {
-            base64 = data;
-            mimeType = asString(inlineRecord['mimeType']) ?? mimeType;
-            continue;
-          }
-        }
-      }
-
-      const fileData = optionalJsonRecord(partRecord['fileData']);
-      if (fileData) {
-        const fileUri =
-          asString(fileData['fileUri']) ??
-          asString(fileData['uri']) ??
-          asString(fileData['url']);
-        const fileId =
-          asString(fileData['fileId']) ??
-          asString(fileData['id']) ??
-          asString(fileData['name']);
-        const fileMime =
-          asString(fileData['mimeType']) ??
-          asString(fileData['contentType']) ??
-          undefined;
-        pushRemoteCandidate({
-          url: fileUri ?? undefined,
-          rawUrl: fileUri ?? undefined,
-          fileId:
-            fileId ??
-            (fileUri
-              ? (this.normalizeGeminiFilePath(fileUri) ?? undefined)
-              : undefined),
-          mimeType: fileMime,
-        });
-      }
-
-      const mediaRecord = optionalJsonRecord(partRecord['media']);
-      if (mediaRecord) {
-        const mediaUri =
-          asString(mediaRecord['mediaUri']) ??
-          asString(mediaRecord['uri']) ??
-          asString(mediaRecord['url']);
-        const mediaMime =
-          asString(mediaRecord['mimeType']) ??
-          asString(mediaRecord['contentType']) ??
-          undefined;
-        pushRemoteCandidate({
-          url: mediaUri ?? undefined,
-          rawUrl: mediaUri ?? undefined,
-          fileId: mediaUri
-            ? (this.normalizeGeminiFilePath(mediaUri) ?? undefined)
-            : undefined,
-          mimeType: mediaMime,
-        });
-      }
-
-      const genericUrl =
-        asString(partRecord['url']) ??
-        asString(partRecord['uri']) ??
-        asString(partRecord['signedUrl']) ??
-        asString(partRecord['imageUrl']);
-      if (genericUrl) {
-        const partMime =
-          asString(partRecord['mimeType']) ??
-          asString(partRecord['contentType']) ??
-          undefined;
-        pushRemoteCandidate({
-          url: genericUrl,
-          rawUrl: genericUrl,
-          fileId: this.normalizeGeminiFilePath(genericUrl) ?? undefined,
-          mimeType: partMime,
-        });
-      }
-
-      if (!base64) {
-        const dataCandidate = asString(partRecord['data']);
-        if (dataCandidate && isProbablyBase64(dataCandidate)) {
-          base64 = dataCandidate;
-          mimeType = asString(partRecord['mimeType']) ?? mimeType;
-        }
-      }
-    }
-
-    const responseFiles = asArray(resultRecord['files']);
-    for (const fileEntry of responseFiles) {
-      const fileRecord = optionalJsonRecord(fileEntry);
-      if (!fileRecord) {
-        continue;
-      }
-      const fileUri =
-        asString(fileRecord['uri']) ??
-        asString(fileRecord['fileUri']) ??
-        asString(fileRecord['url']);
-      const fileId =
-        asString(fileRecord['name']) ??
-        asString(fileRecord['fileId']) ??
-        asString(fileRecord['id']);
-      const fileMime =
-        asString(fileRecord['mimeType']) ??
-        asString(fileRecord['contentType']) ??
-        undefined;
-      pushRemoteCandidate({
-        url: fileUri ?? undefined,
-        rawUrl: fileUri ?? undefined,
-        fileId:
-          fileId ??
-          (fileUri
-            ? (this.normalizeGeminiFilePath(fileUri) ?? undefined)
-            : undefined),
-        mimeType: fileMime,
-      });
-    }
-
-    const generatedImages = asArray(
-      resultRecord['generatedImages'] ?? resultRecord['generated_images'],
-    );
-    for (const imageEntry of generatedImages) {
-      const imageRecord = optionalJsonRecord(imageEntry);
-      if (!imageRecord) {
-        continue;
-      }
-      const imageUri =
-        asString(imageRecord['downloadUri']) ??
-        asString(imageRecord['uri']) ??
-        asString(imageRecord['imageUri']) ??
-        asString(imageRecord['url']);
-      const imageFileId =
-        asString(imageRecord['fileId']) ??
-        asString(imageRecord['name']) ??
-        asString(imageRecord['id']);
-      const imageMime =
-        asString(imageRecord['mimeType']) ??
-        asString(imageRecord['contentType']) ??
-        undefined;
-      pushRemoteCandidate({
-        url: imageUri ?? undefined,
-        rawUrl: imageUri ?? undefined,
-        fileId:
-          imageFileId ??
-          (imageUri
-            ? (this.normalizeGeminiFilePath(imageUri) ?? undefined)
-            : undefined),
-        mimeType: imageMime,
-      });
-    }
-
-    const fallbackCandidates = this.collectImageCandidates(responsePayload);
-    for (const candidate of fallbackCandidates) {
-      pushRemoteCandidate({
-        url: candidate,
-        rawUrl: candidate,
-        fileId: this.normalizeGeminiFilePath(candidate) ?? undefined,
-      });
-    }
-
-    if (!base64) {
-      for (const candidate of remoteCandidates) {
-        const asset = await this.tryResolveGeminiCandidate(
-          candidate,
-          authContext,
-        );
-        if (asset) {
-          base64 = asset.base64;
-          mimeType = asset.mimeType ?? mimeType;
-          dataUrl = asset.dataUrl;
-          remoteUrl =
-            asset.remoteUrl ?? remoteUrl ?? candidate.url ?? undefined;
-          break;
-        }
-      }
-    }
-
-    if (!base64) {
-      this.logger.warn('Gemini response missing downloadable image payload', {
-        candidateCount: remoteCandidates.length,
-      });
-      this.throwBadRequest('No image returned from Gemini 2.5 Flash Image');
-    }
-
-    const resolvedMimeType = mimeType ?? 'image/png';
-    const resolvedDataUrl =
-      dataUrl ?? `data:${resolvedMimeType};base64,${base64}`;
-    const asset: GeneratedAsset = {
-      dataUrl: resolvedDataUrl,
-      mimeType: resolvedMimeType,
-      base64,
-      ...(remoteUrl ? { remoteUrl } : {}),
-    };
-
-    return {
-      provider: 'gemini',
-      model: targetModel,
-      clientPayload: {
-        success: true,
-        mimeType: resolvedMimeType,
-        imageBase64: base64,
-        dataUrl: resolvedDataUrl,
-        model: targetModel,
-        remoteUrl: remoteUrl ?? null,
-      },
-      assets: [asset],
-      rawResponse: responsePayload,
-    };
   }
 
   private getGeminiApiKey(): string | undefined {
@@ -1037,230 +533,160 @@ export class GenerationService {
   private async handleIdeogram(
     dto: ProviderGenerateDto,
   ): Promise<ProviderResult> {
-    const apiKey = this.configService.get<string>('IDEOGRAM_API_KEY');
-    if (!apiKey) {
-      this.logger.error(
-        'IDEOGRAM_API_KEY environment variable is not configured',
-      );
-      throw new ServiceUnavailableException(
-        'Ideogram API key not configured. Please set IDEOGRAM_API_KEY environment variable.',
-      );
+    this.validateProviderOptions('ideogram', dto);
+    try {
+      const adapter = new IdeogramImageAdapter(() => this.configService.get<string>('IDEOGRAM_API_KEY'));
+      const res = await adapter.generate({} as unknown as SanitizedUser, dto);
+      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      const out: ProviderResult = {
+        provider: 'ideogram',
+        model: 'ideogram-v3',
+        clientPayload: res.clientPayload,
+        assets,
+        rawResponse: res.rawResponse,
+      };
+      return out;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const details = (err as { details?: unknown }).details;
+      const message = err instanceof Error ? err.message : 'Ideogram provider error';
+      throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
     }
+  }
 
-    const endpoint = 'https://api.ideogram.ai/v1/ideogram-v3/generate';
-    const form = new FormData();
-    form.set('prompt', dto.prompt);
+  private validateProviderOptions(
+    provider: 'ideogram' | 'flux' | 'gemini',
+    dto: ProviderGenerateDto,
+  ): void {
+    const badRequest = (msg: string, details?: unknown) =>
+      new HttpException({ error: msg, details }, HttpStatus.BAD_REQUEST);
+    const opts = dto.providerOptions ?? {};
 
-    const providerOptions = dto.providerOptions ?? {};
-
-    const setStringOption = (keys: string[]) => {
-      for (const key of keys) {
-        const value = providerOptions[key];
-        if (typeof value === 'string' && value.trim()) {
-          form.set(keys[0], value.trim());
-          return;
+    if (provider === 'ideogram') {
+      const num =
+        typeof opts['num_images'] === 'number'
+          ? opts['num_images']
+          : opts['numImages'];
+      if (typeof num === 'number') {
+        if (!Number.isInteger(num) || num < 1 || num > 4) {
+          throw badRequest('num_images must be an integer between 1 and 4');
         }
       }
-    };
-
-    const setNumberOption = (keys: string[]) => {
-      for (const key of keys) {
-        const value = providerOptions[key];
-        if (typeof value === 'number' && Number.isFinite(value)) {
-          form.set(keys[0], String(value));
-          return;
-        }
-      }
-    };
-
-    setStringOption(['aspect_ratio', 'aspectRatio']);
-    setStringOption(['resolution']);
-    setStringOption(['rendering_speed', 'renderingSpeed']);
-    setStringOption(['magic_prompt', 'magicPrompt']);
-    setStringOption(['style_preset', 'stylePreset']);
-    setStringOption(['style_type', 'styleType']);
-    setStringOption(['negative_prompt', 'negativePrompt']);
-    setNumberOption(['num_images', 'numImages']);
-    setNumberOption(['seed']);
-
-    // Convert aspect ratio from "16:9" format to "16x9" format for Ideogram API
-    if (form.has('aspect_ratio')) {
-      const aspectRatio = form.get('aspect_ratio') as string;
-      const ideogramAspectRatio = aspectRatio.replace(':', 'x');
-      form.set('aspect_ratio', ideogramAspectRatio);
-    }
-
-    const styleCodes =
-      providerOptions.style_codes ?? providerOptions.styleCodes;
-    if (Array.isArray(styleCodes)) {
-      for (const code of styleCodes) {
-        if (typeof code === 'string' && code.trim()) {
-          form.append('style_codes', code.trim());
+      const arRaw = opts['aspect_ratio'] ?? opts['aspectRatio'];
+      if (typeof arRaw === 'string' && arRaw.trim()) {
+        const ar = arRaw.trim();
+        if (!/^\d{1,4}[:x]\d{1,4}$/i.test(ar)) {
+          throw badRequest('aspect_ratio must be like 1:1, 16:9, or 16x9');
         }
       }
     }
 
-    const colorPalette =
-      providerOptions.color_palette ?? providerOptions.colorPalette;
-    if (colorPalette !== undefined) {
-      const serialized =
-        typeof colorPalette === 'string'
-          ? colorPalette
-          : this.stringifyUnknown(colorPalette);
-      if (serialized.trim()) {
-        form.set('color_palette', serialized.trim());
+    if (provider === 'flux') {
+      const width = opts['width'];
+      const height = opts['height'];
+      const checkDim = (v: unknown, name: string) => {
+        if (v === undefined) return;
+        if (typeof v !== 'number' || !Number.isFinite(v)) {
+          throw badRequest(`${name} must be a number`);
+        }
+        if (v < 64 || v > 2048) {
+          throw badRequest(`${name} must be between 64 and 2048`);
+        }
+      };
+      checkDim(width, 'width');
+      checkDim(height, 'height');
+      const ar = opts['aspect_ratio'];
+      if (typeof ar === 'string' && ar.trim()) {
+        if (!/^\d{1,4}[:x]\d{1,4}$/i.test(ar.trim())) {
+          throw badRequest('aspect_ratio must be like 1:1, 16:9, or 16x9');
+        }
       }
     }
 
-    if (!form.has('aspect_ratio')) {
-      form.set('aspect_ratio', '1x1');
+    if (provider === 'gemini') {
+      const clamp = (v: number, min: number, max: number) =>
+        Math.max(min, Math.min(max, v));
+      if (dto.temperature !== undefined) {
+        if (typeof dto.temperature !== 'number' || !Number.isFinite(dto.temperature)) {
+          throw badRequest('temperature must be a number');
+        }
+        const t = clamp(dto.temperature, 0, 2);
+        if (t !== dto.temperature) {
+          throw badRequest('temperature must be between 0 and 2');
+        }
+      }
+      if (dto.topP !== undefined) {
+        if (typeof dto.topP !== 'number' || !Number.isFinite(dto.topP)) {
+          throw badRequest('topP must be a number');
+        }
+        if (dto.topP < 0 || dto.topP > 1) {
+          throw badRequest('topP must be between 0 and 1');
+        }
+      }
+      if (dto.outputLength !== undefined) {
+        if (
+          typeof dto.outputLength !== 'number' ||
+          !Number.isFinite(dto.outputLength) ||
+          !Number.isInteger(dto.outputLength)
+        ) {
+          throw badRequest('outputLength must be an integer');
+        }
+        if (dto.outputLength < 1 || dto.outputLength > 8192) {
+          throw badRequest('outputLength must be between 1 and 8192');
+        }
+      }
     }
-    if (!form.has('rendering_speed')) {
-      form.set('rendering_speed', 'DEFAULT');
-    }
-    if (!form.has('magic_prompt')) {
-      form.set('magic_prompt', 'AUTO');
-    }
-    if (!form.has('num_images')) {
-      form.set('num_images', '1');
-    }
-
-    const sanitizedIdeogramLog = {
-      promptPreview: dto.prompt.slice(0, 120),
-      aspectRatio: form.get('aspect_ratio') ?? null,
-      renderingSpeed: form.get('rendering_speed') ?? null,
-      magicPrompt: form.get('magic_prompt') ?? null,
-      numImages: form.get('num_images') ?? null,
-      hasResolution: form.has('resolution'),
-      hasColorPalette: form.has('color_palette'),
-      styleCodesCount: Array.isArray(styleCodes) ? styleCodes.length : 0,
-    };
-    this.logger.debug('Ideogram request payload', sanitizedIdeogramLog);
-
-    const response = await this.fetchWithTimeout(endpoint, {
-      method: 'POST',
-      headers: {
-        'Api-Key': apiKey,
-        Accept: 'application/json',
-      },
-      body: form,
-    }, 20000);
-
-    if (!response.ok) {
-      const errorPayload = await this.safeJson(response);
-      const providerMessage =
-        this.extractProviderMessage(errorPayload) ||
-        `Ideogram API error: ${response.status}`;
-      this.logger.error('Ideogram API error', {
-        status: response.status,
-        message: providerMessage,
-        response: errorPayload,
-        request: sanitizedIdeogramLog,
-      });
-      throw new HttpException(
-        { error: providerMessage, details: errorPayload },
-        response.status,
-      );
-    }
-
-    const resultPayload = (await response.json()) as unknown;
-    const urls = this.collectIdeogramUrls(resultPayload);
-    if (urls.length === 0) {
-      this.throwBadRequest('No images returned from Ideogram');
-    }
-
-    const dataUrls: string[] = [];
-    for (const url of urls) {
-      const ensured = await this.ensureDataUrl(url);
-      dataUrls.push(ensured);
-    }
-
-    const assets = dataUrls.map((dataUrl) => this.assetFromDataUrl(dataUrl));
-
-    return {
-      provider: 'ideogram',
-      model: 'ideogram-v3',
-      clientPayload: { dataUrls },
-      assets,
-      rawResponse: resultPayload,
-    };
   }
 
   private async handleQwen(dto: ProviderGenerateDto): Promise<ProviderResult> {
-    const apiKey = this.configService.get<string>('DASHSCOPE_API_KEY');
-    if (!apiKey) {
-      throw new ServiceUnavailableException(
-        'DASHSCOPE_API_KEY is not configured',
+    try {
+      const adapter = new QwenImageAdapter(
+        () => this.configService.get<string>('DASHSCOPE_API_KEY'),
+        () => this.configService.get<string>('DASHSCOPE_BASE'),
       );
+      const res = await adapter.generate({} as unknown as SanitizedUser, dto);
+      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      return {
+        provider: 'qwen',
+        model: 'qwen-image',
+        clientPayload: res.clientPayload,
+        assets,
+        rawResponse: res.rawResponse,
+      };
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const details = (err as { details?: unknown }).details;
+      const message = err instanceof Error ? err.message : 'DashScope provider error';
+      throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
     }
+  }
 
-    const endpoint = `${this.configService.get('DASHSCOPE_BASE') ?? 'https://dashscope-intl.aliyuncs.com/api/v1'}/services/aigc/multimodal-generation/generation`;
-
-    const body = {
-      model: 'qwen-image',
-      input: {
-        messages: [
-          {
-            role: 'user',
-            content: [{ text: dto.prompt }],
-          },
-        ],
-      },
-      parameters: {
-        ...(dto.providerOptions.size ? { size: dto.providerOptions.size } : {}),
-        ...(typeof dto.providerOptions.seed === 'number'
-          ? { seed: dto.providerOptions.seed }
-          : {}),
-        ...(dto.providerOptions.negative_prompt
-          ? { negative_prompt: dto.providerOptions.negative_prompt }
-          : {}),
-        prompt_extend: dto.providerOptions.prompt_extend ?? true,
-        watermark: dto.providerOptions.watermark ?? false,
-      },
-    };
-
-    const response = await this.fetchWithTimeout(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    }, 20000);
-
-    const resultPayload = (await response.json()) as unknown;
-    const resultRecord = toJsonRecord(resultPayload);
-
-    if (!response.ok) {
-      const serialized = this.stringifyUnknown(resultPayload);
-      this.logger.error(`DashScope error ${response.status}: ${serialized}`);
-      const errorMessage =
-        asString(resultRecord['message']) ?? 'DashScope error';
+  private async handleGrok(dto: ProviderGenerateDto): Promise<ProviderResult> {
+    try {
+      const adapter = new GrokImageAdapter(
+        () => this.configService.get<string>('XAI_API_KEY'),
+        () => this.configService.get<string>('XAI_API_BASE'),
+      );
+      const res = await adapter.generate({} as unknown as SanitizedUser, dto);
+      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      return {
+        provider: 'grok',
+        model: dto.model ?? 'grok-2-image',
+        clientPayload: res.clientPayload,
+        assets,
+        rawResponse: res.rawResponse,
+        usageMetadata: res.usageMetadata,
+      };
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const details = (err as { details?: unknown }).details;
+      const message =
+        err instanceof Error ? err.message : 'Grok provider error';
       throw new HttpException(
-        { error: errorMessage, code: resultRecord['code'] },
-        response.status,
+        { error: message, details },
+        typeof status === 'number' ? status : 502,
       );
     }
-
-    const imageUrl = this.extractDashscopeImageUrl(resultPayload);
-    if (!imageUrl) {
-      this.throwBadRequest('No image returned from DashScope');
-    }
-
-    const dataUrl = await this.ensureDataUrl(imageUrl);
-    const asset = this.assetFromDataUrl(dataUrl);
-
-    return {
-      provider: 'qwen',
-      model: 'qwen-image',
-      clientPayload: {
-        dataUrl,
-        contentType: asset.mimeType,
-        usage: resultRecord['usage'] ?? null,
-      },
-      assets: [asset],
-      rawResponse: resultPayload,
-    };
   }
 
   private async handleRunway(

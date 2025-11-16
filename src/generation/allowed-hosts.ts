@@ -74,6 +74,15 @@ export const REVE_ALLOWED_HOSTS = new Set<string>([
   'storage.googleapis.com',
 ]);
 
+// Grok (xAI)
+export const GROK_ALLOWED_HOSTS = new Set<string>([
+  'data.x.ai',
+  'cdn.x.ai',
+  'storage.googleapis.com',
+]);
+
+export const GROK_ALLOWED_SUFFIXES = new Set<string>(['.x.ai']);
+
 // Seedream / Ark Labs
 export const SEEDREAM_ALLOWED_HOSTS = new Set<string>([
   'ark.ap-southeast.bytepluses.com',
@@ -89,5 +98,4 @@ export const COMMON_ALLOWED_SUFFIXES = new Set<string>([
   '.amazonaws.com',
   '.cloudfront.net',
 ]);
-
 

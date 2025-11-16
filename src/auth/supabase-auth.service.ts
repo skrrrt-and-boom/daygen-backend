@@ -206,6 +206,82 @@ export class SupabaseAuthService {
     };
   }
 
+  async devLogin(): Promise<AuthResult> {
+    // Only allow in development
+    if (process.env.NODE_ENV === 'production') {
+      throw new UnauthorizedException('Dev login not available in production');
+    }
+
+    const DEV_EMAIL = 'dev@daygen.ai';
+    const DEV_PASSWORD = 'devpassword123';
+    const DEV_DISPLAY_NAME = 'Dev User';
+
+    const adminClient = this.supabaseService.getAdminClient();
+
+    // Try to find existing dev user
+    const { data: existingUsers } = await adminClient.auth.admin.listUsers();
+    const devUser = existingUsers?.users?.find(
+      (u: SupabaseAuthUser) => u.email === DEV_EMAIL,
+    );
+
+    // If dev user doesn't exist, create it
+    if (!devUser) {
+      console.log('Creating dev user...');
+      const { data: newUserData, error: createError } =
+        await adminClient.auth.admin.createUser({
+          email: DEV_EMAIL,
+          password: DEV_PASSWORD,
+          email_confirm: true,
+          user_metadata: {
+            display_name: DEV_DISPLAY_NAME,
+          },
+        });
+
+      // Handle case where user already exists (race condition or list didn't find them)
+      if (
+        createError &&
+        createError.message?.includes('already been registered')
+      ) {
+        console.log('Dev user already exists, proceeding to sign in...');
+      } else if (createError) {
+        console.error('Error creating dev user:', createError);
+        throw new BadRequestException(
+          `Failed to create dev user: ${createError.message}`,
+        );
+      } else if (newUserData.user) {
+        // Sync to our database
+        await this.syncUserRecord(newUserData.user, DEV_DISPLAY_NAME);
+      }
+    }
+
+    // Sign in as the dev user
+    const { data, error } = await this.supabaseService
+      .getClient()
+      .auth.signInWithPassword({
+        email: DEV_EMAIL,
+        password: DEV_PASSWORD,
+      });
+
+    if (error) {
+      throw new UnauthorizedException(`Dev login failed: ${error.message}`);
+    }
+
+    // Ensure user profile exists in our database
+    let sanitized: SanitizedUser | null = null;
+    try {
+      if (data.user) {
+        sanitized = await this.syncUserRecord(data.user, DEV_DISPLAY_NAME);
+      }
+    } catch (profileError) {
+      console.error('Error ensuring dev user profile:', profileError);
+    }
+
+    return {
+      accessToken: data.session?.access_token || '',
+      user: sanitized,
+    };
+  }
+
   private async syncUserRecord(
     authUser: SupabaseAuthUser,
     displayNameOverride?: string | null,

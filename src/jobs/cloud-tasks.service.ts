@@ -31,6 +31,7 @@ export class CloudTasksService {
     [JobType.VIDEO_GENERATION]: 'video-generation-queue',
     [JobType.IMAGE_UPSCALE]: 'image-upscale-queue',
     [JobType.BATCH_GENERATION]: 'batch-generation-queue',
+    [JobType.SCENE_GENERATION]: 'scene-generation-queue',
   };
 
   constructor(
@@ -200,6 +201,13 @@ export class CloudTasksService {
     data: CreateBatchGenerationJobDto,
   ) {
     return this.createJob(userId, JobType.BATCH_GENERATION, data);
+  }
+
+  async createSceneGenerationJob(
+    userId: string,
+    data: Record<string, unknown>,
+  ) {
+    return this.createJob(userId, JobType.SCENE_GENERATION, data);
   }
 
   async getJobStatus(jobId: string, userId: string) {

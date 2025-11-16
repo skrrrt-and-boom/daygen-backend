@@ -66,6 +66,11 @@ export class AuthController {
     return this.supabaseAuthService.signOut();
   }
 
+  @Post('dev-login')
+  async devLogin() {
+    return this.supabaseAuthService.devLogin();
+  }
+
   // Google ID token verification endpoint
   @Post('google/verify')
   async verifyGoogleToken(@Body() body: { idToken: string }) {
