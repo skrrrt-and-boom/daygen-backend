@@ -7,6 +7,8 @@ Quick notes:
 
 Step 6, do not display uploaded photo, just start to generate without clicking the button
 
+Make image generation faster
+
 
 
 ## Step-by-step explanation
