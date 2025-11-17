@@ -443,24 +443,7 @@ export class GenerationService {
       throw new HttpException(
         buildHttpErrorPayload(message, details),
         typeof status === 'number' ? status : 502,
->>>>>>> origin/main
       );
-      const res = await adapter.generate({} as unknown as SanitizedUser, dto);
-      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
-      const out: ProviderResult = {
-        provider: 'flux',
-        model: dto.model || 'flux-pro-1.1',
-        clientPayload: res.clientPayload,
-        assets,
-        rawResponse: res.rawResponse,
-        usageMetadata: (res as any)?.usageMetadata as Record<string, unknown> | undefined,
-      };
-      return out;
-    } catch (err) {
-      const status = (err as { status?: number }).status;
-      const details = (err as { details?: unknown }).details;
-      const message = err instanceof Error ? err.message : 'Flux provider error';
-      throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
     }
   }
 
@@ -730,7 +713,6 @@ export class GenerationService {
         buildHttpErrorPayload(message, details),
         typeof status === 'number' ? status : 502,
       );
->>>>>>> origin/main
     }
   }
 
