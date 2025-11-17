@@ -54,7 +54,7 @@ export class AudioController {
             {} as Record<string, string>,
           );
         }
-      } catch (error) {
+      } catch {
         throw new BadRequestException('labels must be valid JSON');
       }
     }
