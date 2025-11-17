@@ -11,6 +11,7 @@ import { MetricsService } from '../common/metrics.service';
 import { RequestContextService } from '../common/request-context.service';
 import type { SanitizedUser } from '../users/types';
 import type { ProviderGenerateDto } from '../generation/dto/base-generate.dto';
+import { ScenesService, SceneGenerationJobPayload } from '../scenes/scenes.service';
 
 export interface ProcessJobPayload {
   jobId: string;
@@ -34,6 +35,8 @@ export class JobProcessingService {
     private readonly requestContext: RequestContextService,
     @Inject(forwardRef(() => CloudTasksService))
     private readonly cloudTasksService: CloudTasksService,
+    @Inject(forwardRef(() => ScenesService))
+    private readonly scenesService: ScenesService,
   ) {}
 
   async processJob(payload: ProcessJobPayload) {
@@ -77,6 +80,9 @@ export class JobProcessingService {
           break;
         case JobType.BATCH_GENERATION:
           await this.processBatchGeneration(jobId, userId, data);
+          break;
+        case JobType.SCENE_GENERATION:
+          await this.processSceneGeneration(jobId, userId, data);
           break;
         default:
           throw new Error(`Unknown job type: ${String(jobType)}`);
@@ -125,11 +131,54 @@ export class JobProcessingService {
             const response = getResponse();
             if (typeof response === 'object' && response !== null) {
               const responseObj = response as Record<string, unknown>;
-              if ('error' in responseObj) {
-                errorMessage = `${error.message}: ${String(responseObj.error)}`;
+              const normalizeResponseField = (value: unknown): string | null => {
+                if (typeof value === 'string') {
+                  const trimmed = value.trim();
+                  return trimmed.length > 0 ? trimmed : null;
+                }
+                if (Array.isArray(value)) {
+                  const combined = value
+                    .map((entry) =>
+                      typeof entry === 'string' ? entry.trim() : '',
+                    )
+                    .filter(Boolean)
+                    .join('; ');
+                  return combined.length > 0 ? combined : null;
+                }
+                if (value && typeof value === 'object') {
+                  try {
+                    return JSON.stringify(value);
+                  } catch {
+                    return null;
+                  }
+                }
+                // Handle primitive types (number, boolean, symbol, bigint)
+                if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'symbol' || typeof value === 'bigint') {
+                  const text = String(value).trim();
+                  return text.length > 0 ? text : null;
+                }
+                return null;
+              };
+
+              const responseMessage =
+                normalizeResponseField(responseObj.message) ??
+                normalizeResponseField(responseObj.error);
+              const isGenericMessage =
+                error.message === 'Http Exception' ||
+                error.message === 'HttpException' ||
+                error.message.trim().length === 0;
+
+              if (responseMessage) {
+                if (isGenericMessage || !errorMessage || errorMessage === 'Unknown error') {
+                  errorMessage = responseMessage;
+                } else if (!errorMessage.includes(responseMessage)) {
+                  errorMessage = `${errorMessage}: ${responseMessage}`;
+                }
               }
-              if ('details' in responseObj) {
-                errorMessage += ` (Details: ${String(responseObj.details)})`;
+
+              const detailText = normalizeResponseField(responseObj.details);
+              if (detailText) {
+                errorMessage += ` (Details: ${detailText})`;
               }
             }
           }
@@ -548,6 +597,71 @@ export class JobProcessingService {
     });
   }
 
+  private async processSceneGeneration(
+    jobId: string,
+    userId: string,
+    data: Record<string, unknown>,
+  ) {
+    const userRecord = await this.cloudTasksService.getUserByAuthId(userId);
+    if (!userRecord) {
+      throw new Error(`User not found: ${userId}`);
+    }
+
+    const payload = this.parseSceneJobPayload(data);
+    const sanitizedUser = { authUserId: userRecord.authUserId } as SanitizedUser;
+
+    await this.cloudTasksService.updateJobProgress(jobId, 10, JobStatus.PROCESSING);
+
+    try {
+      const result = await this.scenesService.runQueuedSceneGeneration(sanitizedUser, payload);
+
+      await this.cloudTasksService.updateJobProgress(jobId, 90);
+
+      await this.cloudTasksService.completeJob(jobId, result.imageUrl, {
+        r2FileId: result.r2FileId,
+        fileUrl: result.imageUrl,
+        prompt: result.prompt,
+        template: result.template,
+        provider: 'scene-placement',
+        model: 'ideogram-remix',
+        mimeType: result.mimeType,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.cloudTasksService.failJob(jobId, message);
+      throw error;
+    }
+  }
+
+  private parseSceneJobPayload(data: Record<string, unknown>): SceneGenerationJobPayload {
+    const dto = data.dto;
+    const characterUpload = data.characterUpload;
+    const sceneTemplate = data.sceneTemplate;
+
+    if (!dto || !characterUpload || !sceneTemplate) {
+      throw new Error('Invalid scene generation job payload.');
+    }
+
+    const prompt = typeof data.prompt === 'string' ? data.prompt : '';
+    const aspectRatio = typeof data.aspectRatio === 'string' ? data.aspectRatio : '1x1';
+    const renderingSpeed = typeof data.renderingSpeed === 'string' ? data.renderingSpeed : 'DEFAULT';
+    const stylePreset = typeof data.stylePreset === 'string' ? data.stylePreset : 'AUTO';
+    const styleTypeRaw = data.styleType;
+    const styleType =
+      styleTypeRaw === 'REALISTIC' || styleTypeRaw === 'FICTION' ? styleTypeRaw : 'AUTO';
+
+    return {
+      dto: dto as SceneGenerationJobPayload['dto'],
+      characterUpload: characterUpload as SceneGenerationJobPayload['characterUpload'],
+      sceneTemplate: sceneTemplate as SceneGenerationJobPayload['sceneTemplate'],
+      prompt,
+      aspectRatio,
+      renderingSpeed,
+      stylePreset,
+      styleType,
+    };
+  }
+
   private extractResultAsset(result: unknown) {
     if (!result || typeof result !== 'object') {
       throw new Error(
@@ -745,6 +859,9 @@ export class JobProcessingService {
       'luma-realistic-vision': 'luma-realistic-vision',
       ideogram: 'ideogram',
       'qwen-image': 'qwen-image',
+      'grok-2-image': 'grok-2-image',
+      'grok-2-image-1212': 'grok-2-image-1212',
+      'grok-2-image-latest': 'grok-2-image-latest',
       'runway-gen4': 'runway-gen4',
       'runway-gen4-turbo': 'runway-gen4-turbo',
       'chatgpt-image': 'chatgpt-image',

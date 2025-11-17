@@ -37,6 +37,11 @@ const LUMA_MODELS = new Set([
   'luma-dream-shaper',
   'luma-realistic-vision',
 ]);
+const GROK_MODELS = new Set([
+  'grok-2-image',
+  'grok-2-image-1212',
+  'grok-2-image-latest',
+]);
 
 @UseGuards(JwtAuthGuard)
 @Controller('image')
@@ -116,6 +121,14 @@ export class ImageGenerationController {
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
     return this.enqueueImageJob(user, dto, 'qwen', 'qwen-image');
+  }
+
+  @Post('grok')
+  generateGrok(
+    @CurrentUser() user: SanitizedUser,
+    @Body(requestValidationPipe) dto: ProviderGenerateDto,
+  ) {
+    return this.enqueueImageJob(user, dto, 'grok', 'grok-2-image', GROK_MODELS);
   }
 
   @Post('runway')

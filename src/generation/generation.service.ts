@@ -23,6 +23,7 @@ import { FluxImageAdapter } from './providers/flux.adapter';
 import { GeminiImageAdapter } from './providers/gemini.adapter';
 import { IdeogramImageAdapter } from './providers/ideogram.adapter';
 import { QwenImageAdapter } from './providers/qwen.adapter';
+import { GrokImageAdapter } from './providers/grok.adapter';
 
 interface GeneratedAsset {
   dataUrl: string;
@@ -205,6 +206,21 @@ const asNumber = (value: unknown): number | undefined => {
   return undefined;
 };
 
+const buildHttpErrorPayload = (rawMessage: string, details?: unknown) => {
+  const message =
+    typeof rawMessage === 'string' && rawMessage.trim().length > 0
+      ? rawMessage.trim()
+      : 'Unexpected provider error';
+  const payload: Record<string, unknown> = {
+    message,
+    error: message,
+  };
+  if (details !== undefined) {
+    payload.details = details;
+  }
+  return payload;
+};
+
 @Injectable()
 export class GenerationService {
   private readonly logger = new Logger(GenerationService.name);
@@ -374,6 +390,10 @@ export class GenerationService {
         return this.withCircuit('ideogram', () => this.handleIdeogram(dto));
       case 'qwen-image':
         return this.withCircuit('qwen', () => this.handleQwen(dto));
+      case 'grok-2-image':
+      case 'grok-2-image-1212':
+      case 'grok-2-image-latest':
+        return this.withCircuit('grok', () => this.handleGrok(dto));
       case 'runway-gen4':
       case 'runway-gen4-turbo':
         return this.withCircuit('runway', () => this.handleRunway(dto));
@@ -420,6 +440,26 @@ export class GenerationService {
       const status = (err as { status?: number }).status;
       const details = (err as { details?: unknown }).details;
       const message = err instanceof Error ? err.message : 'Flux provider error';
+      throw new HttpException(
+        buildHttpErrorPayload(message, details),
+        typeof status === 'number' ? status : 502,
+>>>>>>> origin/main
+      );
+      const res = await adapter.generate({} as unknown as SanitizedUser, dto);
+      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      const out: ProviderResult = {
+        provider: 'flux',
+        model: dto.model || 'flux-pro-1.1',
+        clientPayload: res.clientPayload,
+        assets,
+        rawResponse: res.rawResponse,
+        usageMetadata: (res as any)?.usageMetadata as Record<string, unknown> | undefined,
+      };
+      return out;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const details = (err as { details?: unknown }).details;
+      const message = err instanceof Error ? err.message : 'Flux provider error';
       throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
     }
   }
@@ -446,7 +486,10 @@ export class GenerationService {
       const status = (err as { status?: number }).status;
       const details = (err as { details?: unknown }).details;
       const message = err instanceof Error ? err.message : 'Gemini provider error';
-      throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
+      throw new HttpException(
+        buildHttpErrorPayload(message, details),
+        typeof status === 'number' ? status : 502,
+      );
     }
   }
 
@@ -545,7 +588,10 @@ export class GenerationService {
       const status = (err as { status?: number }).status;
       const details = (err as { details?: unknown }).details;
       const message = err instanceof Error ? err.message : 'Ideogram provider error';
-      throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
+      throw new HttpException(
+        buildHttpErrorPayload(message, details),
+        typeof status === 'number' ? status : 502,
+      );
     }
   }
 
@@ -554,7 +600,7 @@ export class GenerationService {
     dto: ProviderGenerateDto,
   ): void {
     const badRequest = (msg: string, details?: unknown) =>
-      new HttpException({ error: msg, details }, HttpStatus.BAD_REQUEST);
+      new HttpException(buildHttpErrorPayload(msg, details), HttpStatus.BAD_REQUEST);
     const opts = dto.providerOptions ?? {};
 
     if (provider === 'ideogram') {
@@ -652,7 +698,39 @@ export class GenerationService {
       const status = (err as { status?: number }).status;
       const details = (err as { details?: unknown }).details;
       const message = err instanceof Error ? err.message : 'DashScope provider error';
-      throw new HttpException({ error: message, details }, typeof status === 'number' ? status : 502);
+      throw new HttpException(
+        buildHttpErrorPayload(message, details),
+        typeof status === 'number' ? status : 502,
+      );
+    }
+  }
+
+  private async handleGrok(dto: ProviderGenerateDto): Promise<ProviderResult> {
+    try {
+      const adapter = new GrokImageAdapter(
+        () => this.configService.get<string>('XAI_API_KEY'),
+        () => this.configService.get<string>('XAI_API_BASE'),
+      );
+      const res = await adapter.generate({} as unknown as SanitizedUser, dto);
+      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      return {
+        provider: 'grok',
+        model: dto.model ?? 'grok-2-image',
+        clientPayload: res.clientPayload,
+        assets,
+        rawResponse: res.rawResponse,
+        usageMetadata: res.usageMetadata,
+      };
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const details = (err as { details?: unknown }).details;
+      const message =
+        err instanceof Error ? err.message : 'Grok provider error';
+      throw new HttpException(
+        buildHttpErrorPayload(message, details),
+        typeof status === 'number' ? status : 502,
+      );
+>>>>>>> origin/main
     }
   }
 
@@ -730,7 +808,7 @@ export class GenerationService {
         request: sanitizedLog,
       });
       throw new HttpException(
-        { error: message, details: createPayload },
+        buildHttpErrorPayload(message, createPayload),
         createResponse.status,
       );
     }
@@ -821,10 +899,10 @@ export class GenerationService {
       const details = this.stringifyUnknown(resultPayload);
       this.logger.error(`Seedream API error ${response.status}: ${details}`);
       throw new HttpException(
-        {
-          error: `Seedream API error: ${response.status}`,
-          details: resultPayload,
-        },
+        buildHttpErrorPayload(
+          `Seedream API error: ${response.status}`,
+          resultPayload,
+        ),
         response.status,
       );
     }
@@ -885,10 +963,10 @@ export class GenerationService {
       const details = this.stringifyUnknown(resultPayload);
       this.logger.error(`OpenAI API error ${response.status}: ${details}`);
       throw new HttpException(
-        {
-          error: `OpenAI API error: ${response.status}`,
-          details: resultPayload,
-        },
+        buildHttpErrorPayload(
+          `OpenAI API error: ${response.status}`,
+          resultPayload,
+        ),
         response.status,
       );
     }
@@ -1032,7 +1110,7 @@ export class GenerationService {
       });
 
       throw new HttpException(
-        { error: providerMessage, details: resultPayload },
+        buildHttpErrorPayload(providerMessage, resultPayload),
         response.status,
       );
     }
@@ -1040,10 +1118,10 @@ export class GenerationService {
     const payloadRecord = toJsonRecord(resultPayload);
     if (payloadRecord['content_violation']) {
       throw new HttpException(
-        {
-          error: 'Reve rejected the prompt for policy reasons.',
-          details: resultPayload,
-        },
+        buildHttpErrorPayload(
+          'Reve rejected the prompt for policy reasons.',
+          resultPayload,
+        ),
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -1109,10 +1187,10 @@ export class GenerationService {
       const details = this.stringifyUnknown(resultPayload);
       this.logger.error(`Reve job status error ${response.status}: ${details}`);
       throw new HttpException(
-        {
-          error: `Reve job status error: ${response.status}`,
-          details: resultPayload,
-        },
+        buildHttpErrorPayload(
+          `Reve job status error: ${response.status}`,
+          resultPayload,
+        ),
         response.status,
       );
     }
@@ -1196,10 +1274,10 @@ export class GenerationService {
       const details = this.stringifyUnknown(resultPayload);
       this.logger.error(`Reve edit error ${response.status}: ${details}`);
       throw new HttpException(
-        {
-          error: `Reve edit error: ${response.status}`,
-          details: resultPayload,
-        },
+        buildHttpErrorPayload(
+          `Reve edit error: ${response.status}`,
+          resultPayload,
+        ),
         response.status,
       );
     }
@@ -1207,10 +1285,10 @@ export class GenerationService {
     const payloadRecord = toJsonRecord(resultPayload);
     if (payloadRecord['content_violation']) {
       throw new HttpException(
-        {
-          error: 'Reve rejected the edit for policy reasons.',
-          details: resultPayload,
-        },
+        buildHttpErrorPayload(
+          'Reve rejected the edit for policy reasons.',
+          resultPayload,
+        ),
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -1302,10 +1380,10 @@ export class GenerationService {
       const details = this.stringifyUnknown(resultPayload);
       this.logger.error(`Recraft API error ${response.status}: ${details}`);
       throw new HttpException(
-        {
-          error: `Recraft API error: ${response.status}`,
-          details: resultPayload,
-        },
+        buildHttpErrorPayload(
+          `Recraft API error: ${response.status}`,
+          resultPayload,
+        ),
         response.status,
       );
     }
@@ -1489,10 +1567,7 @@ export class GenerationService {
           'Luma AI API rate limit exceeded. Please try again later.';
       }
       throw new HttpException(
-        {
-          error: errorMessage,
-          details: resultPayload,
-        },
+        buildHttpErrorPayload(errorMessage, resultPayload),
         response.status,
       );
     }
@@ -1544,10 +1619,7 @@ export class GenerationService {
 
       if (state === 'failed') {
         throw new HttpException(
-          {
-            error: 'Luma generation failed',
-            details: latest,
-          },
+          buildHttpErrorPayload('Luma generation failed', latest),
           HttpStatus.BAD_GATEWAY,
         );
       }
@@ -1556,10 +1628,10 @@ export class GenerationService {
     }
 
     throw new HttpException(
-      {
-        error: 'Luma generation timed out',
-        details: { id: trimmedId, lastKnown: latest },
-      },
+      buildHttpErrorPayload('Luma generation timed out', {
+        id: trimmedId,
+        lastKnown: latest,
+      }),
       HttpStatus.GATEWAY_TIMEOUT,
     );
   }
@@ -1772,7 +1844,7 @@ export class GenerationService {
     if (!response.ok) {
       const text = await response.text().catch(() => '<no-body>');
       throw new HttpException(
-        { error: `Failed to download image`, details: text },
+        buildHttpErrorPayload('Failed to download image', text),
         response.status,
       );
     }
@@ -1819,10 +1891,10 @@ export class GenerationService {
       }
 
       throw new HttpException(
-        {
-          error: 'Failed to extract image data from response',
-          details: payload ?? text.slice(0, 2000),
-        },
+        buildHttpErrorPayload(
+          'Failed to extract image data from response',
+          payload ?? text.slice(0, 2000),
+        ),
         HttpStatus.BAD_GATEWAY,
       );
     }
@@ -2075,7 +2147,7 @@ export class GenerationService {
           attempt: attempt + 1,
         });
         throw new HttpException(
-          { error: providerMessage, details: payload },
+          buildHttpErrorPayload(providerMessage, payload),
           response.status,
         );
       }
@@ -2101,7 +2173,7 @@ export class GenerationService {
           this.extractProviderMessage(payload) ??
           `Runway task ${status.toLowerCase()}`;
         throw new HttpException(
-          { error: failureMessage, details: payload },
+          buildHttpErrorPayload(failureMessage, payload),
           HttpStatus.BAD_GATEWAY,
         );
       }
@@ -2111,7 +2183,7 @@ export class GenerationService {
 
     this.logger.error('Runway task timed out', { taskId });
     throw new HttpException(
-      { error: 'Runway generation timed out', details: { taskId } },
+      buildHttpErrorPayload('Runway generation timed out', { taskId }),
       HttpStatus.GATEWAY_TIMEOUT,
     );
   }
@@ -3170,7 +3242,7 @@ export class GenerationService {
 
       if (!response.ok) {
         throw new HttpException(
-          { error: 'Flux polling failed', details: payloadRaw },
+          buildHttpErrorPayload('Flux polling failed', payloadRaw),
           response.status,
         );
       }
@@ -3191,10 +3263,7 @@ export class GenerationService {
         const failureDetails =
           payloadRecord['error'] ?? payloadRecord['details'] ?? payloadRaw;
         throw new HttpException(
-          {
-            error: 'Flux generation failed',
-            details: failureDetails,
-          },
+          buildHttpErrorPayload('Flux generation failed', failureDetails),
           HttpStatus.BAD_GATEWAY,
         );
       }
@@ -3203,10 +3272,9 @@ export class GenerationService {
     }
 
     throw new HttpException(
-      {
-        error: 'Flux generation timed out',
-        details: { lastPayload: lastPayloadRaw },
-      },
+      buildHttpErrorPayload('Flux generation timed out', {
+        lastPayload: lastPayloadRaw,
+      }),
       HttpStatus.REQUEST_TIMEOUT,
     );
   }
@@ -3383,11 +3451,10 @@ export class GenerationService {
   }
 
   private throwBadRequest(message: string, details?: unknown): never {
-    const payload: Record<string, unknown> = { error: message };
-    if (details !== undefined) {
-      payload.details = details;
-    }
-    throw new HttpException(payload, HttpStatus.BAD_REQUEST);
+    throw new HttpException(
+      buildHttpErrorPayload(message, details),
+      HttpStatus.BAD_REQUEST,
+    );
   }
 
   private ensureFluxHost(

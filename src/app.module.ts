@@ -14,6 +14,7 @@ import { UploadModule } from './upload/upload.module';
 import { JobsModule } from './jobs/jobs.module';
 import { PaymentsModule } from './payments/payments.module';
 import { AudioModule } from './audio/audio.module';
+import { ScenesModule } from './scenes/scenes.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { AudioModule } from './audio/audio.module';
     JobsModule,
     PaymentsModule,
     AudioModule,
+    ScenesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

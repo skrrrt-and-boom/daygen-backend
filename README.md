@@ -8,6 +8,7 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 
 ### Image Generation
 - **FLUX Models**: Flux Pro 1.1, Ultra, Kontext Pro/Max via BFL API
+- **Grok 2 Image**: xAI's Grok image generation endpoint with revised prompt metadata
 - **Gemini 2.5 Flash**: Google's latest text-to-image model with experimental preview support
 - **Ideogram V3**: Advanced text-to-image with turbo mode and style presets
 - **Recraft v2/v3**: Professional image generation with multiple styles and editing capabilities
@@ -42,6 +43,13 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 - **Gallery Management**: User galleries with R2 storage
 - **Usage Tracking**: Credit system and usage analytics
 - **WebSocket Support**: Real-time job status updates
+
+### Scene Placement (Ideogram Remix)
+- **Curated templates**: Define cinematic backdrops in `src/scenes/scene-templates.ts`
+- **Character upload**: Users upload a portrait that becomes the `character_reference_images` payload for Ideogram V3 Remix
+- **Automatic storage**: Results are persisted to Cloudflare R2 and logged in `r2_files`
+- **Credits-aware**: Uses the same usage/credit pipeline as other providers, complete with automatic refunds on failure
+- **Style-driven workflow**: Frontend Style presets map directly to these templates, so picking a preset and hitting Apply immediately routes the user into the remix flow for each selected style
 
 ## 🛠️ Tech Stack
 
@@ -87,6 +95,7 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 Configure API keys for the providers you want to use:
 
 - `BFL_API_KEY` - Black Forest Labs (FLUX models)
+- `XAI_API_KEY` - xAI Grok image generation
 - `GEMINI_API_KEY` - Google Gemini 2.5 Flash
 - `IDEOGRAM_API_KEY` - Ideogram V3
 - `DASHSCOPE_API_KEY` - Alibaba Qwen Image
@@ -102,6 +111,11 @@ Configure API keys for the providers you want to use:
 - `R2_SECRET_ACCESS_KEY` - R2 secret key
 - `R2_BUCKET_NAME` - R2 bucket name
 - `R2_PUBLIC_URL` - R2 public URL
+
+### Scene Templates
+- `src/scenes/scene-templates.ts` defines the curated scene catalog (id, prompt, preview, and base image URL)
+- Base scene images can reference absolute URLs (preferred) or paths relative to the repo root
+- Ensure every template image is already hosted in an R2 bucket or CDN so the Remix endpoint can download it quickly
 
 ### Payment Processing
 - `STRIPE_SECRET_KEY` - Stripe secret key
@@ -129,6 +143,7 @@ Configure API keys for the providers you want to use:
 - `PATCH /api/users/me` - Update user profile
 
 ### Image Generation
+- `POST /api/image/grok` - Grok 2 image generation
 - `POST /api/image/gemini` - Gemini 2.5 Flash image generation
 - `POST /api/image/flux` - FLUX model generation
 - `POST /api/image/gemini` - Gemini generation
@@ -154,6 +169,10 @@ Configure API keys for the providers you want to use:
 - `GET /api/r2files` - List user files
 - `POST /api/r2files` - Upload file to R2
 - `DELETE /api/r2files/:id` - Delete file
+
+### Scene Placement
+- `GET /api/scene/templates` - Fetch curated scene templates (requires auth)
+- `POST /api/scene/generate` - Upload a portrait + template id to call Ideogram Remix V3, store the result, and return a permanent URL
 
 ### Payments
 - `POST /api/payments/create-checkout` - Create Stripe checkout session
