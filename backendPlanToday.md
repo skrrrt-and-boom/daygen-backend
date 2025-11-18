@@ -5,7 +5,7 @@ Stripe webhook: 2025-09-30
 
 Quick notes:
 
-Step 6, do not display uploaded photo, just start to generate without clicking the button
+Make loading ring to be continous progress not discrete
 
 Make image generation faster
 
