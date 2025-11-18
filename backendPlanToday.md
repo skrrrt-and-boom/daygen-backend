@@ -8,7 +8,7 @@ Style progress bar on the image
 Clean unneaded code from payments
 Highlight current subscription
 
-Step 6, do not display uploaded photo, just start to generate without clicking the button
+Make loading ring to be continous progress not discrete
 
 Make image generation faster
 
