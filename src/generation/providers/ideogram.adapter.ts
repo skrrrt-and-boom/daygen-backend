@@ -64,6 +64,21 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
     if (!form.has('magic_prompt')) form.set('magic_prompt', 'AUTO');
     if (!form.has('num_images')) form.set('num_images', '1');
 
+    // Handle reference image (first one only)
+    if (dto.references && dto.references.length > 0) {
+      const refUrl = dto.references[0];
+      try {
+        const dl = await safeDownload(refUrl, {
+          allowedHosts: IDEOGRAM_ALLOWED_HOSTS,
+          allowedHostSuffixes: COMMON_ALLOWED_SUFFIXES,
+        });
+        const blob = new Blob([dl.arrayBuffer], { type: dl.mimeType });
+        form.set('image_request', blob, 'reference_image');
+      } catch (error) {
+        throw Object.assign(new Error(`Failed to process reference image: ${error}`), { status: 400 });
+      }
+    }
+
     const response = await fetch('https://api.ideogram.ai/v1/ideogram-v3/generate', {
       method: 'POST',
       headers: { 'Api-Key': apiKey, Accept: 'application/json' },
