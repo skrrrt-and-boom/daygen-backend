@@ -1399,6 +1399,8 @@ export class GenerationService {
       size: string;
       image_format?: 'png' | 'webp';
       n?: number;
+      prompt?: string;
+      model?: string;
     },
   ) {
     const apiKey = this.configService.get<string>('RECRAFT_API_KEY');
@@ -1454,11 +1456,22 @@ export class GenerationService {
       this.throwBadRequest('No variations returned from Recraft');
     }
 
+    const resolvedPrompt =
+      options.prompt && options.prompt.trim().length > 0
+        ? options.prompt.trim()
+        : undefined;
+    const resolvedModel =
+      options.model && options.model.trim().length > 0
+        ? options.model.trim()
+        : 'recraft-v3';
+
     const items: Array<{
       url: string;
       mimeType: string;
       r2FileId?: string;
       r2FileUrl?: string;
+      prompt?: string;
+      model?: string;
     }> = [];
 
     for (const url of urls) {
@@ -1469,6 +1482,8 @@ export class GenerationService {
         items.push({
           url: ensured,
           mimeType: 'image/png',
+          prompt: resolvedPrompt ?? 'Variation',
+          model: resolvedModel,
         });
         continue;
       }
@@ -1494,10 +1509,21 @@ export class GenerationService {
           fileUrl: publicUrl,
           fileSize: Math.round((base64Data.length * 3) / 4),
           mimeType,
+          prompt: resolvedPrompt,
+          model: resolvedModel,
         });
 
         r2FileId = r2File.id;
         r2FileUrl = r2File.fileUrl;
+        items.push({
+          url: publicUrl,
+          mimeType,
+          r2FileId,
+          r2FileUrl,
+          prompt: r2File.prompt ?? resolvedPrompt ?? 'Variation',
+          model: r2File.model ?? resolvedModel,
+        });
+        continue;
       }
 
       items.push({
@@ -1505,6 +1531,8 @@ export class GenerationService {
         mimeType,
         r2FileId,
         r2FileUrl,
+        prompt: resolvedPrompt ?? 'Variation',
+        model: resolvedModel,
       });
     }
 

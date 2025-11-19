@@ -183,17 +183,29 @@ export class ImageGenerationController {
   async variateRecraftImage(
     @CurrentUser() user: SanitizedUser,
     @UploadedFile() file: Express.Multer.File,
-    @Body() body: { size?: string; image_format?: 'png' | 'webp'; n?: number },
+    @Body()
+    body: {
+      size?: string;
+      image_format?: 'png' | 'webp';
+      n?: number;
+      prompt?: string;
+      model?: string;
+    },
   ) {
     if (!file) {
       throw new BadRequestException('Image file is required');
     }
+
+    const normalizedPrompt = body.prompt?.trim();
+    const normalizedModel = body.model?.trim();
 
     return this.generationService.variateRecraftImage(user, {
       file,
       size: body.size || '1024x1024',
       image_format: body.image_format || 'webp',
       n: body.n || 1,
+      prompt: normalizedPrompt && normalizedPrompt.length > 0 ? normalizedPrompt : undefined,
+      model: normalizedModel && normalizedModel.length > 0 ? normalizedModel : undefined,
     });
   }
 
