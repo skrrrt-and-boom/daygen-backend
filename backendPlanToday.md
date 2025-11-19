@@ -4,6 +4,9 @@ THIS IS CRITICAL FILE! DO NOT TOUCH IT!!!
 Stripe webhook: 2025-09-30
 
 Quick notes:
+Style progress bar on the image
+Clean unneaded code from payments
+Highlight current subscription
 
 Make loading ring to be continous progress not discrete
 
@@ -399,3 +402,4 @@ Frontend: Update job status → Add to gallery → Show results
 ```
 
 This enables users to blend their photo with multiple style presets in one workflow.
+>>>>>>> origin/main

@@ -129,5 +129,3 @@ This means affected users can now authenticate even before running the SQL fix.
 - The SQL fix is a **one-time** operation to clean up existing data
 - Both changes are **backward compatible** and won't affect users without this issue
 
-
-

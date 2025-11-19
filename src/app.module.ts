@@ -13,6 +13,7 @@ import { GenerationModule } from './generation/generation.module';
 import { UploadModule } from './upload/upload.module';
 import { JobsModule } from './jobs/jobs.module';
 import { PaymentsModule } from './payments/payments.module';
+import { AudioModule } from './audio/audio.module';
 import { ScenesModule } from './scenes/scenes.module';
 
 @Module({
@@ -55,6 +56,7 @@ import { ScenesModule } from './scenes/scenes.module';
     UploadModule,
     JobsModule,
     PaymentsModule,
+    AudioModule,
     ScenesModule,
   ],
   controllers: [AppController],

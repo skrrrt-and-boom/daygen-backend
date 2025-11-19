@@ -17,5 +17,3 @@ WHERE email_change IS NULL;
 
 -- If the SELECT returns no rows, the issue is fixed
 
-
-
