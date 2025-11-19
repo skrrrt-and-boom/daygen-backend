@@ -5,7 +5,10 @@ import {
   Post,
   UseGuards,
   ValidationPipe,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CloudTasksService } from '../jobs/cloud-tasks.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -173,6 +176,25 @@ export class ImageGenerationController {
       'recraft-v3',
       RECRAFT_MODELS,
     );
+  }
+
+  @Post('recraft/variate')
+  @UseInterceptors(FileInterceptor('file'))
+  async variateRecraftImage(
+    @CurrentUser() user: SanitizedUser,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { size?: string; image_format?: 'png' | 'webp'; n?: number },
+  ) {
+    if (!file) {
+      throw new BadRequestException('Image file is required');
+    }
+
+    return this.generationService.variateRecraftImage(user, {
+      file,
+      size: body.size || '1024x1024',
+      image_format: body.image_format || 'webp',
+      n: body.n || 1,
+    });
   }
 
   @Post('luma')

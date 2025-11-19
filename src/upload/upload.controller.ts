@@ -84,6 +84,11 @@ class MigrateBase64BatchDto {
   images: MigrateBase64ImageDto[];
 }
 
+class ProxyImageDto {
+  @IsString()
+  url: string;
+}
+
 @Controller('upload')
 export class UploadController {
   constructor(
@@ -341,5 +346,67 @@ export class UploadController {
       results,
       errors,
     };
+  }
+
+  @Post('proxy-image')
+  @UseGuards(JwtAuthGuard)
+  async proxyImage(@Body() dto: ProxyImageDto) {
+    if (!dto.url) {
+      throw new BadRequestException('URL is required');
+    }
+
+    try {
+      // Validate URL
+      const url = new URL(dto.url);
+      if (!['http:', 'https:'].includes(url.protocol)) {
+        throw new BadRequestException('Only HTTP and HTTPS URLs are allowed');
+      }
+
+      // Fetch the image
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
+      try {
+        const response = await fetch(dto.url, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Daygen-Image-Proxy/1.0',
+          },
+        });
+
+        if (!response.ok) {
+          throw new BadRequestException(
+            `Failed to fetch image: ${response.status} ${response.statusText}`,
+          );
+        }
+
+        const contentType = response.headers.get('content-type') || 'image/png';
+        if (!contentType.startsWith('image/')) {
+          throw new BadRequestException(`URL does not point to an image: ${contentType}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const base64 = buffer.toString('base64');
+
+        clearTimeout(timer);
+
+        return {
+          success: true,
+          dataUrl: `data:${contentType};base64,${base64}`,
+          mimeType: contentType,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      console.error('Image proxy failed:', error);
+      throw new BadRequestException(
+        `Failed to proxy image: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
   }
 }

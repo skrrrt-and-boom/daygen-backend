@@ -1392,6 +1392,128 @@ export class GenerationService {
     };
   }
 
+  async variateRecraftImage(
+    user: SanitizedUser,
+    options: {
+      file: Express.Multer.File;
+      size: string;
+      image_format?: 'png' | 'webp';
+      n?: number;
+    },
+  ) {
+    const apiKey = this.configService.get<string>('RECRAFT_API_KEY');
+    if (!apiKey) {
+      this.logger.error(
+        'RECRAFT_API_KEY environment variable is not configured',
+      );
+      throw new ServiceUnavailableException(
+        'Recraft API key not configured. Please set RECRAFT_API_KEY environment variable.',
+      );
+    }
+
+    const formData = new FormData();
+    const fileBlob = new Blob([new Uint8Array(options.file.buffer)], {
+      type: options.file.mimetype || 'application/octet-stream',
+    });
+    formData.append('file', fileBlob, options.file.originalname || 'image.png');
+    formData.append('size', options.size);
+    if (options.image_format) {
+      formData.append('image_format', options.image_format);
+    }
+    if (options.n) {
+      formData.append('n', String(options.n));
+    }
+    formData.append('response_format', 'url');
+
+    const response = await fetch(
+      'https://external.api.recraft.ai/v1/images/variateImage',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: formData as unknown as BodyInit,
+      },
+    );
+
+    const resultPayload = (await response.json()) as unknown;
+    if (!response.ok) {
+      const details = this.stringifyUnknown(resultPayload);
+      this.logger.error(`Recraft variate API error ${response.status}: ${details}`);
+      throw new HttpException(
+        buildHttpErrorPayload(
+          `Recraft variate API error: ${response.status}`,
+          resultPayload,
+        ),
+        response.status,
+      );
+    }
+
+    const urls = this.extractRecraftImages(resultPayload);
+    if (urls.length === 0) {
+      this.throwBadRequest('No variations returned from Recraft');
+    }
+
+    const items: Array<{
+      url: string;
+      mimeType: string;
+      r2FileId?: string;
+      r2FileUrl?: string;
+    }> = [];
+
+    for (const url of urls) {
+      const ensured = await this.ensureDataUrl(url);
+      const match = ensured.match(/^data:([^;,]+);base64,(.*)$/);
+      if (!match) {
+        // If Recraft returns a direct URL, fall back to original URL
+        items.push({
+          url: ensured,
+          mimeType: 'image/png',
+        });
+        continue;
+      }
+
+      const [, mimeType, base64Data] = match;
+      let publicUrl = ensured;
+      let r2FileId: string | undefined;
+      let r2FileUrl: string | undefined;
+
+      if (this.r2Service.isConfigured()) {
+        publicUrl = await this.r2Service.uploadBase64Image(
+          base64Data,
+          mimeType,
+          'generated-images',
+        );
+
+        const fileName = `variation-${Date.now()}-${items.length}.${
+          mimeType.split('/')[1] || 'png'
+        }`;
+
+        const r2File = await this.r2FilesService.create(user.authUserId, {
+          fileName,
+          fileUrl: publicUrl,
+          fileSize: Math.round((base64Data.length * 3) / 4),
+          mimeType,
+        });
+
+        r2FileId = r2File.id;
+        r2FileUrl = r2File.fileUrl;
+      }
+
+      items.push({
+        url: publicUrl,
+        mimeType,
+        r2FileId,
+        r2FileUrl,
+      });
+    }
+
+    return {
+      success: true,
+      items,
+    };
+  }
+
   private async handleLuma(dto: ProviderGenerateDto): Promise<ProviderResult> {
     const apiKey = this.configService.get<string>('LUMAAI_API_KEY');
     if (!apiKey) {
