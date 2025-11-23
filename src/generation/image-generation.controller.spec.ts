@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 import { ImageGenerationController } from './image-generation.controller';
 import { CloudTasksService } from '../jobs/cloud-tasks.service';
