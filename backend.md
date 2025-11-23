@@ -22,7 +22,7 @@
 src/
 ├─ auth/                 # Supabase auth, JwtStrategy, guards, DTOs, auth.controller.ts
 ├─ users/                # Profiles (create/update), credits exposure, admin balance listing
-├─ generation/           # Provider-specific routes, controller, generation.service.ts
+├─ generation/           # Provider-specific routes, GenerationOrchestrator, GeneratedAssetService, generation.service.ts
 ├─ jobs/                 # Cloud Tasks client, job processor controller, WebSocket gateway, job CRUD/status
 ├─ payments/             # Stripe service, payments.controller.ts, public-payments.controller.ts, stripe-webhook.controller.ts
 ├─ r2files/              # File metadata CRUD for R2 assets
@@ -39,7 +39,9 @@ src/
 - **App bootstrap**: `src/main.ts`
 - **Module wiring**: `src/app.module.ts`
 - **Auth controller**: `src/auth/auth.controller.ts` (signup/login/me/oauth)
-- **Generation service**: `src/generation/generation.service.ts` (provider-specific generation logic)
+- **Generation Orchestrator**: `src/generation/generation.orchestrator.ts` (central flow control)
+- **Generation Service**: `src/generation/generation.service.ts` (provider dispatch)
+- **Generated Asset Service**: `src/generation/generated-asset.service.ts` (asset persistence)
 - **Cloud Tasks**: `src/jobs/cloud-tasks.service.ts` (job queue management)
 - **Stripe webhook**: `src/payments/stripe-webhook.controller.ts` (payment processing)
 - **R2 upload**: `src/upload/upload.controller.ts` (file uploads)
@@ -73,6 +75,12 @@ await fetch(`${getApiUrl()}/api/auth/me`, {
 
 ## 4) Generation flow
 
+- **Generation Orchestrator**: Central entry point (`GenerationOrchestrator.generate`). Handles:
+  1. **Credit Reservation**: Calls `UsageService.reserveCredits` (creates RESERVED event).
+  2. **Execution**: Calls `GenerationService.dispatch` (with retries).
+  3. **Persistence**: Calls `GeneratedAssetService.persistResult` (saves to R2 & DB).
+  4. **Credit Capture**: Calls `UsageService.captureCredits` (finalizes event to COMPLETED).
+  5. **Refunds**: On error, calls `UsageService.releaseCredits` (refunds user, marks CANCELLED).
 - **Provider-specific routes**: Each AI provider has its own endpoint under `/api/image/*` (e.g., `POST /api/image/gemini`, `POST /api/image/flux`, etc.)
 - **Job enqueueing**: Most providers enqueue jobs via `CloudTasksService` with model allow-lists and defaults (flux, ideogram, qwen, runway, seedream, reve, recraft, luma)
 - **Gemini special handling**: Supports both inline and queued processing based on `providerOptions` flags (`useQueue`, `useInline`)
@@ -113,6 +121,7 @@ POST /api/image/gemini
 - **Presigned URLs**: `POST /api/upload/presigned` to obtain presigned URL + public URL.
 - **File deletion**: `POST /api/upload/delete` by public URL.
 - **Migration**: `POST /api/upload/migrate-base64-batch` to migrate multiple base64 images into R2 + records.
+- **GeneratedAssetService**: Central service for persisting generation results. Handles data URLs, remote URLs, and base64 data.
 - **File metadata**: `r2files` resource (JWT) for list/create/delete user-owned file metadata.
 
 ---

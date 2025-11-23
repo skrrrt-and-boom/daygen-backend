@@ -65,13 +65,15 @@ INTERNAL_API_KEY=dev-internal-key
 
 - Auth: `POST /api/auth/signup`, `POST /api/auth/login`, `GET /api/auth/me`
 - Users: `GET|POST|PATCH /api/users/me`
-- Generation: `POST /api/image/<provider>` e.g. `gemini`, `flux`, `ideogram`, `runway`, `recraft`, `reve`, `luma`, `qwen`, `seedream`
+- Generation: `POST /api/image/<provider>` (handled by `GenerationOrchestrator`) e.g. `gemini`, `flux`, `ideogram`, `runway`, `recraft`, `reve`, `luma`, `qwen`, `seedream`
 - Jobs: `POST /api/jobs/[image-generation|video-generation|image-upscale|batch-generation]`, `GET /api/jobs/:jobId`, `GET /api/jobs`
 - Uploads/R2: `GET /api/upload/status`, `POST /api/upload/file|base64|presigned|delete`, `r2files` CRUD
 - Payments: `POST /api/payments/create-checkout`, `GET /api/payments/history`, `GET /api/payments/subscription`, `POST /api/payments/subscription/*`
 - Health: `GET /health`, `GET /api/health/queues`, `GET /api/health/queues/metrics`
 
 See `../../backend.md` for the complete endpoint map.
+ 
+> **Note**: Image generation requests now flow through `GenerationOrchestrator` which handles credit reservation, execution, and asset persistence automatically.
 
 ---
 

@@ -320,4 +320,17 @@ export class StripeService {
       throw error;
     }
   }
+
+  async createPortalSession(
+    customerId: string,
+    returnUrl: string,
+  ): Promise<StripeType.BillingPortal.Session> {
+    return this.createBillingPortalSession(customerId, returnUrl);
+  }
+
+  async resumeSubscription(
+    subscriptionId: string,
+  ): Promise<StripeType.Subscription> {
+    return this.removeCancellation(subscriptionId);
+  }
 }

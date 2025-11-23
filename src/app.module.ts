@@ -25,6 +25,18 @@ import { ScenesModule } from './scenes/scenes.module';
     }),
     LoggerModule.forRoot({
       pinoHttp: {
+        redact: {
+          paths: [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'req.body.password',
+            'req.body.token',
+            'req.body.apiKey',
+            'req.body.secret',
+            'res.headers["set-cookie"]',
+          ],
+          remove: true,
+        },
         genReqId: (req, res) => {
           const headerValue = req.headers['x-request-id'];
           if (Array.isArray(headerValue)) {
@@ -62,4 +74,4 @@ import { ScenesModule } from './scenes/scenes.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

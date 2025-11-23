@@ -11,10 +11,33 @@ import { safeDownload, toDataUrl } from '../safe-fetch';
 export class IdeogramImageAdapter implements ImageProviderAdapter {
   readonly providerName = 'ideogram';
 
-  constructor(private readonly getApiKey: () => string | undefined) {}
+  constructor(private readonly getApiKey: () => string | undefined) { }
 
   canHandleModel(model: string): boolean {
     return model === 'ideogram' || model === 'ideogram-v3';
+  }
+
+  validateOptions(dto: ProviderGenerateDto): void {
+    const badRequest = (msg: string) =>
+      Object.assign(new Error(msg), { status: 400 });
+    const opts = dto.providerOptions ?? {};
+
+    const num =
+      typeof opts['num_images'] === 'number'
+        ? opts['num_images']
+        : opts['numImages'];
+    if (typeof num === 'number') {
+      if (!Number.isInteger(num) || num < 1 || num > 4) {
+        throw badRequest('num_images must be an integer between 1 and 4');
+      }
+    }
+    const arRaw = opts['aspect_ratio'] ?? opts['aspectRatio'];
+    if (typeof arRaw === 'string' && arRaw.trim()) {
+      const ar = arRaw.trim();
+      if (!/^\d{1,4}[:x]\d{1,4}$/i.test(ar)) {
+        throw badRequest('aspect_ratio must be like 1:1, 16:9, or 16x9');
+      }
+    }
   }
 
   async generate(_user: SanitizedUser, dto: ProviderGenerateDto): Promise<ProviderAdapterResult> {

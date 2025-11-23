@@ -26,7 +26,7 @@ export class UsageService {
   private readonly logger = new Logger(UsageService.name);
   private readonly defaultCost = 1;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async checkCredits(user: SanitizedUser, cost: number = 1): Promise<boolean> {
     const userRecord = await this.prisma.user.findUnique({
@@ -101,6 +101,108 @@ export class UsageService {
       }
       throw e;
     }
+  }
+
+  async reserveCredits(
+    user: SanitizedUser,
+    event: UsageEventInput,
+  ): Promise<{ reservationId: string; balanceAfter: number }> {
+    const cost = this.normalizeCost(event.cost);
+    const sanitizedMetadata = this.sanitizeMetadata(event.metadata);
+
+    // Deduct credits immediately (reservation)
+    try {
+      const newBalanceRows = await this.prisma.$queryRawUnsafe<
+        { apply_credit_delta: number }[]
+      >(
+        'SELECT public.apply_credit_delta($1, $2::BIGINT, $3, $4, $5, $6, $7, $8, $9::jsonb)::INTEGER as apply_credit_delta',
+        user.authUserId,
+        -cost,
+        'JOB',
+        'JOB',
+        null,
+        event.provider,
+        event.model ?? null,
+        null,
+        JSON.stringify({
+          prompt: event.prompt?.slice(0, 256),
+          ...sanitizedMetadata,
+        }),
+      );
+      const balanceAfterRaw = newBalanceRows?.[0]?.apply_credit_delta ?? 0;
+      const balanceAfter = Number(balanceAfterRaw);
+
+      // Create usage event with RESERVED status
+      const usageEvent = await this.prisma.usageEvent.create({
+        data: {
+          userAuthId: user.authUserId,
+          provider: event.provider,
+          model: event.model ?? null,
+          prompt: event.prompt ? event.prompt.slice(0, 4096) : null,
+          cost,
+          balanceAfter,
+          status: UsageStatus.RESERVED,
+          metadata: sanitizedMetadata as Prisma.InputJsonValue | undefined,
+        },
+      });
+
+      return { reservationId: usageEvent.id, balanceAfter };
+    } catch (e) {
+      if (e instanceof Error && /Insufficient credits/.test(e.message)) {
+        throw new ForbiddenException(
+          'Insufficient credits to complete generation.',
+        );
+      }
+      throw e;
+    }
+  }
+
+  async captureCredits(
+    reservationId: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    const sanitizedMetadata = this.sanitizeMetadata(metadata);
+
+    await this.prisma.usageEvent.update({
+      where: { id: reservationId },
+      data: {
+        status: UsageStatus.COMPLETED,
+        metadata: sanitizedMetadata
+          ? (sanitizedMetadata as Prisma.InputJsonValue)
+          : undefined,
+      },
+    });
+  }
+
+  async releaseCredits(reservationId: string, reason?: string): Promise<void> {
+    const event = await this.prisma.usageEvent.findUnique({
+      where: { id: reservationId },
+    });
+
+    if (!event || event.status !== UsageStatus.RESERVED) {
+      this.logger.warn(
+        `Attempted to release invalid reservation: ${reservationId}`,
+      );
+      return;
+    }
+
+    // Refund credits
+    await this.prisma.user.update({
+      where: { authUserId: event.userAuthId },
+      data: { credits: { increment: event.cost } },
+    });
+
+    // Mark as CANCELLED
+    await this.prisma.usageEvent.update({
+      where: { id: reservationId },
+      data: {
+        status: UsageStatus.CANCELLED,
+        metadata: {
+          ...(event.metadata as Record<string, unknown>),
+          cancellationReason: reason,
+        } as Prisma.InputJsonValue,
+      },
+    });
   }
 
   async listEvents(params: {

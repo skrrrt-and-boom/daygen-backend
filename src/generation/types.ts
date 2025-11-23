@@ -42,6 +42,11 @@ export interface ImageProviderAdapter {
    * Implementations should NOT mutate the input DTO.
    */
   generate(user: SanitizedUser, dto: ProviderGenerateDto): Promise<ProviderAdapterResult>;
+  /**
+   * Validate provider-specific options in the DTO.
+   * Should throw HttpException (usually BadRequest) if invalid.
+   */
+  validateOptions?(dto: ProviderGenerateDto): void;
 }
 
 

@@ -35,10 +35,47 @@ const FLUX_MAX_ATTEMPTS = 60; // ~5 min
 export class FluxImageAdapter implements ImageProviderAdapter {
   readonly providerName = 'flux';
 
+  private readonly extraPollHosts: Set<string>;
+  private readonly extraDownloadHosts: Set<string>;
+  private readonly extraPollSuffixes: string[];
+  private readonly extraDownloadSuffixes: string[];
+
   constructor(
     private readonly getApiKey: () => string | undefined,
     private readonly getApiBase: () => string | undefined,
-  ) {}
+    private readonly getConfig: (key: string) => string | undefined,
+  ) {
+    this.extraPollHosts = this.readHostSet('BFL_ALLOWED_POLL_HOSTS');
+    this.extraDownloadHosts = this.readHostSet('BFL_ALLOWED_DOWNLOAD_HOSTS');
+    this.extraPollSuffixes = this.readSuffixList('BFL_ALLOWED_POLL_SUFFIXES');
+    this.extraDownloadSuffixes = this.readSuffixList('BFL_ALLOWED_DOWNLOAD_SUFFIXES');
+  }
+
+  validateOptions(dto: ProviderGenerateDto): void {
+    const badRequest = (msg: string) =>
+      Object.assign(new Error(msg), { status: 400 });
+    const opts = dto.providerOptions ?? {};
+
+    const width = opts['width'];
+    const height = opts['height'];
+    const checkDim = (v: unknown, name: string) => {
+      if (v === undefined) return;
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        throw badRequest(`${name} must be a number`);
+      }
+      if (v < 64 || v > 2048) {
+        throw badRequest(`${name} must be between 64 and 2048`);
+      }
+    };
+    checkDim(width, 'width');
+    checkDim(height, 'height');
+    const ar = opts['aspect_ratio'];
+    if (typeof ar === 'string' && ar.trim()) {
+      if (!/^\d{1,4}[:x]\d{1,4}$/i.test(ar.trim())) {
+        throw badRequest('aspect_ratio must be like 1:1, 16:9, or 16x9');
+      }
+    }
+  }
 
   canHandleModel(model: string): boolean {
     return model.startsWith('flux-');
@@ -92,14 +129,14 @@ export class FluxImageAdapter implements ImageProviderAdapter {
     if (!pollingUrl) {
       throw Object.assign(new Error('BFL response missing polling URL'), { status: 502 });
     }
-    this.assertAllowedHost(pollingUrl, FLUX_ALLOWED_POLL_HOSTS, 'poll');
+    this.assertAllowedHost(pollingUrl, FLUX_ALLOWED_POLL_HOSTS, 'poll', this.extraPollHosts, this.extraPollSuffixes);
 
     const pollResult = await this.poll(pollingUrl, apiKey);
     const sampleUrl = this.extractSampleUrl(pollResult.payload);
     if (!sampleUrl) throw Object.assign(new Error('Flux response did not include an image URL'), { status: 502 });
 
     if (!sampleUrl.startsWith('data:')) {
-      this.assertAllowedHost(sampleUrl, FLUX_ALLOWED_DOWNLOAD_HOSTS, 'download');
+      this.assertAllowedHost(sampleUrl, FLUX_ALLOWED_DOWNLOAD_HOSTS, 'download', this.extraDownloadHosts, this.extraDownloadSuffixes);
     }
 
     // Download and return data URL
@@ -241,15 +278,45 @@ export class FluxImageAdapter implements ImageProviderAdapter {
     return null;
   }
 
-  private assertAllowedHost(rawUrl: string, allowed: Set<string>, kind: string) {
-    const u = new URL(rawUrl);
-    const host = u.hostname;
-    if (allowed.has(host)) return;
-    for (const suffix of COMMON_ALLOWED_SUFFIXES) {
-      if (host === suffix) return;
-      if (host.endsWith(suffix) && host[host.length - suffix.length - 1] === '.') return;
+  private assertAllowedHost(
+    rawUrl: string,
+    allowed: Set<string>,
+    kind: string,
+    extraHosts: Set<string> = new Set(),
+    extraSuffixes: string[] = []
+  ) {
+    let u: URL;
+    try {
+      u = new URL(rawUrl);
+    } catch {
+      throw Object.assign(new Error(`Invalid ${kind} URL`), { status: 400 });
+    }
+    const host = u.hostname.toLowerCase();
+    if (allowed.has(host) || extraHosts.has(host)) return;
+
+    const allSuffixes = [...COMMON_ALLOWED_SUFFIXES, ...extraSuffixes];
+    for (const suffix of allSuffixes) {
+      const normalized = suffix.startsWith('.') ? suffix.slice(1) : suffix;
+      if (host === normalized || host.endsWith(`.${normalized}`)) return;
     }
     throw Object.assign(new Error(`Flux ${kind} host not allowed: ${host}`), { status: 400 });
+  }
+
+  private readHostSet(configKey: string): Set<string> {
+    const raw = this.getConfig(configKey);
+    if (!raw) return new Set();
+    return new Set(raw.split(',').map((v) => v.trim().toLowerCase()).filter(Boolean));
+  }
+
+  private readSuffixList(configKey: string): string[] {
+    const raw = this.getConfig(configKey);
+    if (!raw) return [];
+    return raw.split(',').map((v) => {
+      const t = v.trim().toLowerCase();
+      if (!t) return '';
+      const clean = t.replace(/^[*]+\./, '').replace(/^[.]+/, '');
+      return clean ? `.${clean}` : '';
+    }).filter(Boolean);
   }
 }
 

@@ -2,11 +2,13 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Param,
   Post,
   UseGuards,
   ValidationPipe,
   UploadedFile,
   UseInterceptors,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CloudTasksService } from '../jobs/cloud-tasks.service';
@@ -15,6 +17,8 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
 import { ProviderGenerateDto } from './dto/base-generate.dto';
 import { GenerationService } from './generation.service';
+import { GenerationOrchestrator } from './generation.orchestrator';
+import { PROVIDER_ROUTES } from './generation.router-config';
 
 const requestValidationPipe = new ValidationPipe({
   whitelist: true,
@@ -23,160 +27,14 @@ const requestValidationPipe = new ValidationPipe({
   transformOptions: { enableImplicitConversion: true },
 });
 
-const FLUX_MODELS = new Set([
-  'flux-pro-1.1',
-  'flux-pro-1.1-ultra',
-  'flux-kontext-pro',
-  'flux-kontext-max',
-  'flux-pro',
-  'flux-dev',
-]);
-
-const RUNWAY_MODELS = new Set(['runway-gen4', 'runway-gen4-turbo']);
-const RECRAFT_MODELS = new Set(['recraft-v3', 'recraft-v2']);
-const LUMA_MODELS = new Set([
-  'luma-photon-1',
-  'luma-photon-flash-1',
-  'luma-dream-shaper',
-  'luma-realistic-vision',
-]);
-const GROK_MODELS = new Set([
-  'grok-2-image',
-  'grok-2-image-1212',
-  'grok-2-image-latest',
-]);
-
 @UseGuards(JwtAuthGuard)
 @Controller('image')
 export class ImageGenerationController {
   constructor(
     private readonly cloudTasksService: CloudTasksService,
     private readonly generationService: GenerationService,
-  ) {}
-
-  @Post('gemini')
-  async generateGemini(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    if (!this.shouldQueueGemini(dto)) {
-      const requestedModel = this.resolveModel(
-        dto.model,
-        'gemini-2.5-flash-image',
-      );
-      const normalizedModel =
-        requestedModel === 'gemini-2.5-flash-image-preview'
-          ? 'gemini-2.5-flash-image'
-          : requestedModel;
-
-      if (normalizedModel !== 'gemini-2.5-flash-image') {
-        throw new BadRequestException(
-          `Unsupported Gemini model: ${requestedModel}`,
-        );
-      }
-
-      const providerOptions = { ...(dto.providerOptions ?? {}) };
-      delete providerOptions.useQueue;
-      delete providerOptions.queue;
-      delete providerOptions.forceQueue;
-
-      return this.generationService.generateForModel(
-        user,
-        'gemini-2.5-flash-image',
-        {
-          ...dto,
-          model: normalizedModel,
-          providerOptions,
-        },
-      );
-    }
-
-    return this.enqueueImageJob(user, dto, 'gemini', 'gemini-2.5-flash-image');
-  }
-
-  @Post('flux')
-  async generateFlux(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(user, dto, 'flux', 'flux-pro-1.1', FLUX_MODELS);
-  }
-
-  @Post('chatgpt')
-  generateChatGpt(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(user, dto, 'openai', 'chatgpt-image');
-  }
-
-  @Post('ideogram')
-  async generateIdeogram(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(user, dto, 'ideogram', 'ideogram');
-  }
-
-  @Post('qwen')
-  generateQwen(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(user, dto, 'qwen', 'qwen-image');
-  }
-
-  @Post('grok')
-  generateGrok(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(user, dto, 'grok', 'grok-2-image', GROK_MODELS);
-  }
-
-  @Post('runway')
-  generateRunway(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(
-      user,
-      dto,
-      'runway',
-      'runway-gen4',
-      RUNWAY_MODELS,
-    );
-  }
-
-  @Post('seedream')
-  generateSeedream(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(user, dto, 'seedream', 'seedream-3.0');
-  }
-
-  @Post('reve')
-  generateReve(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(user, dto, 'reve', 'reve-image');
-  }
-
-  @Post('recraft')
-  generateRecraft(
-    @CurrentUser() user: SanitizedUser,
-    @Body(requestValidationPipe) dto: ProviderGenerateDto,
-  ) {
-    return this.enqueueImageJob(
-      user,
-      dto,
-      'recraft',
-      'recraft-v3',
-      RECRAFT_MODELS,
-    );
-  }
+    private readonly generationOrchestrator: GenerationOrchestrator,
+  ) { }
 
   @Post('recraft/variate')
   @UseInterceptors(FileInterceptor('file'))
@@ -209,18 +67,53 @@ export class ImageGenerationController {
     });
   }
 
-  @Post('luma')
-  generateLuma(
+  @Post(':provider')
+  async generate(
+    @Param('provider') provider: string,
     @CurrentUser() user: SanitizedUser,
     @Body(requestValidationPipe) dto: ProviderGenerateDto,
   ) {
-    return this.enqueueImageJob(
-      user,
-      dto,
-      'luma',
-      'luma-photon-1',
-      LUMA_MODELS,
+    const config = PROVIDER_ROUTES[provider];
+    if (!config) {
+      throw new NotFoundException(`Unknown provider: ${provider}`);
+    }
+
+    // Resolve model
+    const model = this.resolveModel(
+      dto.model,
+      config.defaultModel,
+      config.allowedModels,
     );
+
+    // Special handling for Gemini inline/queue logic
+    if (config.allowInline && !this.shouldQueue(dto)) {
+      let finalModel = model;
+      if (provider === 'gemini' && model === 'gemini-2.5-flash-image-preview') {
+        finalModel = 'gemini-2.5-flash-image';
+      }
+
+      if (provider === 'gemini' && finalModel !== 'gemini-2.5-flash-image') {
+        throw new BadRequestException(`Unsupported Gemini model: ${model}`);
+      }
+
+      const providerOptions = { ...(dto.providerOptions ?? {}) };
+      delete providerOptions.useQueue;
+      delete providerOptions.queue;
+      delete providerOptions.forceQueue;
+      delete providerOptions.useInline;
+      delete providerOptions.inline;
+
+      return this.generationOrchestrator.generate(
+        user,
+        {
+          ...dto,
+          model: finalModel,
+          providerOptions,
+        },
+      );
+    }
+
+    return this.enqueueImageJob(user, dto, provider, model);
   }
 
   private resolveModel(
@@ -244,11 +137,8 @@ export class ImageGenerationController {
     user: SanitizedUser,
     dto: ProviderGenerateDto,
     provider: string,
-    fallbackModel: string,
-    allowedModels?: Set<string>,
+    model: string,
   ) {
-    const model = this.resolveModel(dto.model, fallbackModel, allowedModels);
-
     return this.cloudTasksService.createImageGenerationJob(user.authUserId, {
       prompt: dto.prompt,
       model,
@@ -257,7 +147,7 @@ export class ImageGenerationController {
     });
   }
 
-  private shouldQueueGemini(dto: ProviderGenerateDto): boolean {
+  private shouldQueue(dto: ProviderGenerateDto): boolean {
     const rawOptions = dto.providerOptions ?? {};
     const queueFlags = [
       rawOptions.useQueue,
