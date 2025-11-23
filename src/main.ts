@@ -1,5 +1,6 @@
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import express from 'express';
@@ -10,6 +11,27 @@ async function bootstrap() {
     bufferLogs: true,
     bodyParser: false, // Disable default body parser to configure custom limits
   });
+
+  const configService = app.get(ConfigService);
+  const requiredEnvVars = [
+    'DATABASE_URL',
+    'SUPABASE_JWT_SECRET',
+    'CLOUDFLARE_R2_ACCESS_KEY_ID',
+    'CLOUDFLARE_R2_SECRET_ACCESS_KEY',
+    'CLOUDFLARE_R2_BUCKET_NAME',
+    'CLOUDFLARE_R2_ACCOUNT_ID',
+  ];
+
+  const missingEnvVars = requiredEnvVars.filter(
+    (key) => !configService.get(key),
+  );
+
+  if (missingEnvVars.length > 0) {
+    console.error(
+      `❌ Missing required environment variables: ${missingEnvVars.join(', ')}`,
+    );
+    process.exit(1);
+  }
   app.useLogger(app.get(Logger));
   app.setGlobalPrefix('api', {
     exclude: [

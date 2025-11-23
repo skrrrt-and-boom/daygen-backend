@@ -1,8 +1,7 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { JobStatus, JobType } from '@prisma/client';
 import { GenerationService } from '../generation/generation.service';
-import { R2FilesService } from '../r2files/r2files.service';
-import { R2Service } from '../upload/r2.service';
+import { GenerationOrchestrator } from '../generation/generation.orchestrator';
 import { UsageService } from '../usage/usage.service';
 import { PaymentsService } from '../payments/payments.service';
 import { CloudTasksService } from './cloud-tasks.service';
@@ -26,8 +25,7 @@ export class JobProcessingService {
 
   constructor(
     private readonly generationService: GenerationService,
-    private readonly r2FilesService: R2FilesService,
-    private readonly r2Service: R2Service,
+    private readonly generationOrchestrator: GenerationOrchestrator,
     private readonly usageService: UsageService,
     private readonly paymentsService: PaymentsService,
     private readonly structuredLogger: LoggerService,
@@ -37,7 +35,7 @@ export class JobProcessingService {
     private readonly cloudTasksService: CloudTasksService,
     @Inject(forwardRef(() => ScenesService))
     private readonly scenesService: ScenesService,
-  ) {}
+  ) { }
 
   async processJob(payload: ProcessJobPayload) {
     const { jobId, userId, jobType, data } = payload;
@@ -232,198 +230,45 @@ export class JobProcessingService {
       throw new Error(`User not found: ${userId}`);
     }
 
-    const hasCredits = await this.usageService.checkCredits(
-      { authUserId: user.authUserId } as SanitizedUser,
-      1,
-    );
-
-    if (!hasCredits) {
-      throw new Error('Insufficient credits');
-    }
-
-    // Do not pre-deduct here; generation path already charges once
+    // Orchestrator handles credit checks, deduction, retries, and persistence.
+    // We just need to map the result to the job completion format.
 
     await this.cloudTasksService.updateJobProgress(jobId, 25);
 
-    let result: unknown;
-    let lastError: unknown;
-    const maxRetries = 3;
-
-    const optionsDto =
-      (data.options as Partial<ProviderGenerateDto> | undefined) ?? {};
-    const generationDto = this.buildGenerationDto(
-      prompt,
-      mappedModel,
-      optionsDto,
-    );
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        result = await this.generationService.generateForModel(
-          { authUserId: user.authUserId } as SanitizedUser,
-          mappedModel,
-          generationDto,
-        );
-        break;
-      } catch (error) {
-        lastError = error;
-        const isRetryable = this.isRetryableError(error);
-
-        if (attempt === maxRetries || !isRetryable) {
-          // Auto-refund credits on final failure
-          try {
-            await this.paymentsService.refundCredits(
-              user.authUserId,
-              1,
-              `Job generation failed after ${maxRetries} attempts: ${error instanceof Error ? error.message : String(error)}`,
-            );
-            this.logger.log(
-              `Refunded 1 credit to user ${user.authUserId} due to job generation failure`,
-            );
-          } catch (refundError) {
-            this.logger.error(
-              `Failed to refund credits to user ${user.authUserId}:`,
-              refundError,
-            );
-          }
-          throw error;
-        }
-
-        this.logger.warn(`Generation attempt ${attempt} failed, retrying...`, {
-          jobId,
-          attempt,
-          error: error instanceof Error ? error.message : String(error),
-          isRetryable,
-        });
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.pow(2, attempt) * 1000),
-        );
-      }
-    }
-
-    if (!result) {
-      // Auto-refund credits if no result after all attempts
-      try {
-        await this.paymentsService.refundCredits(
-          user.authUserId,
-          1,
-          `Job generation failed - no result after all attempts`,
-        );
-        this.logger.log(
-          `Refunded 1 credit to user ${user.authUserId} due to job generation failure - no result`,
-        );
-      } catch (refundError) {
-        this.logger.error(
-          `Failed to refund credits to user ${user.authUserId}:`,
-          refundError,
-        );
-      }
-
-      if (lastError instanceof Error) {
-        throw lastError;
-      }
-
-      const fallbackMessage =
-        typeof lastError === 'string' && lastError
-          ? lastError
-          : 'Generation failed after all retry attempts';
-
-      throw new Error(fallbackMessage);
-    }
-
-    this.logger.log(
-      `Generation result for job ${jobId}:`,
-      JSON.stringify(result, null, 2),
-    );
-
-    await this.cloudTasksService.updateJobProgress(jobId, 75);
-
-    let fileUrl: string;
-    let mimeType: string | undefined;
-    let r2FileId: string | undefined;
+    let result;
     try {
-      const extracted = this.extractResultAsset(result);
-      fileUrl = extracted.fileUrl;
-      mimeType = extracted.mimeType;
-      r2FileId = extracted.r2FileId;
+      result = await this.generationOrchestrator.generate(
+        { authUserId: user.authUserId } as SanitizedUser,
+        this.buildGenerationDto(prompt, mappedModel, (data.options as Partial<ProviderGenerateDto> | undefined) ?? {}),
+        {
+          cost: 1,
+          retries: 3,
+          isJob: true,
+        },
+      );
     } catch (error) {
-      // Refund credits if extraction fails (credits were already charged during generation)
-      try {
-        await this.paymentsService.refundCredits(
-          user.authUserId,
-          1,
-          `Job generation failed during result extraction: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        this.logger.log(
-          `Refunded 1 credit to user ${user.authUserId} due to result extraction failure`,
-        );
-      } catch (refundError) {
-        this.logger.error(
-          `Failed to refund credits to user ${user.authUserId}:`,
-          refundError,
-        );
-      }
+      // Orchestrator already handled refunds and logging.
+      // We just need to rethrow so the job fails.
       throw error;
     }
 
-    // Normalize to an R2 public URL before completing the job
-    let finalUrl = fileUrl;
-    let finalMime = mimeType;
+    await this.cloudTasksService.updateJobProgress(jobId, 75);
 
-    // If we received a data URL, upload its contents to R2
-    if (this.isDataImageUrl(finalUrl)) {
-      const parts = this.extractDataUrlParts(finalUrl);
-      if (!parts) {
-        throw new Error('Invalid data URL received from provider result.');
-      }
-      try {
-        finalUrl = await this.r2Service.uploadBase64Image(parts.base64, parts.mimeType || 'image/png', 'generated-images');
-        finalMime = parts.mimeType || finalMime;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          `R2 upload failed for data URL: ${message}`,
-        );
-      }
-    } else if (!this.r2Service.validateR2Url(finalUrl)) {
-      // If it's a remote non-R2 URL, download then upload to R2
-      try {
-        const downloaded = await this.downloadUrlAsBase64(finalUrl);
-        finalUrl = await this.r2Service.uploadBase64Image(
-          downloaded.base64,
-          downloaded.mimeType || finalMime || 'image/png',
-          'generated-images',
-        );
-        finalMime = downloaded.mimeType || finalMime;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          `Failed to persist remote image to R2: ${message}`,
-        );
-      }
+    const firstAsset = result.assets[0];
+    if (!firstAsset) {
+      throw new Error('No assets generated');
     }
 
-    let r2File = r2FileId
-      ? await this.r2FilesService.findById(user.authUserId, r2FileId)
-      : null;
+    const fileUrl = firstAsset.remoteUrl || firstAsset.dataUrl;
+    const r2FileId = firstAsset.r2FileId; // Assuming GeneratedAsset has r2FileId (it should if persisted)
 
-    if (!r2File) {
-      r2File = await this.r2FilesService.create(user.authUserId, {
-        fileName: `generated-${Date.now()}.png`,
-        fileUrl: finalUrl,
-        mimeType: finalMime,
-        prompt,
-        model,
-        jobId,
-      });
+    if (!fileUrl) {
+      throw new Error('Generated asset has no URL');
     }
 
-    // Avoid second deduction; the generation path performed the charge
-
-    await this.cloudTasksService.completeJob(jobId, r2File.fileUrl, {
-      r2FileId: r2File.id,
-      fileUrl: r2File.fileUrl,
+    await this.cloudTasksService.completeJob(jobId, fileUrl, {
+      r2FileId,
+      fileUrl,
       prompt,
       model,
     });
@@ -437,32 +282,53 @@ export class JobProcessingService {
     const prompt = data.prompt as string;
     const model = data.model as string;
     const provider = data.provider as string;
+    const cost = 5; // Video generation cost
 
-    const hasCredits = await this.usageService.checkCredits(
-      { authUserId: userId } as SanitizedUser,
-      5,
-    );
-
-    if (!hasCredits) {
-      throw new Error('Insufficient credits');
+    const user = await this.cloudTasksService.getUserByAuthId(userId);
+    if (!user) {
+      throw new Error(`User not found: ${userId}`);
     }
+    const sanitizedUser = { authUserId: user.authUserId } as SanitizedUser;
 
-    await this.cloudTasksService.updateJobProgress(jobId, 25);
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    await this.cloudTasksService.updateJobProgress(jobId, 75);
-
-    const videoUrl = `https://example.com/video-${Date.now()}.mp4`;
-
-    // Charge should occur in the generation/business logic, not here
-
-    await this.cloudTasksService.completeJob(jobId, videoUrl, {
-      videoUrl,
-      prompt,
-      model,
+    // 1. Reserve Credits
+    const { reservationId } = await this.usageService.reserveCredits(sanitizedUser, {
       provider,
+      model,
+      prompt,
+      cost,
+      metadata: { model, prompt, jobId, type: 'video' },
     });
+
+    try {
+      await this.cloudTasksService.updateJobProgress(jobId, 25);
+
+      // Simulate video generation (replace with actual provider call later)
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      await this.cloudTasksService.updateJobProgress(jobId, 75);
+
+      const videoUrl = `https://example.com/video-${Date.now()}.mp4`;
+
+      // 2. Capture Credits
+      await this.usageService.captureCredits(reservationId, {
+        finalStatus: 'COMPLETED',
+        assetCount: 1,
+      });
+
+      await this.cloudTasksService.completeJob(jobId, videoUrl, {
+        videoUrl,
+        prompt,
+        model,
+        provider,
+      });
+    } catch (error) {
+      // 3. Release Credits on Failure
+      await this.usageService.releaseCredits(
+        reservationId,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
   }
 
   private async processImageUpscale(
@@ -473,40 +339,53 @@ export class JobProcessingService {
     const imageUrl = data.imageUrl as string;
     const model = data.model as string;
     const provider = data.provider as string;
+    const cost = 2; // Upscale cost
 
-    const hasCredits = await this.usageService.checkCredits(
-      { authUserId: userId } as SanitizedUser,
-      2,
-    );
-
-    if (!hasCredits) {
-      throw new Error('Insufficient credits');
+    const user = await this.cloudTasksService.getUserByAuthId(userId);
+    if (!user) {
+      throw new Error(`User not found: ${userId}`);
     }
+    const sanitizedUser = { authUserId: user.authUserId } as SanitizedUser;
 
-    await this.cloudTasksService.updateJobProgress(jobId, 25);
-
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    await this.cloudTasksService.updateJobProgress(jobId, 75);
-
-    const upscaledUrl = `https://example.com/upscaled-${Date.now()}.png`;
-
-    await this.usageService.recordGeneration(
-      { authUserId: userId } as SanitizedUser,
-      {
-        provider,
-        model,
-        prompt: `Upscale ${imageUrl}`,
-        cost: 2,
-      },
-    );
-
-    await this.cloudTasksService.completeJob(jobId, upscaledUrl, {
-      upscaledUrl,
-      sourceImageUrl: imageUrl,
-      model,
+    // 1. Reserve Credits
+    const { reservationId } = await this.usageService.reserveCredits(sanitizedUser, {
       provider,
+      model,
+      prompt: `Upscale ${imageUrl}`,
+      cost,
+      metadata: { model, imageUrl, jobId, type: 'upscale' },
     });
+
+    try {
+      await this.cloudTasksService.updateJobProgress(jobId, 25);
+
+      // Simulate upscale (replace with actual provider call later)
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      await this.cloudTasksService.updateJobProgress(jobId, 75);
+
+      const upscaledUrl = `https://example.com/upscaled-${Date.now()}.png`;
+
+      // 2. Capture Credits
+      await this.usageService.captureCredits(reservationId, {
+        finalStatus: 'COMPLETED',
+        assetCount: 1,
+      });
+
+      await this.cloudTasksService.completeJob(jobId, upscaledUrl, {
+        upscaledUrl,
+        sourceImageUrl: imageUrl,
+        model,
+        provider,
+      });
+    } catch (error) {
+      // 3. Release Credits on Failure
+      await this.usageService.releaseCredits(
+        reservationId,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
   }
 
   private async processBatchGeneration(
@@ -542,38 +421,24 @@ export class JobProcessingService {
       for (const prompt of batch) {
         try {
           const generationDto = this.buildGenerationDto(prompt, model, options);
-          const result = await this.generationService.generateForModel(
+          const result = await this.generationOrchestrator.generate(
             { authUserId: userId } as SanitizedUser,
-            model,
             generationDto,
+            {
+              cost: 1,
+              retries: 3,
+              isJob: true,
+            },
           );
 
-          const { fileUrl, mimeType, r2FileId } =
-            this.extractResultAsset(result);
+          const firstAsset = result.assets[0];
+          const fileUrl = firstAsset?.remoteUrl || firstAsset?.dataUrl;
 
-          // Ensure we have an R2 URL, not base64 data
-          if (fileUrl.startsWith('data:image/')) {
-            throw new Error(
-              `R2 upload failed for prompt "${prompt}" - base64 data detected instead of R2 URL. Please ensure R2 is properly configured.`,
-            );
+          if (fileUrl) {
+            results.push(fileUrl);
+          } else {
+            this.logger.warn(`Batch generation for prompt "${prompt}" completed but no URL found.`);
           }
-
-          let r2File = r2FileId
-            ? await this.r2FilesService.findById(userId, r2FileId)
-            : null;
-
-          if (!r2File) {
-            r2File = await this.r2FilesService.create(userId, {
-              fileName: `batch-generated-${Date.now()}-${i}.png`,
-              fileUrl,
-              mimeType,
-              prompt,
-              model,
-              jobId,
-            });
-          }
-
-          results.push(r2File.fileUrl);
 
           // Single charge per generated output should be handled centrally
         } catch (error) {
@@ -662,179 +527,7 @@ export class JobProcessingService {
     };
   }
 
-  private extractResultAsset(result: unknown) {
-    if (!result || typeof result !== 'object') {
-      throw new Error(
-        `Cannot extract file URL from result: ${JSON.stringify(result)}`,
-      );
-    }
 
-    const resultObj = result as Record<string, unknown>;
-
-    // Check for Gemini NO_IMAGE finish reason before attempting to extract URLs
-    // Note: The result might be the raw Gemini response directly (when no assets),
-    // or it might be wrapped in a ProviderResult structure (with clientPayload/rawResponse)
-    const checkForNoImage = (payload: unknown): boolean => {
-      if (!payload || typeof payload !== 'object') {
-        return false;
-      }
-      const payloadObj = payload as Record<string, unknown>;
-      const candidates = Array.isArray(payloadObj.candidates) ? payloadObj.candidates : [];
-      const firstCandidate = candidates[0];
-      if (firstCandidate && typeof firstCandidate === 'object') {
-        const candidateObj = firstCandidate as Record<string, unknown>;
-        return candidateObj.finishReason === 'NO_IMAGE';
-      }
-      return false;
-    };
-
-    // Check the result itself (in case it's the raw response directly)
-    // and also check clientPayload/rawResponse (in case it's wrapped in ProviderResult)
-    if (
-      checkForNoImage(resultObj) ||
-      checkForNoImage(resultObj.clientPayload) ||
-      checkForNoImage(resultObj.rawResponse)
-    ) {
-      throw new Error(
-        'Image generation failed: Gemini API returned NO_IMAGE finish reason. The model could not generate an image for this prompt.',
-      );
-    }
-
-    const pickString = (value: unknown): string | undefined =>
-      typeof value === 'string' && value.trim().length > 0
-        ? value.trim()
-        : undefined;
-    const pickKey = (
-      obj: Record<string, unknown>,
-      key: string,
-    ): string | undefined => pickString(obj[key]);
-
-    let fileUrl: string | undefined;
-    let mimeType: string | undefined;
-    let r2FileId: string | undefined;
-
-    const applyCandidate = (candidate?: {
-      url?: string;
-      mime?: string;
-      r2Id?: string;
-    }) => {
-      if (!candidate) {
-        return;
-      }
-      if (!fileUrl && candidate.url) {
-        fileUrl = candidate.url;
-      }
-      if (!mimeType && candidate.mime) {
-        mimeType = candidate.mime;
-      }
-      if (!r2FileId && candidate.r2Id) {
-        r2FileId = candidate.r2Id;
-      }
-    };
-
-    const extractFromPayload = (payload: Record<string, unknown>) => {
-      applyCandidate({
-        url:
-          pickKey(payload, 'r2FileUrl') ??
-          pickKey(payload, 'dataUrl') ??
-          pickKey(payload, 'image') ??
-          pickKey(payload, 'image_url'),
-        mime:
-          pickKey(payload, 'mimeType') ??
-          pickKey(payload, 'contentType') ??
-          pickKey(payload, 'type'),
-        r2Id: pickKey(payload, 'r2FileId'),
-      });
-    };
-
-    const extractFromAsset = (asset: Record<string, unknown>) => {
-      applyCandidate({
-        url:
-          pickKey(asset, 'r2FileUrl') ??
-          pickKey(asset, 'remoteUrl') ??
-          pickKey(asset, 'dataUrl'),
-        mime: pickKey(asset, 'mimeType'),
-        r2Id: pickKey(asset, 'r2FileId'),
-      });
-    };
-
-    if ('clientPayload' in resultObj) {
-      const payload = resultObj.clientPayload;
-      if (payload && typeof payload === 'object') {
-        extractFromPayload(payload as Record<string, unknown>);
-      }
-    }
-
-    if (
-      'assets' in resultObj &&
-      Array.isArray(resultObj.assets) &&
-      resultObj.assets.length > 0
-    ) {
-      const firstAsset = resultObj.assets[0] as unknown;
-      if (firstAsset && typeof firstAsset === 'object') {
-        extractFromAsset(firstAsset as Record<string, unknown>);
-      }
-    }
-
-    applyCandidate({
-      url:
-        pickKey(resultObj, 'r2FileUrl') ??
-        pickKey(resultObj, 'remoteUrl') ??
-        pickKey(resultObj, 'dataUrl'),
-      mime: pickKey(resultObj, 'mimeType') ?? pickKey(resultObj, 'contentType'),
-      r2Id: pickKey(resultObj, 'r2FileId'),
-    });
-
-    if (!fileUrl) {
-      const resultStr = JSON.stringify(resultObj);
-      const urlMatch = resultStr.match(/https?:\/\/[^\s"']+/);
-      if (urlMatch) {
-        fileUrl = urlMatch[0];
-      }
-    }
-
-    if (!fileUrl) {
-      throw new Error(
-        `Cannot extract file URL from result: ${JSON.stringify(result)}`,
-      );
-    }
-
-    return {
-      fileUrl,
-      mimeType: mimeType ?? 'image/jpeg',
-      r2FileId,
-    };
-  }
-
-  private isDataImageUrl(url: string): boolean {
-    return typeof url === 'string' && url.startsWith('data:image/');
-  }
-
-  private extractDataUrlParts(url: string): { mimeType: string; base64: string } | null {
-    if (!this.isDataImageUrl(url)) return null;
-    const match = url.match(/^data:([^;,]+);base64,(.*)$/);
-    if (!match) return null;
-    const mimeType = match[1] || 'image/png';
-    const base64 = match[2] || '';
-    return { mimeType, base64 };
-  }
-
-  private async downloadUrlAsBase64(url: string): Promise<{ mimeType: string; base64: string }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
-    try {
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} fetching ${url}`);
-      }
-      const contentType = res.headers.get('content-type') || 'image/png';
-      const arrayBuffer = await res.arrayBuffer();
-      const base64 = Buffer.from(arrayBuffer).toString('base64');
-      return { mimeType: contentType, base64 };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
 
   private mapQueueModelToGenerationModel(model: string): string {
     const modelMappings: Record<string, string> = {
@@ -871,33 +564,7 @@ export class JobProcessingService {
     return modelMappings[model] || model;
   }
 
-  private isRetryableError(error: unknown): boolean {
-    if (error instanceof Error) {
-      const message = error.message.toLowerCase();
 
-      const retryablePatterns = [
-        'timeout',
-        'network',
-        'connection',
-        'rate limit',
-        'too many requests',
-        'service unavailable',
-        'internal server error',
-        'bad gateway',
-        'gateway timeout',
-        'temporary',
-        'retry',
-        '429',
-        '502',
-        '503',
-        '504',
-      ];
-
-      return retryablePatterns.some((pattern) => message.includes(pattern));
-    }
-
-    return false;
-  }
 
   private buildGenerationDto(
     prompt: string,

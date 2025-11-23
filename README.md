@@ -36,12 +36,13 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 - **Luma Ray 2**: Professional video generation with advanced features
 
 ### Core Services
+- **Generation Orchestrator**: Centralized generation flow with validation, credit reservation, and asset persistence
 - **Authentication**: Supabase Auth + JWT with Google OAuth
 - **Payment Processing**: Stripe integration for credits and subscriptions
 - **File Storage**: Cloudflare R2 for image/video storage
 - **Job Queue**: Google Cloud Tasks for async processing
 - **Gallery Management**: User galleries with R2 storage
-- **Usage Tracking**: Credit system and usage analytics
+- **Usage Tracking**: Transactional credit system (Reserve -> Capture/Release)
 - **WebSocket Support**: Real-time job status updates
 
 ### Scene Placement (Ideogram Remix)

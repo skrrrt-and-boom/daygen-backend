@@ -24,15 +24,12 @@ import { GeminiImageAdapter } from './providers/gemini.adapter';
 import { IdeogramImageAdapter } from './providers/ideogram.adapter';
 import { QwenImageAdapter } from './providers/qwen.adapter';
 import { GrokImageAdapter } from './providers/grok.adapter';
+import { ImageProviderRegistry } from './providers/image-provider.registry';
+import { GeneratedAssetService, GeneratedAsset } from './generated-asset.service';
+import { ProviderHttpService } from './provider-http.service';
+import { buildHttpErrorPayload } from './utils/provider-helpers';
 
-interface GeneratedAsset {
-  dataUrl: string;
-  mimeType: string;
-  base64: string;
-  remoteUrl?: string;
-  r2FileId?: string;
-  r2FileUrl?: string;
-}
+
 
 interface GeminiRemoteCandidate {
   url?: string;
@@ -206,20 +203,7 @@ const asNumber = (value: unknown): number | undefined => {
   return undefined;
 };
 
-const buildHttpErrorPayload = (rawMessage: string, details?: unknown) => {
-  const message =
-    typeof rawMessage === 'string' && rawMessage.trim().length > 0
-      ? rawMessage.trim()
-      : 'Unexpected provider error';
-  const payload: Record<string, unknown> = {
-    message,
-    error: message,
-  };
-  if (details !== undefined) {
-    payload.details = details;
-  }
-  return payload;
-};
+
 
 @Injectable()
 export class GenerationService {
@@ -238,6 +222,9 @@ export class GenerationService {
     private readonly r2Service: R2Service,
     private readonly usageService: UsageService,
     private readonly paymentsService: PaymentsService,
+    private readonly registry: ImageProviderRegistry,
+    private readonly generatedAssetService: GeneratedAssetService,
+    private readonly providerHttpService: ProviderHttpService,
   ) {
     this.fluxExtraPollHosts = this.readFluxHostSet('BFL_ALLOWED_POLL_HOSTS');
     this.fluxExtraDownloadHosts = this.readFluxHostSet(
@@ -284,13 +271,13 @@ export class GenerationService {
     });
 
     try {
-      const providerResult = await this.dispatch(model, {
+      const providerResult = await this.dispatch(user, model, {
         ...dto,
         prompt,
         model,
       });
 
-      await this.persistResult(user, prompt, providerResult, dto);
+      await this.generatedAssetService.persistResult(user, prompt, providerResult, dto);
 
       this.logger.log(
         `Generation completed successfully for user ${user.authUserId}`,
@@ -366,10 +353,57 @@ export class GenerationService {
     });
   }
 
-  private async dispatch(
+  public async dispatch(
+    user: SanitizedUser,
     model: string,
     dto: ProviderGenerateDto,
   ): Promise<ProviderResult> {
+    const adapter = this.registry.getAdapterForModel(model);
+    if (adapter) {
+      if (adapter.validateOptions) {
+        try {
+          adapter.validateOptions(dto);
+        } catch (err) {
+          const status = (err as { status?: number }).status || 400;
+          const message = err instanceof Error ? err.message : 'Validation failed';
+          throw new HttpException(buildHttpErrorPayload(message), status);
+        }
+      }
+
+      try {
+        const res = await adapter.generate(user, dto);
+        const assets = res.results.map((r) => {
+          if (typeof r.url === 'string' && r.url.startsWith('data:')) {
+            return this.generatedAssetService.assetFromDataUrl(r.url);
+          }
+
+          return {
+            remoteUrl: r.url,
+            mimeType: r.mimeType,
+            // We might need to fetch dataUrl if not present, but GeneratedAssetService handles persistence from remoteUrl
+          } as GeneratedAsset;
+        });
+
+        return {
+          provider: adapter.providerName,
+          model: model,
+          clientPayload: res.clientPayload,
+          assets,
+          rawResponse: res.rawResponse,
+          usageMetadata: res.usageMetadata,
+        };
+      } catch (err) {
+        const status = (err as { status?: number }).status || 502;
+        const details = (err as { details?: unknown }).details;
+        const message = err instanceof Error ? err.message : 'Provider error';
+        throw new HttpException(
+          buildHttpErrorPayload(message, details),
+          status,
+        );
+      }
+    }
+
+    // Fallback to legacy handlers
     // Handle FLUX models
     if (model.startsWith('flux-')) {
       return this.withCircuit('flux', () => this.handleFlux(dto));
@@ -424,9 +458,10 @@ export class GenerationService {
       const adapter = new FluxImageAdapter(
         () => this.configService.get<string>('BFL_API_KEY'),
         () => this.configService.get<string>('BFL_API_BASE'),
+        (key: string) => this.configService.get<string>(key),
       );
       const res = await adapter.generate({} as unknown as SanitizedUser, dto);
-      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      const assets = res.results.map((r) => this.generatedAssetService.assetFromDataUrl(r.url));
       const out: ProviderResult = {
         provider: 'flux',
         model: dto.model || 'flux-pro-1.1',
@@ -454,7 +489,7 @@ export class GenerationService {
     try {
       const adapter = new GeminiImageAdapter(() => this.getGeminiApiKey());
       const res = await adapter.generate({} as unknown as SanitizedUser, dto);
-      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      const assets = res.results.map((r) => this.generatedAssetService.assetFromDataUrl(r.url));
       // Use the model from the result (which will be the Imagen model) or fallback to DTO model
       const modelUsed = res.results[0]?.model || dto.model || 'imagen-4.0-fast-generate-001';
       const out: ProviderResult = {
@@ -558,7 +593,7 @@ export class GenerationService {
     try {
       const adapter = new IdeogramImageAdapter(() => this.configService.get<string>('IDEOGRAM_API_KEY'));
       const res = await adapter.generate({} as unknown as SanitizedUser, dto);
-      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      const assets = res.results.map((r) => this.generatedAssetService.assetFromDataUrl(r.url));
       const out: ProviderResult = {
         provider: 'ideogram',
         model: 'ideogram-v3',
@@ -669,7 +704,7 @@ export class GenerationService {
         () => this.configService.get<string>('DASHSCOPE_BASE'),
       );
       const res = await adapter.generate({} as unknown as SanitizedUser, dto);
-      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      const assets = res.results.map((r) => this.generatedAssetService.assetFromDataUrl(r.url));
       return {
         provider: 'qwen',
         model: 'qwen-image',
@@ -695,7 +730,7 @@ export class GenerationService {
         () => this.configService.get<string>('XAI_API_BASE'),
       );
       const res = await adapter.generate({} as unknown as SanitizedUser, dto);
-      const assets = res.results.map((r) => this.assetFromDataUrl(r.url));
+      const assets = res.results.map((r) => this.generatedAssetService.assetFromDataUrl(r.url));
       return {
         provider: 'grok',
         model: dto.model ?? 'grok-2-image',
@@ -763,7 +798,7 @@ export class GenerationService {
     };
     this.logger.debug('Runway request payload', sanitizedLog);
 
-    const createResponse = await this.fetchWithTimeout(
+    const createResponse = await this.providerHttpService.fetchWithTimeout(
       'https://api.dev.runwayml.com/v1/text_to_image',
       {
         method: 'POST',
@@ -777,11 +812,11 @@ export class GenerationService {
       20000,
     );
 
-    const createPayload = await this.safeJson(createResponse);
+    const createPayload = await this.providerHttpService.safeJson(createResponse);
 
     if (!createResponse.ok) {
       const message =
-        this.extractProviderMessage(createPayload) ||
+        this.providerHttpService.extractProviderMessage(createPayload) ||
         `Runway API error: ${createResponse.status}`;
       this.logger.error('Runway create error', {
         status: createResponse.status,
@@ -823,8 +858,8 @@ export class GenerationService {
       this.throwBadRequest('Runway did not return an output image URL');
     }
 
-    const dataUrl = await this.ensureDataUrl(remoteUrlCandidate);
-    const asset = this.assetFromDataUrl(dataUrl);
+    const dataUrl = await this.generatedAssetService.ensureDataUrl(remoteUrlCandidate);
+    const asset = this.generatedAssetService.assetFromDataUrl(dataUrl);
     asset.remoteUrl = remoteUrlCandidate;
 
     return {
@@ -857,7 +892,7 @@ export class GenerationService {
       throw new ServiceUnavailableException('Seedream API key not configured');
     }
 
-    const response = await this.fetchWithTimeout(
+    const response = await this.providerHttpService.fetchWithTimeout(
       'https://ark.ap-southeast.bytepluses.com/api/v3/image/generate',
       {
         method: 'POST',
@@ -898,9 +933,11 @@ export class GenerationService {
     const assets: GeneratedAsset[] = [];
     for (const url of urls) {
       const remoteUrl = url.startsWith('data:') ? undefined : url;
-      const ensured = await this.ensureDataUrl(url);
-      const asset = this.assetFromDataUrl(ensured);
-      dataUrls.push(asset.dataUrl);
+      const ensured = await this.generatedAssetService.ensureDataUrl(url);
+      const asset = this.generatedAssetService.assetFromDataUrl(ensured);
+      if (asset.dataUrl) {
+        dataUrls.push(asset.dataUrl);
+      }
       assets.push(remoteUrl ? { ...asset, remoteUrl } : asset);
     }
 
@@ -921,7 +958,7 @@ export class GenerationService {
       throw new ServiceUnavailableException('OpenAI API key not configured');
     }
 
-    const response = await this.fetchWithTimeout(
+    const response = await this.providerHttpService.fetchWithTimeout(
       'https://api.openai.com/v1/images/generations',
       {
         method: 'POST',
@@ -958,8 +995,8 @@ export class GenerationService {
       this.throwBadRequest('No image returned from OpenAI');
     }
 
-    const dataUrl = await this.ensureDataUrl(url);
-    const asset = this.assetFromDataUrl(dataUrl);
+    const dataUrl = await this.generatedAssetService.ensureDataUrl(url || '');
+    const asset = this.generatedAssetService.assetFromDataUrl(dataUrl);
 
     const revisedPrompt = (() => {
       const dataEntries = asArray(resultRecord['data']);
@@ -1068,7 +1105,7 @@ export class GenerationService {
 
     const endpoint = `${this.getReveApiBase()}/v1/image/create`;
 
-    const response = await this.fetchWithTimeout(endpoint, {
+    const response = await this.providerHttpService.fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -1078,11 +1115,11 @@ export class GenerationService {
       body: JSON.stringify(requestBody),
     }, 20000);
 
-    const resultPayload = await this.safeJson(response);
+    const resultPayload = await this.providerHttpService.safeJson(response);
 
     if (!response.ok) {
       const providerMessage =
-        this.extractProviderMessage(resultPayload) ||
+        this.providerHttpService.extractProviderMessage(resultPayload) ||
         `Reve API error: ${response.status}`;
       this.logger.error('Reve API error', {
         status: response.status,
@@ -1149,7 +1186,7 @@ export class GenerationService {
     }
 
     const endpoint = `${this.getReveApiBase()}/v1/images/${encodeURIComponent(trimmedId)}`;
-    const response = await this.fetchWithTimeout(endpoint, {
+    const response = await this.providerHttpService.fetchWithTimeout(endpoint, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -1236,7 +1273,7 @@ export class GenerationService {
       form.set('mask', maskBlob, input.mask.filename ?? 'mask.png');
     }
 
-    const response = await this.fetchWithTimeout(endpoint, {
+    const response = await this.providerHttpService.fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -1378,9 +1415,9 @@ export class GenerationService {
     const dataUrls = [] as string[];
     const assets: GeneratedAsset[] = [];
     for (const url of urls) {
-      const ensured = await this.ensureDataUrl(url);
+      const ensured = await this.generatedAssetService.ensureDataUrl(url);
       dataUrls.push(ensured);
-      assets.push(this.assetFromDataUrl(ensured));
+      assets.push(this.generatedAssetService.assetFromDataUrl(ensured));
     }
 
     return {
@@ -1475,7 +1512,7 @@ export class GenerationService {
     }> = [];
 
     for (const url of urls) {
-      const ensured = await this.ensureDataUrl(url);
+      const ensured = await this.generatedAssetService.ensureDataUrl(url);
       const match = ensured.match(/^data:([^;,]+);base64,(.*)$/);
       if (!match) {
         // If Recraft returns a direct URL, fall back to original URL
@@ -1500,9 +1537,8 @@ export class GenerationService {
           'generated-images',
         );
 
-        const fileName = `variation-${Date.now()}-${items.length}.${
-          mimeType.split('/')[1] || 'png'
-        }`;
+        const fileName = `variation-${Date.now()}-${items.length}.${mimeType.split('/')[1] || 'png'
+          }`;
 
         const r2File = await this.r2FilesService.create(user.authUserId, {
           fileName,
@@ -1623,24 +1659,19 @@ export class GenerationService {
       this.throwBadRequest('Luma generation did not return an image asset');
     }
 
-    const { dataUrl, mimeType, base64 } = await this.downloadAsDataUrl(
+    const dataUrl = await this.generatedAssetService.ensureDataUrl(
       assetUrl,
       { Authorization: `Bearer ${apiKey}` },
     );
 
-    const asset: GeneratedAsset = {
-      dataUrl,
-      mimeType,
-      base64,
-      remoteUrl: assetUrl,
-    };
+    const asset = this.generatedAssetService.assetFromDataUrl(dataUrl);
 
     return {
       provider: 'luma',
       model: dto.model || 'luma-photon-1',
       clientPayload: {
         dataUrl,
-        mimeType,
+        mimeType: asset.mimeType,
         generationId: resolvedGeneration?.id ?? null,
         state: resolvedGeneration?.state ?? null,
       },
@@ -1712,9 +1743,9 @@ export class GenerationService {
     const dataUrls = [] as string[];
     const assets: GeneratedAsset[] = [];
     for (const url of urls) {
-      const ensured = await this.ensureDataUrl(url);
+      const ensured = await this.generatedAssetService.ensureDataUrl(url);
       dataUrls.push(ensured);
-      assets.push(this.assetFromDataUrl(ensured));
+      assets.push(this.generatedAssetService.assetFromDataUrl(ensured));
     }
 
     return {
@@ -1802,42 +1833,43 @@ export class GenerationService {
     if (asset && this.r2Service.isConfigured()) {
       try {
         // Extract base64 data from data URL
-        const base64Match = asset.dataUrl.match(/^data:([^;,]+);base64,(.*)$/);
-        if (base64Match) {
-          const [, mimeType, base64Data] = base64Match;
-          const publicUrl = await this.r2Service.uploadBase64Image(
-            base64Data,
-            mimeType,
-            'generated-images',
-          );
+        if (asset.dataUrl) {
+          const base64Match = asset.dataUrl.match(/^data:([^;,]+);base64,(.*)$/);
+          if (base64Match) {
+            const [, mimeType, base64Data] = base64Match;
+            const publicUrl = await this.r2Service.uploadBase64Image(
+              base64Data,
+              mimeType,
+              'generated-images',
+            );
 
-          // Create R2File record
-          const fileName = `image-${Date.now()}.${
-            mimeType.split('/')[1] || 'png'
-          }`;
-          const r2File = await this.r2FilesService.create(user.authUserId, {
-            fileName,
-            fileUrl: publicUrl,
-            fileSize: Math.round((base64Data.length * 3) / 4),
-            mimeType,
-            prompt,
-            model: providerResult.model,
-            avatarId: dto.avatarId,
-            avatarImageId: dto.avatarImageId,
-            productId: dto.productId,
-          });
+            // Create R2File record
+            const fileName = `image-${Date.now()}.${mimeType.split('/')[1] || 'png'
+              }`;
+            const r2File = await this.r2FilesService.create(user.authUserId, {
+              fileName,
+              fileUrl: publicUrl,
+              fileSize: Math.round((base64Data.length * 3) / 4),
+              mimeType,
+              prompt,
+              model: providerResult.model,
+              avatarId: dto.avatarId,
+              avatarImageId: dto.avatarImageId,
+              productId: dto.productId,
+            });
 
-          // Update the asset URL to use R2 URL
-          asset.dataUrl = publicUrl;
-          asset.remoteUrl = publicUrl;
-          asset.r2FileId = r2File.id;
-          asset.r2FileUrl = r2File.fileUrl;
+            // Update the asset URL to use R2 URL
+            asset.dataUrl = publicUrl;
+            asset.remoteUrl = publicUrl;
+            asset.r2FileId = r2File.id;
+            asset.r2FileUrl = r2File.fileUrl;
 
-          // Update clientPayload with R2 metadata for consistency
-          this.updateClientPayloadWithR2Info(
-            providerResult.clientPayload,
-            r2File,
-          );
+            // Update clientPayload with R2 metadata for consistency
+            this.updateClientPayloadWithR2Info(
+              providerResult.clientPayload,
+              r2File,
+            );
+          }
         }
       } catch (error) {
         const errorMessage =
@@ -1856,8 +1888,8 @@ export class GenerationService {
         ) {
           throw new Error(
             `R2 upload failed due to signature mismatch: ${errorMessage}. ` +
-              `This typically indicates malformed credentials in Google Cloud Run environment variables. ` +
-              `Please check that CLOUDFLARE_R2_SECRET_ACCESS_KEY has no extra spaces, newlines, or encoding issues.`,
+            `This typically indicates malformed credentials in Google Cloud Run environment variables. ` +
+            `Please check that CLOUDFLARE_R2_SECRET_ACCESS_KEY has no extra spaces, newlines, or encoding issues.`,
           );
         }
 
@@ -1935,41 +1967,13 @@ export class GenerationService {
     };
   }
 
-  private async ensureDataUrl(
-    source: string,
-    headers?: Record<string, string>,
-  ): Promise<string> {
-    if (source.startsWith('data:')) {
-      return source;
-    }
 
-    const normalized = source.startsWith('gs://')
-      ? (this.convertGsUriToHttps(source) ?? source)
-      : source;
-
-    try {
-      const url = new URL(normalized);
-      const allowedHosts = new Set<string>([url.hostname]);
-      const result = await safeDownload(normalized, {
-        allowedHosts,
-        allowedHostSuffixes: COMMON_ALLOWED_SUFFIXES,
-        headers: headers ?? {},
-        // Accept only images in the fast path; JSON will fall back to legacy path
-        acceptContentTypes: /^image\//i,
-      });
-      return toDataUrl(result.arrayBuffer, result.mimeType);
-    } catch {
-      // Fallback to legacy downloader that can extract inline JSON-embedded data
-      const { dataUrl } = await this.downloadAsDataUrl(normalized, headers);
-      return dataUrl;
-    }
-  }
 
   private async downloadAsDataUrl(
     url: string,
     headers?: Record<string, string>,
   ) {
-    const response = await this.fetchWithTimeout(url, {
+    const response = await this.providerHttpService.fetchWithTimeout(url, {
       headers,
     }, 10000);
 
@@ -2017,7 +2021,7 @@ export class GenerationService {
 
         for (const candidate of this.collectImageCandidates(payloadRecord)) {
           if (candidate.startsWith('data:')) {
-            return this.assetFromDataUrl(candidate);
+            return this.generatedAssetService.assetFromDataUrl(candidate);
           }
         }
       }
@@ -2045,17 +2049,7 @@ export class GenerationService {
     };
   }
 
-  private assetFromDataUrl(dataUrl: string): GeneratedAsset {
-    const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
-    if (!match) {
-      throw new InternalServerErrorException('Invalid data URL format');
-    }
-    return {
-      dataUrl,
-      mimeType: match[1],
-      base64: match[2],
-    };
-  }
+
 
   private extractDashscopeImageUrl(result: unknown): string | null {
     const resultRecord = optionalJsonRecord(result);
@@ -2253,7 +2247,7 @@ export class GenerationService {
 
   private async pollRunwayTask(apiKey: string, taskId: string) {
     for (let attempt = 0; attempt < RUNWAY_MAX_ATTEMPTS; attempt += 1) {
-      const response = await this.fetchWithTimeout(
+      const response = await this.providerHttpService.fetchWithTimeout(
         `https://api.dev.runwayml.com/v1/tasks/${taskId}`,
         {
           headers: {
@@ -2265,11 +2259,11 @@ export class GenerationService {
         15000,
       );
 
-      const payload = await this.safeJson(response);
+      const payload = await this.providerHttpService.safeJson(response);
 
       if (!response.ok) {
         const providerMessage =
-          this.extractProviderMessage(payload) ||
+          this.providerHttpService.extractProviderMessage(payload) ||
           `Runway task error: ${response.status}`;
         this.logger.error('Runway task polling error', {
           status: response.status,
@@ -2302,7 +2296,7 @@ export class GenerationService {
       if (status === 'FAILED' || status === 'CANCELLED') {
         const failureMessage =
           asString(record?.['failure']) ??
-          this.extractProviderMessage(payload) ??
+          this.providerHttpService.extractProviderMessage(payload) ??
           `Runway task ${status.toLowerCase()}`;
         throw new HttpException(
           buildHttpErrorPayload(failureMessage, payload),
@@ -2342,55 +2336,7 @@ export class GenerationService {
     }
   }
 
-  private extractProviderMessage(value: unknown): string | undefined {
-    return this.extractProviderMessageInternal(value, new WeakSet<object>());
-  }
 
-  private extractProviderMessageInternal(
-    value: unknown,
-    seen: WeakSet<object>,
-  ): string | undefined {
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      return trimmed || undefined;
-    }
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        const result = this.extractProviderMessageInternal(entry, seen);
-        if (result) {
-          return result;
-        }
-      }
-      return undefined;
-    }
-    if (!isJsonRecord(value)) {
-      return undefined;
-    }
-    if (seen.has(value)) {
-      return undefined;
-    }
-    seen.add(value);
-
-    const candidateKeys = [
-      'message',
-      'error',
-      'detail',
-      'error_message',
-      'failure',
-      'title',
-      'description',
-      'reason',
-    ] as const;
-
-    for (const key of candidateKeys) {
-      const result = this.extractProviderMessageInternal(value[key], seen);
-      if (result) {
-        return result;
-      }
-    }
-
-    return undefined;
-  }
 
   private extractSeedreamImages(result: unknown): string[] {
     const images: string[] = [];
@@ -2486,7 +2432,7 @@ export class GenerationService {
         }
         unique.add(dataUrl);
         dataUrls.push(dataUrl);
-        assets.push(this.assetFromDataUrl(dataUrl));
+        assets.push(this.generatedAssetService.assetFromDataUrl(dataUrl));
       } catch (error) {
         this.logger.warn(
           `Failed to normalize Reve image candidate: ${String(error)}`,
@@ -2508,7 +2454,7 @@ export class GenerationService {
     if (isProbablyBase64(trimmed)) {
       return `data:image/png;base64,${trimmed.replace(/\s+/g, '')}`;
     }
-    return this.ensureDataUrl(trimmed);
+    return this.generatedAssetService.ensureDataUrl(trimmed);
   }
 
   private buildReveClientPayload(
@@ -2618,11 +2564,11 @@ export class GenerationService {
   }
 
   private extractRecraftImages(result: unknown): string[] {
-    return this.collectImageCandidates(result);
+    return this.generatedAssetService.collectImageCandidates(result);
   }
 
   private extractLumaImages(result: unknown): string[] {
-    return this.collectImageCandidates(result);
+    return this.generatedAssetService.collectImageCandidates(result);
   }
 
   private collectImageCandidates(source: unknown): string[] {
@@ -2639,7 +2585,7 @@ export class GenerationService {
         return;
       }
       if (trimmed.startsWith('gs://')) {
-        const converted = this.convertGsUriToHttps(trimmed);
+        const converted = this.generatedAssetService.convertGsUriToHttps(trimmed);
         results.add(converted ?? trimmed);
         return;
       }
@@ -2715,7 +2661,7 @@ export class GenerationService {
       return undefined;
     }
     if (trimmed.startsWith('gs://')) {
-      return this.convertGsUriToHttps(trimmed) ?? trimmed;
+      return this.generatedAssetService.convertGsUriToHttps(trimmed) ?? trimmed;
     }
     return trimmed;
   }
@@ -2725,7 +2671,7 @@ export class GenerationService {
     authContext: GeminiAuthContext,
   ): Promise<GeneratedAsset | null> {
     if (candidate.url?.startsWith('data:')) {
-      const asset = this.assetFromDataUrl(candidate.url);
+      const asset = this.generatedAssetService.assetFromDataUrl(candidate.url);
       return {
         ...asset,
         remoteUrl: candidate.rawUrl ?? candidate.url,
@@ -2775,7 +2721,7 @@ export class GenerationService {
 
     for (const url of urlsToTry) {
       if (url.startsWith('data:')) {
-        const asset = this.assetFromDataUrl(url);
+        const asset = this.generatedAssetService.assetFromDataUrl(url);
         return {
           ...asset,
           remoteUrl: candidate.rawUrl ?? candidate.url ?? url,
@@ -2784,7 +2730,7 @@ export class GenerationService {
 
       let resolvedUrl = url;
       if (url.startsWith('gs://')) {
-        resolvedUrl = this.convertGsUriToHttps(url) ?? url;
+        resolvedUrl = this.generatedAssetService.convertGsUriToHttps(url) ?? url;
       }
 
       const directAsset = await this.fetchGeminiBinary(
@@ -2946,7 +2892,7 @@ export class GenerationService {
             if (generationOutput) {
               for (const imageEntry of asArray(
                 generationOutput['images'] ??
-                  generationOutput['generatedImages'],
+                generationOutput['generatedImages'],
               )) {
                 if (typeof imageEntry === 'string') {
                   pushCandidate(imageEntry);
@@ -2982,12 +2928,12 @@ export class GenerationService {
               }
 
               if (candidate.startsWith('data:')) {
-                const asset = this.assetFromDataUrl(candidate);
+                const asset = this.generatedAssetService.assetFromDataUrl(candidate);
                 return { ...asset, remoteUrl: candidate };
               }
 
               if (candidate.startsWith('gs://')) {
-                const converted = this.convertGsUriToHttps(candidate);
+                const converted = this.generatedAssetService.convertGsUriToHttps(candidate);
                 if (converted) {
                   const asset = await this.fetchGeminiBinary(
                     converted,
@@ -3114,8 +3060,8 @@ export class GenerationService {
     const headers: Record<string, string> = {};
     const isGoogleHost = host
       ? host.includes('googleapis.com') ||
-        host.includes('googleusercontent.com') ||
-        host.includes('storage.googleapis.com')
+      host.includes('googleusercontent.com') ||
+      host.includes('storage.googleapis.com')
       : false;
 
     if (isGoogleHost && context.apiKey) {
@@ -3223,12 +3169,12 @@ export class GenerationService {
             }
 
             if (candidate.startsWith('data:')) {
-              const asset = this.assetFromDataUrl(candidate);
+              const asset = this.generatedAssetService.assetFromDataUrl(candidate);
               return { ...asset, remoteUrl: effectiveUrl };
             }
 
             if (candidate.startsWith('gs://')) {
-              const converted = this.convertGsUriToHttps(candidate);
+              const converted = this.generatedAssetService.convertGsUriToHttps(candidate);
               if (converted) {
                 const nested = await this.fetchGeminiBinary(
                   converted,
@@ -3331,17 +3277,7 @@ export class GenerationService {
     return working || null;
   }
 
-  private convertGsUriToHttps(uri: string): string | undefined {
-    const trimmed = uri.trim();
-    if (!trimmed.startsWith('gs://')) {
-      return undefined;
-    }
-    const path = trimmed.slice('gs://'.length).replace(/^\/+/, '');
-    if (!path) {
-      return undefined;
-    }
-    return `https://storage.googleapis.com/${path}`;
-  }
+
 
   private async pollFluxJob(
     pollingUrl: string,
@@ -3350,7 +3286,7 @@ export class GenerationService {
     let lastPayloadRaw: unknown = null;
 
     for (let attempt = 0; attempt < FLUX_MAX_ATTEMPTS; attempt += 1) {
-      const response = await this.fetchWithTimeout(pollingUrl, {
+      const response = await this.providerHttpService.fetchWithTimeout(pollingUrl, {
         method: 'GET',
         headers: {
           'x-key': apiKey,
@@ -3400,7 +3336,7 @@ export class GenerationService {
         );
       }
 
-      await this.wait(FLUX_POLL_INTERVAL_MS);
+      await this.providerHttpService.wait(FLUX_POLL_INTERVAL_MS);
     }
 
     throw new HttpException(
@@ -3462,20 +3398,7 @@ export class GenerationService {
     }
   }
 
-  private async fetchWithTimeout(
-    url: string,
-    init: RequestInit,
-    timeoutMs: number,
-  ): Promise<Response> {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
-    try {
-      const res = await fetch(url, { ...init, signal: controller.signal });
-      return res;
-    } finally {
-      clearTimeout(t);
-    }
-  }
+
 
   private normalizeFluxStatus(
     status: unknown,

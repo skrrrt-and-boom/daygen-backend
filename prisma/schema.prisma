@@ -150,6 +150,8 @@ enum JobStatus {
 enum UsageStatus {
   COMPLETED
   GRACE
+  RESERVED
+  CANCELLED
 }
 
 enum PaymentStatus {

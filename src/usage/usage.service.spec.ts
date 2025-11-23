@@ -7,9 +7,12 @@ const createService = (credits: number, grace = 0) => {
   const prisma = {
     user: {
       findUnique: jest.fn().mockResolvedValue({ credits }),
+      update: jest.fn().mockResolvedValue({}),
     },
     usageEvent: {
       create: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue(null),
+      findUnique: jest.fn().mockResolvedValue(null),
     },
     $queryRawUnsafe: jest
       .fn()
@@ -150,5 +153,68 @@ describe('UsageService', () => {
         },
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+
+  describe('transactional flow', () => {
+    it('reserves credits correctly', async () => {
+      const { service, prisma } = createService(10);
+      (prisma.usageEvent.create as jest.Mock).mockResolvedValue({ id: 'res-1' });
+
+      const result = await service.reserveCredits(
+        { authUserId: 'auth-id' } as any,
+        { provider: 'test', cost: 2 },
+      );
+
+      expect(prisma.$queryRawUnsafe).toHaveBeenCalled();
+      expect(prisma.usageEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: UsageStatus.RESERVED,
+            cost: 2,
+          }),
+        }),
+      );
+      expect(result).toEqual({ reservationId: 'res-1', balanceAfter: 8 });
+    });
+
+    it('captures credits correctly', async () => {
+      const { service, prisma } = createService(10);
+
+      await service.captureCredits('res-1', { final: true });
+
+      expect(prisma.usageEvent.update).toHaveBeenCalledWith({
+        where: { id: 'res-1' },
+        data: {
+          status: UsageStatus.COMPLETED,
+          metadata: expect.objectContaining({ final: true }),
+        },
+      });
+    });
+
+    it('releases credits correctly', async () => {
+      const { service, prisma } = createService(10);
+      (prisma.usageEvent.findUnique as jest.Mock).mockResolvedValue({
+        id: 'res-1',
+        status: UsageStatus.RESERVED,
+        userAuthId: 'auth-id',
+        cost: 2,
+        metadata: {},
+      });
+
+      await service.releaseCredits('res-1', 'error');
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { authUserId: 'auth-id' },
+        data: { credits: { increment: 2 } },
+      });
+      expect(prisma.usageEvent.update).toHaveBeenCalledWith({
+        where: { id: 'res-1' },
+        data: {
+          status: UsageStatus.CANCELLED,
+          metadata: expect.objectContaining({ cancellationReason: 'error' }),
+        },
+      });
+    });
   });
 });

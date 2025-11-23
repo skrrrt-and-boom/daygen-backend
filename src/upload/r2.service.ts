@@ -152,13 +152,16 @@ export class R2Service {
     base64Data: string,
     mimeType: string = 'image/png',
     folder: string = 'generated-images',
+    customFilename?: string,
   ): Promise<string> {
     // Remove data URL prefix if present
     const base64 = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
 
     const fileExtension = this.getFileExtensionFromMimeType(mimeType);
-    const fileName = `${folder}/${randomUUID()}${fileExtension}`;
+    const fileName = customFilename
+      ? `${folder}/${customFilename}`
+      : `${folder}/${randomUUID()}${fileExtension}`;
 
     const command = new PutObjectCommand({
       Bucket: this.bucketName,
@@ -183,16 +186,16 @@ export class R2Service {
       ) {
         this.logger.error(
           `R2 signature error during upload. This usually indicates:\n` +
-            `1. Malformed credentials (check for extra spaces/newlines in Cloud Run env vars)\n` +
-            `2. Clock skew between server and R2 (check server time)\n` +
-            `3. Incorrect AWS SDK configuration\n` +
-            `Error: ${errorMessage}`,
+          `1. Malformed credentials (check for extra spaces/newlines in Cloud Run env vars)\n` +
+          `2. Clock skew between server and R2 (check server time)\n` +
+          `3. Incorrect AWS SDK configuration\n` +
+          `Error: ${errorMessage}`,
         );
 
         throw new Error(
           `R2 upload signature error: ${errorMessage}. ` +
-            `Please verify R2 credentials in Google Cloud Run are correctly formatted (no extra spaces or newlines). ` +
-            `Original error: ${errorMessage}`,
+          `Please verify R2 credentials in Google Cloud Run are correctly formatted (no extra spaces or newlines). ` +
+          `Original error: ${errorMessage}`,
         );
       }
 

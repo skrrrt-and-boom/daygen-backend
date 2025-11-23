@@ -9,7 +9,7 @@ import type { SanitizedUser } from '../../users/types';
 export class GeminiImageAdapter implements ImageProviderAdapter {
   readonly providerName = 'gemini';
 
-  constructor(private readonly getApiKey: () => string | undefined) {}
+  constructor(private readonly getApiKey: () => string | undefined) { }
 
   canHandleModel(model: string): boolean {
     return (
@@ -20,6 +20,44 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
       model === 'imagen-4.0-ultra-generate-001' ||
       model === 'imagen-3.0-generate-002'
     );
+  }
+
+  validateOptions(dto: ProviderGenerateDto): void {
+    const badRequest = (msg: string) =>
+      Object.assign(new Error(msg), { status: 400 });
+
+    const clamp = (v: number, min: number, max: number) =>
+      Math.max(min, Math.min(max, v));
+
+    if (dto.temperature !== undefined) {
+      if (typeof dto.temperature !== 'number' || !Number.isFinite(dto.temperature)) {
+        throw badRequest('temperature must be a number');
+      }
+      const t = clamp(dto.temperature, 0, 2);
+      if (t !== dto.temperature) {
+        throw badRequest('temperature must be between 0 and 2');
+      }
+    }
+    if (dto.topP !== undefined) {
+      if (typeof dto.topP !== 'number' || !Number.isFinite(dto.topP)) {
+        throw badRequest('topP must be a number');
+      }
+      if (dto.topP < 0 || dto.topP > 1) {
+        throw badRequest('topP must be between 0 and 1');
+      }
+    }
+    if (dto.outputLength !== undefined) {
+      if (
+        typeof dto.outputLength !== 'number' ||
+        !Number.isFinite(dto.outputLength) ||
+        !Number.isInteger(dto.outputLength)
+      ) {
+        throw badRequest('outputLength must be an integer');
+      }
+      if (dto.outputLength < 1 || dto.outputLength > 8192) {
+        throw badRequest('outputLength must be between 1 and 8192');
+      }
+    }
   }
 
   async generate(_user: SanitizedUser, dto: ProviderGenerateDto): Promise<ProviderAdapterResult> {

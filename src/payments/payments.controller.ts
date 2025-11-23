@@ -10,7 +10,8 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
-import type { CreateCheckoutSessionDto } from './payments.service';
+import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
+import { UpgradeSubscriptionDto } from './dto/upgrade-subscription.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
@@ -20,7 +21,7 @@ import type { SanitizedUser } from '../users/types';
 export class PaymentsController {
   private readonly logger = new Logger(PaymentsController.name);
 
-  constructor(private readonly paymentsService: PaymentsService) {}
+  constructor(private readonly paymentsService: PaymentsService) { }
 
   @Post('create-checkout')
   async createCheckoutSession(
@@ -58,7 +59,6 @@ export class PaymentsController {
         `Error fetching payment history for user ${user.authUserId}:`,
         error,
       );
-      // Return empty array instead of throwing to handle users with no payments gracefully
       return [];
     }
   }
@@ -75,7 +75,6 @@ export class PaymentsController {
         `Error fetching subscription for user ${user.authUserId}:`,
         error,
       );
-      // Return null to gracefully handle errors (e.g., no subscription)
       return null;
     }
   }
@@ -95,12 +94,8 @@ export class PaymentsController {
   @Post('subscription/upgrade')
   async upgradeSubscription(
     @CurrentUser() user: SanitizedUser,
-    @Body() body: { planId: string },
+    @Body() body: UpgradeSubscriptionDto,
   ) {
-    if (!body.planId) {
-      throw new BadRequestException('Plan ID is required');
-    }
-
     await this.paymentsService.upgradeSubscription(
       user.authUserId,
       body.planId,
@@ -120,13 +115,12 @@ export class PaymentsController {
 
   @Post('test/complete-payment/:sessionId')
   completeTestPayment(@Param('sessionId') sessionId: string) {
-    // Security: Block test endpoints in production
     if (process.env.NODE_ENV === 'production') {
       throw new ForbiddenException(
         'Test endpoints are not available in production',
       );
     }
-    
+
     console.log(
       `🎯 CONTROLLER: Manual payment completion requested for session: ${sessionId}`,
     );
@@ -153,13 +147,12 @@ export class PaymentsController {
 
   @Post('test/complete-by-intent/:paymentIntentId')
   completePaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
-    // Security: Block test endpoints in production
     if (process.env.NODE_ENV === 'production') {
       throw new ForbiddenException(
         'Test endpoints are not available in production',
       );
     }
-    
+
     return this.paymentsService.completePaymentByIntentId(paymentIntentId);
   }
 
@@ -176,13 +169,12 @@ export class PaymentsController {
       stripePriceId: string;
     },
   ) {
-    // Security: Block test endpoints in production
     if (process.env.NODE_ENV === 'production') {
       throw new ForbiddenException(
         'Test endpoints are not available in production',
       );
     }
-    
+
     return this.paymentsService.createManualSubscription(body);
   }
 }
