@@ -3,7 +3,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
-  InternalServerErrorException,
+
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -17,8 +17,6 @@ import { R2Service } from '../upload/r2.service';
 import { ProviderGenerateDto } from './dto/base-generate.dto';
 import { UsageService } from '../usage/usage.service';
 import { PaymentsService } from '../payments/payments.service';
-import { safeDownload, toDataUrl } from './safe-fetch';
-import { COMMON_ALLOWED_SUFFIXES } from './allowed-hosts';
 import { FluxImageAdapter } from './providers/flux.adapter';
 import { GeminiImageAdapter } from './providers/gemini.adapter';
 import { IdeogramImageAdapter } from './providers/ideogram.adapter';
