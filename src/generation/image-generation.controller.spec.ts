@@ -120,26 +120,10 @@ describe('ImageGenerationController', () => {
             expect(generationOrchestrator.generate).toHaveBeenCalledWith(
                 mockUser,
                 expect.objectContaining({
-                    model: 'gemini-2.5-flash-image',
+                    model: 'gemini-3.0-pro-image',
                 }),
             );
             expect(cloudTasksService.createImageGenerationJob).not.toHaveBeenCalled();
-        });
-
-        it('should normalize gemini preview model for inline', async () => {
-            const dto: ProviderGenerateDto = {
-                prompt: 'test',
-                model: 'gemini-2.5-flash-image-preview',
-                providerOptions: { useInline: true },
-            };
-            await controller.generate('gemini', mockUser, dto);
-
-            expect(generationOrchestrator.generate).toHaveBeenCalledWith(
-                mockUser,
-                expect.objectContaining({
-                    model: 'gemini-2.5-flash-image',
-                }),
-            );
         });
 
         it('should throw BadRequest for unsupported inline gemini model', async () => {

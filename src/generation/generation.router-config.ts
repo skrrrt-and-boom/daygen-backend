@@ -29,7 +29,19 @@ const GROK_MODELS = new Set([
 
 export const PROVIDER_ROUTES: Record<string, ProviderRouteConfig> = {
     gemini: {
-        defaultModel: 'gemini-2.5-flash-image',
+        defaultModel: 'gemini-3.0-pro-image',
+        allowedModels: new Set([
+            'gemini-3.0-pro-image',
+            'gemini-3.0-pro',
+            'gemini-3.0-pro-exp-01',
+            'gemini-3-pro-image-preview',
+            'gemini-3-pro-image',
+            'gemini-2.5-flash-image',
+            'imagen-4.0-generate-001',
+            'imagen-4.0-fast-generate-001',
+            'imagen-4.0-ultra-generate-001',
+            'imagen-3.0-generate-002',
+        ]),
         allowInline: true,
     },
     flux: {

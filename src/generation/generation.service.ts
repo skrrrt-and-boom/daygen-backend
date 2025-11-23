@@ -408,8 +408,9 @@ export class GenerationService {
     }
 
     switch (model) {
-      case 'gemini-2.5-flash-image':
-      case 'gemini-2.5-flash-image-preview':
+      case 'gemini-3.0-pro-image':
+      case 'gemini-3.0-pro':
+      case 'gemini-3.0-pro-exp-01':
       case 'imagen-4.0-generate-001':
       case 'imagen-4.0-fast-generate-001':
       case 'imagen-4.0-ultra-generate-001':
@@ -489,7 +490,7 @@ export class GenerationService {
       const res = await adapter.generate({} as unknown as SanitizedUser, dto);
       const assets = res.results.map((r) => this.generatedAssetService.assetFromDataUrl(r.url));
       // Use the model from the result (which will be the Imagen model) or fallback to DTO model
-      const modelUsed = res.results[0]?.model || dto.model || 'imagen-4.0-fast-generate-001';
+      const modelUsed = res.results[0]?.model || dto.model || 'gemini-3.0-pro-exp-01';
       const out: ProviderResult = {
         provider: 'gemini',
         model: modelUsed,

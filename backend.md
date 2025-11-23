@@ -92,7 +92,7 @@ await fetch(`${getApiUrl()}/api/auth/me`, {
 POST /api/image/gemini
 {
   "prompt": "A surreal rainy city at night",
-  "model": "gemini-2.5-flash-image",
+  "model": "gemini-3.0-pro-image",
   "imageBase64": "data:image/png;base64,...",      // optional
   "references": ["data:image/png;base64,..."],     // optional
   "providerOptions": { 

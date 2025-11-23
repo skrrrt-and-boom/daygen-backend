@@ -531,8 +531,16 @@ export class JobProcessingService {
 
   private mapQueueModelToGenerationModel(model: string): string {
     const modelMappings: Record<string, string> = {
+      'gemini-3.0-pro-image': 'gemini-3.0-pro-image',
+      'gemini-3.0-pro': 'gemini-3.0-pro-image',
+      'gemini-3.0-pro-exp-01': 'gemini-3.0-pro-exp-01',
+      'gemini-3-pro-image-preview': 'gemini-3-pro-image-preview',
+      'gemini-3-pro-image': 'gemini-3-pro-image-preview',
       'gemini-2.5-flash-image': 'gemini-2.5-flash-image',
-      'gemini-2.5-flash-image-preview': 'gemini-2.5-flash-image',
+      'imagen-4.0-generate-001': 'imagen-4.0-generate-001',
+      'imagen-4.0-fast-generate-001': 'imagen-4.0-fast-generate-001',
+      'imagen-4.0-ultra-generate-001': 'imagen-4.0-ultra-generate-001',
+      'imagen-3.0-generate-002': 'imagen-3.0-generate-002',
       'flux-1.1': 'flux-pro-1.1',
       'flux-pro-1.1': 'flux-pro-1.1',
       'flux-pro-1.1-ultra': 'flux-pro-1.1-ultra',

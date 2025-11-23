@@ -87,14 +87,7 @@ export class ImageGenerationController {
 
     // Special handling for Gemini inline/queue logic
     if (config.allowInline && !this.shouldQueue(dto)) {
-      let finalModel = model;
-      if (provider === 'gemini' && model === 'gemini-2.5-flash-image-preview') {
-        finalModel = 'gemini-2.5-flash-image';
-      }
-
-      if (provider === 'gemini' && finalModel !== 'gemini-2.5-flash-image') {
-        throw new BadRequestException(`Unsupported Gemini model: ${model}`);
-      }
+      const finalModel = model;
 
       const providerOptions = { ...(dto.providerOptions ?? {}) };
       delete providerOptions.useQueue;

@@ -183,7 +183,7 @@ private async persistResult(
 POST /api/image/gemini
 {
   "prompt": "A beautiful sunset",
-  "model": "gemini-2.5-flash-image",
+  "model": "gemini-3.0-pro-image",
   "productId": "product-123456",
   "avatarId": "avatar-789012"
 }
@@ -214,7 +214,7 @@ GET /api/r2files
       "fileName": "image-1234.png",
       "fileUrl": "https://...",
       "prompt": "A beautiful sunset",
-      "model": "gemini-2.5-flash-image",
+      "model": "gemini-3.0-pro-image",
       "productId": "product-123456",    // ✅ RETURNED
       "avatarId": "avatar-789012",
       "createdAt": "2025-10-18T...",
