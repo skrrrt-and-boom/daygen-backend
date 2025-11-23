@@ -9,7 +9,7 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 ### Image Generation
 - **FLUX Models**: Flux Pro 1.1, Ultra, Kontext Pro/Max via BFL API
 - **Grok 2 Image**: xAI's Grok image generation endpoint with revised prompt metadata
-- **Gemini 2.5 Flash**: Google's latest text-to-image model with experimental preview support
+- **Gemini 3 Pro**: Google's latest text-to-image model with experimental preview support
 - **Ideogram V3**: Advanced text-to-image with turbo mode and style presets
 - **Recraft v2/v3**: Professional image generation with multiple styles and editing capabilities
 - **Reve**: Fast image generation, editing, and remixing with advanced controls
@@ -18,7 +18,7 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 - **DALL·E 3**: OpenAI's image generation API with multiple model variants
 - **Luma AI**: Dream Shaper, Realistic Vision, and Photon models for various styles
 ### Image Generation
-- `POST /api/image/gemini` - Gemini 2.5 Flash image generation
+- `POST /api/image/gemini` - Gemini 3 Pro image generation
 - `POST /api/image/flux` - FLUX model generation
 - `POST /api/image/ideogram` - Ideogram generation
 - `POST /api/image/runway` - Runway generation
@@ -97,7 +97,7 @@ Configure API keys for the providers you want to use:
 
 - `BFL_API_KEY` - Black Forest Labs (FLUX models)
 - `XAI_API_KEY` - xAI Grok image generation
-- `GEMINI_API_KEY` - Google Gemini 2.5 Flash
+- `GEMINI_API_KEY` - Google Gemini 3 Pro
 - `IDEOGRAM_API_KEY` - Ideogram V3
 - `DASHSCOPE_API_KEY` - Alibaba Qwen Image
 - `RUNWAY_API_KEY` - Runway Gen-4
@@ -145,7 +145,7 @@ Configure API keys for the providers you want to use:
 
 ### Image Generation
 - `POST /api/image/grok` - Grok 2 image generation
-- `POST /api/image/gemini` - Gemini 2.5 Flash image generation
+- `POST /api/image/gemini` - Gemini 3 Pro image generation
 - `POST /api/image/flux` - FLUX model generation
 - `POST /api/image/gemini` - Gemini generation
 - `POST /api/image/ideogram` - Ideogram generation

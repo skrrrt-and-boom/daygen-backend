@@ -228,7 +228,7 @@ socket.on('jobUpdate', (data) => {
 
 **Image Generation Models:**
 - FLUX Pro 1.1, Ultra, Kontext Pro/Max (BFL API)
-- Gemini 2.5 Flash (Google)
+- Gemini 3 Pro (Google)
 - Ideogram V3
 - Recraft v2/v3
 - Reve v1
