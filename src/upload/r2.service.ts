@@ -284,6 +284,33 @@ export class R2Service {
     return Boolean(url && url.startsWith('data:image/'));
   }
 
+  /**
+   * Upload an arbitrary buffer (useful for videos)
+   */
+  async uploadBuffer(
+    buffer: Buffer,
+    contentType: string,
+    folder: string = 'generated-assets',
+    customFilename?: string,
+  ): Promise<string> {
+    const extension = this.getFileExtensionFromMimeType(contentType);
+    const fileName = customFilename
+      ? `${folder}/${customFilename}`
+      : `${folder}/${randomUUID()}${extension}`;
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucketName,
+      Key: fileName,
+      Body: buffer,
+      ContentType: contentType,
+      CacheControl: 'public, max-age=31536000',
+    });
+
+    await this.s3Client.send(command);
+
+    return `${this.publicUrl}/${fileName}`;
+  }
+
   private getFileExtension(filename: string): string {
     const lastDot = filename.lastIndexOf('.');
     return lastDot !== -1 ? filename.substring(lastDot) : '.png';
@@ -297,6 +324,10 @@ export class R2Service {
       'image/gif': '.gif',
       'image/webp': '.webp',
       'image/svg+xml': '.svg',
+      'video/mp4': '.mp4',
+      'video/mpeg': '.mpeg',
+      'video/quicktime': '.mov',
+      'video/webm': '.webm',
     };
     return mimeToExt[mimeType] || '.png';
   }

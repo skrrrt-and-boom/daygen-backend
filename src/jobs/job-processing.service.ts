@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JobStatus, JobType } from '@prisma/client';
 import { GenerationService } from '../generation/generation.service';
 import { GenerationOrchestrator } from '../generation/generation.orchestrator';
@@ -11,6 +12,7 @@ import { RequestContextService } from '../common/request-context.service';
 import type { SanitizedUser } from '../users/types';
 import type { ProviderGenerateDto } from '../generation/dto/base-generate.dto';
 import { ScenesService, SceneGenerationJobPayload } from '../scenes/scenes.service';
+import { R2Service } from '../upload/r2.service';
 
 export interface ProcessJobPayload {
   jobId: string;
@@ -28,13 +30,15 @@ export class JobProcessingService {
     private readonly generationOrchestrator: GenerationOrchestrator,
     private readonly usageService: UsageService,
     private readonly paymentsService: PaymentsService,
-    private readonly structuredLogger: LoggerService,
-    private readonly metricsService: MetricsService,
-    private readonly requestContext: RequestContextService,
     @Inject(forwardRef(() => CloudTasksService))
     private readonly cloudTasksService: CloudTasksService,
     @Inject(forwardRef(() => ScenesService))
     private readonly scenesService: ScenesService,
+    private readonly structuredLogger: LoggerService,
+    private readonly metricsService: MetricsService,
+    private readonly requestContext: RequestContextService,
+    private readonly configService: ConfigService,
+    private readonly r2Service: R2Service,
   ) { }
 
   async processJob(payload: ProcessJobPayload) {
@@ -281,7 +285,7 @@ export class JobProcessingService {
   ) {
     const prompt = data.prompt as string;
     const model = data.model as string;
-    const provider = data.provider as string;
+    const provider = (data.provider as string)?.trim().toLowerCase();
     const cost = 5; // Video generation cost
 
     const user = await this.cloudTasksService.getUserByAuthId(userId);
@@ -300,16 +304,44 @@ export class JobProcessingService {
     });
 
     try {
-      await this.cloudTasksService.updateJobProgress(jobId, 25);
+      await this.cloudTasksService.updateJobProgress(
+        jobId,
+        5,
+        JobStatus.PROCESSING,
+      );
 
-      // Simulate video generation (replace with actual provider call later)
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (provider === 'sora') {
+        const soraResult = await this.handleSoraVideoGeneration(
+          jobId,
+          prompt,
+          model,
+          data.options as Record<string, unknown> | undefined,
+        );
 
+        await this.usageService.captureCredits(reservationId, {
+          finalStatus: 'COMPLETED',
+          assetCount: 1,
+        });
+
+        await this.cloudTasksService.completeJob(jobId, soraResult.videoUrl, {
+          videoUrl: soraResult.videoUrl,
+          provider: 'sora',
+          model: soraResult.model,
+          prompt,
+          soraVideoId: soraResult.videoId,
+          size: soraResult.size,
+          seconds: soraResult.seconds,
+          providerOptions: soraResult.providerOptions,
+        });
+
+        return;
+      }
+
+      // Fallback placeholder for other providers (kept to avoid breaking existing flows)
       await this.cloudTasksService.updateJobProgress(jobId, 75);
 
       const videoUrl = `https://example.com/video-${Date.now()}.mp4`;
 
-      // 2. Capture Credits
       await this.usageService.captureCredits(reservationId, {
         finalStatus: 'COMPLETED',
         assetCount: 1,
@@ -605,5 +637,184 @@ export class JobProcessingService {
     }
 
     return dto;
+  }
+
+  private resolveSoraSize(options: Record<string, unknown> | undefined): string | undefined {
+    if (!options) return undefined;
+
+    const size = options.size;
+    if (typeof size === 'string' && size.includes('x')) {
+      return size;
+    }
+
+    const aspectRatio = options.aspect_ratio;
+    if (typeof aspectRatio === 'string') {
+      const normalized = aspectRatio.trim();
+      if (normalized === '16:9') return '1280x720';
+      if (normalized === '9:16') return '720x1280';
+    }
+
+    return undefined;
+  }
+
+  private resolveSoraSeconds(options: Record<string, unknown> | undefined): string | undefined {
+    if (!options) return undefined;
+
+    const seconds = options.seconds ?? options.duration;
+    if (typeof seconds === 'number' && Number.isFinite(seconds)) {
+      return seconds.toString();
+    }
+    if (typeof seconds === 'string') {
+      const trimmed = seconds.trim();
+      if (trimmed) return trimmed;
+    }
+    return undefined;
+  }
+
+  private parseSoraProgress(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const cleaned = value.trim().replace(/%$/, '');
+      const parsed = Number.parseFloat(cleaned);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return undefined;
+  }
+
+  private async handleSoraVideoGeneration(
+    jobId: string,
+    prompt: string,
+    model: string,
+    options?: Record<string, unknown>,
+  ): Promise<{
+    videoUrl: string;
+    videoId: string;
+    model: string;
+    size?: string;
+    seconds?: string;
+    providerOptions?: Record<string, unknown>;
+  }> {
+    const apiKey = this.configService.get<string>('OPENAI_API_KEY')?.trim();
+    if (!apiKey) {
+      throw new Error('OpenAI API key is not configured');
+    }
+
+    const soraModel = model?.trim() || 'sora-2';
+    const formData = new FormData();
+    formData.append('prompt', prompt);
+    formData.append('model', soraModel);
+
+    const seconds = this.resolveSoraSeconds(options);
+    const size = this.resolveSoraSize(options);
+
+    if (seconds) formData.append('seconds', seconds);
+    if (size) formData.append('size', size);
+
+    const createResponse = await fetch('https://api.openai.com/v1/videos', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: formData,
+    });
+
+    if (!createResponse.ok) {
+      const errorText = await createResponse.text().catch(() => '');
+      throw new Error(
+        errorText?.trim() || `Failed to start Sora generation (status ${createResponse.status})`,
+      );
+    }
+
+    const createPayload = (await createResponse.json()) as Record<string, unknown>;
+    const videoId = typeof createPayload.id === 'string' ? createPayload.id : null;
+    if (!videoId) {
+      throw new Error('Sora did not return a video id');
+    }
+
+    await this.cloudTasksService.updateJobProgress(jobId, 10, JobStatus.PROCESSING);
+
+    const pollDeadline = Date.now() + 10 * 60 * 1000; // 10 minutes
+    let lastProgress = 10;
+
+    while (Date.now() < pollDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      const statusResponse = await fetch(`https://api.openai.com/v1/videos/${videoId}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+
+      if (!statusResponse.ok) {
+        const errorText = await statusResponse.text().catch(() => '');
+        throw new Error(
+          errorText?.trim() ||
+          `Failed to poll Sora video status (status ${statusResponse.status})`,
+        );
+      }
+
+      const statusPayload = (await statusResponse.json()) as Record<string, unknown>;
+      const status = (statusPayload.status as string | undefined)?.toLowerCase();
+      const progress = this.parseSoraProgress(statusPayload.progress);
+
+      if (typeof progress === 'number' && progress > lastProgress) {
+        lastProgress = Math.min(99, Math.max(progress, lastProgress));
+        await this.cloudTasksService.updateJobProgress(
+          jobId,
+          lastProgress,
+          JobStatus.PROCESSING,
+        );
+      }
+
+      if (status === 'completed') {
+        const contentResponse = await fetch(
+          `https://api.openai.com/v1/videos/${videoId}/content`,
+          {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          },
+        );
+
+        if (!contentResponse.ok) {
+          const errorText = await contentResponse.text().catch(() => '');
+          throw new Error(
+            errorText?.trim() ||
+            `Failed to download Sora video content (status ${contentResponse.status})`,
+          );
+        }
+
+        const contentType =
+          contentResponse.headers.get('content-type')?.split(';')[0]?.trim() ??
+          'video/mp4';
+        const buffer = Buffer.from(await contentResponse.arrayBuffer());
+
+        const videoUrl = await this.r2Service.uploadBuffer(
+          buffer,
+          contentType,
+          'generated-videos',
+          `${videoId}.mp4`,
+        );
+
+        return {
+          videoUrl,
+          videoId,
+          model: soraModel,
+          size: (statusPayload.size as string | undefined) ?? size,
+          seconds: (statusPayload.seconds as string | undefined) ?? seconds,
+          providerOptions: options,
+        };
+      }
+
+      if (status === 'failed') {
+        const errorMessage =
+          (statusPayload.error as string | undefined)?.trim() ||
+          (statusPayload.failure_reason as string | undefined)?.trim() ||
+          'Sora video generation failed';
+        throw new Error(errorMessage);
+      }
+    }
+
+    throw new Error('Timed out waiting for Sora video generation to complete');
   }
 }
