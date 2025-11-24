@@ -238,7 +238,7 @@ socket.on('jobUpdate', (data) => {
 - Luma AI (Dream Shaper, Realistic Vision, Photon)
 
 **Video Generation Models:**
-- Veo 3 (Google)
+- Veo 3.1 (Google)
 - Kling (ByteDance)
 - Runway Gen-4 Video
 - Wan 2.2 (Alibaba)
