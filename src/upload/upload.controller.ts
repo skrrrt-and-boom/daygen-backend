@@ -160,19 +160,27 @@ export class UploadController {
     }
 
     try {
+      const mimeType = dto.mimeType || 'image/png';
       const publicUrl = await this.r2Service.uploadBase64Image(
         dto.base64Data,
-        dto.mimeType || 'image/png',
+        mimeType,
         dto.folder,
       );
 
       // Save R2File record to database
-      const fileName = `image-${Date.now()}.${dto.mimeType?.split('/')[1] || 'png'}`;
+      // Determine file prefix based on MIME type
+      const filePrefix = mimeType.startsWith('audio/')
+        ? 'audio'
+        : mimeType.startsWith('video/')
+          ? 'video'
+          : 'image';
+      const extension = mimeType.split('/')[1] || 'bin';
+      const fileName = `${filePrefix}-${Date.now()}.${extension}`;
       await this.r2FilesService.create(user.authUserId, {
         fileName,
         fileUrl: publicUrl,
         fileSize: Math.round((dto.base64Data.length * 3) / 4), // Approximate size
-        mimeType: dto.mimeType || 'image/png',
+        mimeType,
         prompt: dto.prompt,
         model: dto.model,
       });
@@ -180,11 +188,11 @@ export class UploadController {
       return {
         success: true,
         url: publicUrl,
-        mimeType: dto.mimeType || 'image/png',
+        mimeType,
       };
     } catch (error) {
       console.error('Base64 upload failed:', error);
-      throw new BadRequestException('Failed to upload base64 image');
+      throw new BadRequestException('Failed to upload base64 file');
     }
   }
 
