@@ -61,7 +61,7 @@ export class VideoGenerationController {
   private normalizeProviderOptions(rawOptions: unknown): Record<string, unknown> {
     const options = (rawOptions && typeof rawOptions === 'object'
       ? (rawOptions as ProviderOptions)
-      : {}) as ProviderOptions;
+      : {});
 
     const normalized: Record<string, unknown> = {};
 
