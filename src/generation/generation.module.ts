@@ -25,6 +25,7 @@ import { SeedreamImageAdapter } from './providers/seedream.adapter';
 import { ChatGptImageAdapter } from './providers/chatgpt.adapter';
 import { RecraftImageAdapter } from './providers/recraft.adapter';
 import { GEMINI_API_KEY_CANDIDATES } from './constants';
+import { VideoGenerationController } from './video-generation.controller';
 
 const adapterProviders = [
   {
@@ -168,7 +169,7 @@ const registryProvider = {
     PaymentsModule,
     forwardRef(() => JobsModule),
   ],
-  controllers: [ImageGenerationController],
+  controllers: [ImageGenerationController, VideoGenerationController],
   providers: [
     ProviderHttpService,
     GeneratedAssetService,
