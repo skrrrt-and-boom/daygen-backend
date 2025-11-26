@@ -5,12 +5,8 @@ export interface ProviderRouteConfig {
 }
 
 const FLUX_MODELS = new Set([
-    'flux-pro-1.1',
-    'flux-pro-1.1-ultra',
-    'flux-kontext-pro',
-    'flux-kontext-max',
-    'flux-pro',
-    'flux-dev',
+    'flux-2-pro',
+    'flux-2-flex',
 ]);
 
 const RUNWAY_MODELS = new Set(['runway-gen4', 'runway-gen4-turbo']);
@@ -45,7 +41,7 @@ export const PROVIDER_ROUTES: Record<string, ProviderRouteConfig> = {
         allowInline: true,
     },
     flux: {
-        defaultModel: 'flux-pro-1.1',
+        defaultModel: 'flux-2-pro',
         allowedModels: FLUX_MODELS,
     },
     chatgpt: {

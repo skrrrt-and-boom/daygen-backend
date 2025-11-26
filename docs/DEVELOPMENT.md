@@ -134,7 +134,7 @@ NODE_ENV=development
 
 ### Image Generation
 - `POST /api/image/gemini` - Gemini 3 Pro image generation
-- `POST /api/image/flux` - FLUX model generation
+- `POST /api/image/flux` - FLUX.2 model generation
 - `POST /api/image/gemini` - Gemini generation
 - `POST /api/image/ideogram` - Ideogram generation
 - `POST /api/image/runway` - Runway generation

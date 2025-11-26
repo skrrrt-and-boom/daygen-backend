@@ -77,7 +77,7 @@ describe('ImageGenerationController', () => {
                 mockUser.authUserId,
                 expect.objectContaining({
                     provider: 'flux',
-                    model: 'flux-pro-1.1',
+                    model: 'flux-2-pro',
                 }),
             );
         });

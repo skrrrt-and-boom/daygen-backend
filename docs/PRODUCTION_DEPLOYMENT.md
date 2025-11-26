@@ -142,8 +142,8 @@ Content-Type: application/json
 
 {
   "prompt": "A beautiful sunset",
-  "model": "flux-pro",
-  "provider": "bfl",
+  "model": "flux-2-pro",
+  "provider": "flux",
   "options": {
     "width": 1024,
     "height": 1024
@@ -193,8 +193,8 @@ Content-Type: application/json
     "A cat playing",
     "A mountain landscape"
   ],
-  "model": "flux-pro",
-  "provider": "bfl",
+  "model": "flux-2-pro",
+  "provider": "flux",
   "batchSize": 5
 }
 ```

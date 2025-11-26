@@ -76,7 +76,7 @@ class QueueSystemDebugger {
         type: 'image-generation',
         data: {
           prompt: 'A beautiful sunset over mountains',
-          model: 'flux-1.1',
+          model: 'flux-2-pro',
           provider: 'flux',
           options: { width: 512, height: 512 }
         }
@@ -104,7 +104,7 @@ class QueueSystemDebugger {
         type: 'batch-generation',
         data: {
           prompts: ['Sunset', 'Mountains', 'Ocean'],
-          model: 'flux-1.1',
+          model: 'flux-2-pro',
           provider: 'flux',
           batchSize: 3,
           options: {}
@@ -218,7 +218,7 @@ class QueueSystemDebugger {
         userId: this.userId,
         jobType: 'IMAGE_GENERATION',
         prompt: 'Debug test prompt',
-        model: 'flux-1.1',
+        model: 'flux-2-pro',
         provider: 'flux',
         options: {}
       }, {
@@ -242,7 +242,7 @@ class QueueSystemDebugger {
     const concurrentJobs = Array.from({ length: 5 }, (_, i) => 
       axios.post(`${this.baseURL}/jobs/image-generation`, {
         prompt: `Concurrent test job ${i}`,
-        model: 'flux-1.1',
+        model: 'flux-2-pro',
         provider: 'flux',
         options: { width: 256, height: 256 }
       }, {
@@ -295,7 +295,7 @@ class QueueSystemDebugger {
         name: 'Invalid job data',
         test: () => axios.post(`${this.baseURL}/jobs/image-generation`, {
           prompt: '', // Invalid empty prompt
-          model: 'flux-1.1',
+          model: 'flux-2-pro',
           provider: 'flux'
         }, {
           headers: { Authorization: `Bearer ${this.authToken}` }

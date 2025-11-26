@@ -154,7 +154,7 @@ POST /api/image/gemini
 | `/api/users/me/remove-profile-picture` | POST | Remove profile picture |
 | `/api/users/balances` | GET | Admin: list user balances |
 | `/api/image/gemini` | POST | Gemini generation |
-| `/api/image/flux` | POST | FLUX model generation |
+| `/api/image/flux` | POST | FLUX.2 model generation |
 | `/api/image/ideogram` | POST | Ideogram generation |
 | `/api/image/runway` | POST | Runway generation |
 | `/api/image/recraft` | POST | Recraft generation |
@@ -263,9 +263,9 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/auth/me
 
 **Generate an image (provider-specific)**
 ```bash
-# Note: model must match provider (e.g., flux-pro-1.1 for /api/image/flux)
+# Note: model must match provider (e.g., flux-2-pro for /api/image/flux)
 curl -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
-  -d '{"prompt":"cat","model":"flux-pro-1.1"}' \
+  -d '{"prompt":"cat","model":"flux-2-pro"}' \
   http://localhost:3000/api/image/flux
 ```
 
