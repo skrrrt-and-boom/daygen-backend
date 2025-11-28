@@ -32,6 +32,7 @@ export class CloudTasksService {
     [JobType.IMAGE_UPSCALE]: 'image-upscale-queue',
     [JobType.BATCH_GENERATION]: 'batch-generation-queue',
     [JobType.SCENE_GENERATION]: 'scene-generation-queue',
+    [JobType.IMAGE_EDIT]: 'image-generation-queue', // Reuse image generation queue
   };
 
   constructor(
@@ -105,7 +106,29 @@ export class CloudTasksService {
     }
 
     try {
-      return JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+      const copy = JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+
+      // Sanitize heavy fields to prevent metadata bloat
+      const sanitize = (obj: any, depth = 0) => {
+        if (depth > 5 || !obj || typeof obj !== 'object') return;
+
+        for (const key in obj) {
+          if (Object.prototype.hasOwnProperty.call(obj, key)) {
+            const val = obj[key];
+            if (typeof val === 'string' && val.length > 1000) {
+              // Check if it looks like a base64 image or just a long string
+              if (val.startsWith('data:') || val.length > 5000) {
+                obj[key] = val.substring(0, 100) + '...[TRUNCATED]';
+              }
+            } else if (typeof val === 'object') {
+              sanitize(val, depth + 1);
+            }
+          }
+        }
+      };
+
+      sanitize(copy);
+      return copy;
     } catch (error) {
       this.logger.warn(
         'Failed to serialize job metadata, falling back to empty object',
@@ -180,9 +203,13 @@ export class CloudTasksService {
 
   async createImageGenerationJob(
     userId: string,
-    data: CreateImageGenerationJobDto,
+    data: CreateImageGenerationJobDto & { jobType?: string },
   ) {
-    return this.createJob(userId, JobType.IMAGE_GENERATION, data);
+    const type =
+      data.jobType === 'IMAGE_EDIT'
+        ? JobType.IMAGE_EDIT
+        : JobType.IMAGE_GENERATION;
+    return this.createJob(userId, type, data);
   }
 
   async createVideoGenerationJob(

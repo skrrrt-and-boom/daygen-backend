@@ -137,6 +137,7 @@ enum JobType {
   IMAGE_UPSCALE
   BATCH_GENERATION
   SCENE_GENERATION
+  IMAGE_EDIT
 }
 
 enum JobStatus {

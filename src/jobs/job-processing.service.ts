@@ -13,6 +13,7 @@ import type { SanitizedUser } from '../users/types';
 import type { ProviderGenerateDto } from '../generation/dto/base-generate.dto';
 import { ScenesService, SceneGenerationJobPayload } from '../scenes/scenes.service';
 import { R2Service } from '../upload/r2.service';
+import { R2FilesService } from '../r2files/r2files.service';
 import { GEMINI_API_KEY_CANDIDATES } from '../generation/constants';
 
 export interface ProcessJobPayload {
@@ -40,6 +41,7 @@ export class JobProcessingService {
     private readonly requestContext: RequestContextService,
     private readonly configService: ConfigService,
     private readonly r2Service: R2Service,
+    private readonly r2FilesService: R2FilesService,
   ) { }
 
   async processJob(payload: ProcessJobPayload) {
@@ -326,6 +328,15 @@ export class JobProcessingService {
           assetCount: 1,
         });
 
+        const r2File = await this.r2FilesService.create(user.authUserId, {
+          fileName: `veo-${Date.now()}.mp4`,
+          fileUrl: veoResult.videoUrl,
+          mimeType: 'video/mp4',
+          prompt,
+          model: veoResult.model,
+          jobId,
+        });
+
         await this.cloudTasksService.completeJob(jobId, veoResult.videoUrl, {
           videoUrl: veoResult.videoUrl,
           provider: 'veo',
@@ -337,6 +348,7 @@ export class JobProcessingService {
           resolution: veoResult.resolution,
           providerOptions: veoResult.providerOptions,
           referenceCount: veoResult.referenceCount,
+          r2FileId: r2File.id,
         });
 
         return;
@@ -355,6 +367,15 @@ export class JobProcessingService {
           assetCount: 1,
         });
 
+        const r2File = await this.r2FilesService.create(user.authUserId, {
+          fileName: `sora-${Date.now()}.mp4`,
+          fileUrl: soraResult.videoUrl,
+          mimeType: 'video/mp4',
+          prompt,
+          model: soraResult.model,
+          jobId,
+        });
+
         await this.cloudTasksService.completeJob(jobId, soraResult.videoUrl, {
           videoUrl: soraResult.videoUrl,
           provider: 'sora',
@@ -364,6 +385,7 @@ export class JobProcessingService {
           size: soraResult.size,
           seconds: soraResult.seconds,
           providerOptions: soraResult.providerOptions,
+          r2FileId: r2File.id,
         });
 
         return;

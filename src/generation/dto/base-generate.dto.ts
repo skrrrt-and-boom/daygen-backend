@@ -56,8 +56,16 @@ export abstract class BaseGenerateDto {
 
   @IsOptional()
   @IsString()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsString()
   mimeType?: string;
 
+  /**
+   * Reference image URLs or data URLs. For masked Ideogram edits the first entry
+   * should contain the source image that pairs with `providerOptions.mask`.
+   */
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -93,6 +101,11 @@ export abstract class BaseGenerateDto {
   @IsString()
   @MaxLength(255)
   productId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  jobType?: string;
 }
 
 export class ProviderGenerateDto extends BaseGenerateDto {

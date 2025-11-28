@@ -42,6 +42,19 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     }
   }
 
+  private async fetchImageAsBase64(url: string): Promise<string> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.statusText}`);
+      }
+      const buffer = await response.arrayBuffer();
+      return Buffer.from(buffer).toString('base64');
+    } catch (error) {
+      throw new Error(`Failed to download image from URL: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   canHandleModel(model: string): boolean {
     return (
       model === 'gemini-3.0-pro-image' ||
@@ -128,12 +141,12 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
 
     const references = Array.isArray(dto.references) && dto.references.length > 0
       ? dto.references
-          .map((ref) => (typeof ref === 'string' ? ref.trim() : ''))
-          .filter((ref) => Boolean(ref) && ref.length > 0)
-          .slice(0, 3)
-          .map((ref) => stripDataUrlPrefix(ref))
-          .map((base64) => base64.trim())
-          .filter((base64) => base64.length > 0)
+        .map((ref) => (typeof ref === 'string' ? ref.trim() : ''))
+        .filter((ref) => Boolean(ref) && ref.length > 0)
+        .slice(0, 3)
+        .map((ref) => stripDataUrlPrefix(ref))
+        .map((base64) => base64.trim())
+        .filter((base64) => base64.length > 0)
       : undefined;
 
     // Build Imagen/Gemini image parameters from DTO
@@ -239,6 +252,15 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
           inline_data: {
             mime_type: dto.mimeType || 'image/png',
             data: stripDataUrlPrefix(dto.imageBase64),
+          },
+        });
+      } else if (dto.imageUrl) {
+        // Download image if only URL is provided
+        const base64 = await this.fetchImageAsBase64(dto.imageUrl);
+        parts.push({
+          inline_data: {
+            mime_type: dto.mimeType || 'image/png', // We might want to detect mime type from response headers ideally
+            data: base64,
           },
         });
       }
