@@ -3,7 +3,6 @@ import {
   Injectable,
   Logger,
   ServiceUnavailableException,
-  InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';

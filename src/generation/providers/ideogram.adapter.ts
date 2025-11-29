@@ -143,7 +143,7 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
         // But 'undici' (used in package.json) or native fetch in Node 18+ supports it.
         // Alternatively, we can parse the data URL manually.
         // Let's try manual parsing to be safe and avoid external fetch for local data.
-        const matches = maskDataUrl!.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        const matches = maskDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
         if (matches && matches.length === 3) {
           const buffer = Buffer.from(matches[2], 'base64');
           const blob = new Blob([buffer], { type: matches[1] });
