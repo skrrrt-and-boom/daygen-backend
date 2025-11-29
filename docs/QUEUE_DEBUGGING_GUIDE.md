@@ -32,7 +32,7 @@ this.structuredLogger.logError(error, {
 
 // Log performance metrics
 this.structuredLogger.logPerformance('image_generation', 2.5, {
-  model: 'flux-1.1', provider: 'flux'
+  model: 'flux-2-pro', provider: 'flux'
 });
 ```
 

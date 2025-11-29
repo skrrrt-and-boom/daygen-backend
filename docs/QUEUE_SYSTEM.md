@@ -93,8 +93,8 @@ Authorization: Bearer <jwt-token>
 
 {
   "prompt": "A beautiful sunset",
-  "model": "flux-1.1-pro",
-  "provider": "bfl",
+  "model": "flux-2-pro",
+  "provider": "flux",
   "options": {
     "width": 1024,
     "height": 1024
@@ -146,8 +146,8 @@ Authorization: Bearer <jwt-token>
     "A cat playing",
     "A mountain landscape"
   ],
-  "model": "flux-1.1-pro",
-  "provider": "bfl",
+  "model": "flux-2-pro",
+  "provider": "flux",
   "batchSize": 5,
   "options": {}
 }
@@ -227,7 +227,7 @@ socket.on('jobUpdate', (data) => {
 ### Supported Models
 
 **Image Generation Models:**
-- FLUX Pro 1.1, Ultra, Kontext Pro/Max (BFL API)
+- FLUX.2 Pro, FLUX.2 Flex (BFL API)
 - Gemini 3 Pro (Google)
 - Ideogram V3
 - Recraft v2/v3

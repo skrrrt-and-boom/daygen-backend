@@ -4,14 +4,7 @@ export interface ProviderRouteConfig {
     allowInline?: boolean;
 }
 
-const FLUX_MODELS = new Set([
-    'flux-pro-1.1',
-    'flux-pro-1.1-ultra',
-    'flux-kontext-pro',
-    'flux-kontext-max',
-    'flux-pro',
-    'flux-dev',
-]);
+const FLUX_MODELS = new Set(['flux.2']);
 
 const RUNWAY_MODELS = new Set(['runway-gen4', 'runway-gen4-turbo']);
 const RECRAFT_MODELS = new Set(['recraft-v3', 'recraft-v2']);
@@ -45,7 +38,7 @@ export const PROVIDER_ROUTES: Record<string, ProviderRouteConfig> = {
         allowInline: true,
     },
     flux: {
-        defaultModel: 'flux-pro-1.1',
+        defaultModel: 'flux.2',
         allowedModels: FLUX_MODELS,
     },
     chatgpt: {

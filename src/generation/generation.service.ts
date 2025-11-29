@@ -463,7 +463,7 @@ export class GenerationService {
       const assets = res.results.map((r) => this.generatedAssetService.assetFromDataUrl(r.url));
       const out: ProviderResult = {
         provider: 'flux',
-        model: dto.model || 'flux-pro-1.1',
+        model: dto.model || 'flux-2-pro',
         clientPayload: res.clientPayload,
         assets,
         rawResponse: res.rawResponse,
