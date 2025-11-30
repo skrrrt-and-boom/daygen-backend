@@ -893,6 +893,83 @@ export class JobProcessingService {
     return undefined;
   }
 
+  private async uploadToGoogleFileApi(
+    apiKey: string,
+    data: string,
+    mimeType: string,
+  ): Promise<string> {
+    const baseUrl = 'https://generativelanguage.googleapis.com/upload/v1beta/files';
+    const buffer = Buffer.from(data, 'base64');
+    const size = buffer.length;
+
+    // 1. Start the upload
+    const startResponse = await fetch(`${baseUrl}?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': size.toString(),
+        'X-Goog-Upload-Header-Content-Type': mimeType,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ display_name: `veo_ref_${Date.now()}` }),
+    });
+
+    if (!startResponse.ok) {
+      const text = await startResponse.text().catch(() => '');
+      throw new Error(`Failed to start file upload: ${startResponse.status} ${text}`);
+    }
+
+    const uploadUrl = startResponse.headers.get('x-goog-upload-url');
+    if (!uploadUrl) {
+      throw new Error('No upload URL returned from Google File API');
+    }
+
+    // 2. Upload the content
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Length': size.toString(),
+        'X-Goog-Upload-Offset': '0',
+        'X-Goog-Upload-Command': 'upload, finalize',
+      },
+      body: buffer,
+    });
+
+    if (!uploadResponse.ok) {
+      const text = await uploadResponse.text().catch(() => '');
+      throw new Error(`Failed to upload file content: ${uploadResponse.status} ${text}`);
+    }
+
+    const uploadResult = (await uploadResponse.json()) as Record<string, unknown>;
+    const file = this.asRecord(uploadResult.file);
+    const uri = this.pickString(file?.uri);
+
+    if (!uri) {
+      throw new Error('No file URI returned from Google File API');
+    }
+
+    // 3. Wait for file to be active (usually instant for small images)
+    let state = this.pickString(file?.state);
+    const name = this.pickString(file?.name);
+
+    if (state === 'PROCESSING' && name) {
+      const pollDeadline = Date.now() + 60000; // 1 minute timeout
+      while (state === 'PROCESSING' && Date.now() < pollDeadline) {
+        await new Promise(r => setTimeout(r, 1000));
+        const getResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}?key=${apiKey}`);
+        if (getResponse.ok) {
+          const getResult = await getResponse.json() as Record<string, unknown>;
+          state = this.pickString(getResult.state);
+          if (state === 'ACTIVE') break;
+          if (state === 'FAILED') throw new Error('File processing failed');
+        }
+      }
+    }
+
+    return uri;
+  }
+
   private async handleVeoVideoGeneration(
     jobId: string,
     prompt: string,
@@ -937,25 +1014,79 @@ export class JobProcessingService {
     );
 
     const normalizedReferences = this.normalizeReferences(references);
-    const referenceImages = normalizedReferences.map((entry) => ({
+    const referenceImages: Array<{
+      referenceId: number;
       image: {
-        inlineData: {
-          data: entry.data,
-          mimeType: entry.mimeType || 'image/png',
-        },
-      },
-      referenceType: 'asset',
-      reference_type: 'asset',
-    }));
+        fileData: {
+          fileUri: string;
+          mimeType: string;
+        };
+      };
+      referenceType: string;
+    }> = [];
+
+    if (normalizedReferences.length > 0) {
+      // Upload references in parallel
+      const uploads = await Promise.all(
+        normalizedReferences.map(async (entry) => {
+          try {
+            const uri = await this.uploadToGoogleFileApi(
+              apiKey,
+              entry.data,
+              entry.mimeType || 'image/png',
+            );
+            return { uri, mimeType: entry.mimeType || 'image/png' };
+          } catch (error) {
+            this.logger.warn(`Failed to upload reference image: ${error}`);
+            return null;
+          }
+        }),
+      );
+
+      let refIdCounter = 1;
+      for (const upload of uploads) {
+        if (upload) {
+          referenceImages.push({
+            referenceId: refIdCounter++,
+            image: {
+              fileData: {
+                fileUri: upload.uri,
+                mimeType: upload.mimeType,
+              },
+            },
+            referenceType: 'REFERENCE_IMAGE_TYPE_ASSET',
+          });
+        }
+      }
+    }
 
     const instance: Record<string, unknown> = { prompt };
     if (imageBase64) {
-      instance.image = {
-        inlineData: {
-          data: imageBase64,
-          mimeType: imageMimeType || 'image/png',
-        },
-      };
+      try {
+        const imageUri = await this.uploadToGoogleFileApi(
+          apiKey,
+          imageBase64,
+          imageMimeType || 'image/png',
+        );
+        instance.image = {
+          fileData: {
+            fileUri: imageUri,
+            mimeType: imageMimeType || 'image/png',
+          },
+        };
+      } catch (error) {
+        this.logger.warn(`Failed to upload input image: ${error}`);
+        // Fallback to inlineData if upload fails (though likely to fail if unsupported)
+        instance.image = {
+          inlineData: {
+            data: imageBase64,
+            mimeType: imageMimeType || 'image/png',
+          },
+        };
+      }
+    }
+    if (referenceImages.length > 0) {
+      instance.referenceImages = referenceImages;
     }
 
     const parameters: Record<string, unknown> = {};
@@ -979,15 +1110,13 @@ export class JobProcessingService {
     if (typeof seed === 'number') parameters.seed = seed;
     if (resolution) parameters.resolution = resolution;
     if (effectivePersonGeneration) parameters.personGeneration = effectivePersonGeneration;
-    if (referenceImages.length > 0) {
-      parameters.referenceImages = referenceImages;
-      parameters.reference_images = referenceImages;
-    }
 
     const requestBody: Record<string, unknown> = { instances: [instance] };
     if (Object.keys(parameters).length > 0) {
       requestBody.parameters = parameters;
     }
+
+    this.logger.log(`Veo Request Body: ${JSON.stringify(requestBody, null, 2)}`);
 
     const createResponse = await fetch(
       `${baseUrl}/models/${veoModel}:predictLongRunning`,
