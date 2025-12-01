@@ -147,7 +147,7 @@ export class AudioService {
       );
       // Log detailed error if available
       if (error && typeof error === 'object' && 'body' in error) {
-        this.logger.error(`ElevenLabs Error Body: ${JSON.stringify((error as any).body)}`);
+        this.logger.error(`ElevenLabs Error Body: ${JSON.stringify(error.body)}`);
       }
       throw new ServiceUnavailableException(
         `Unable to connect to ElevenLabs text-to-speech: ${error instanceof Error ? error.message : String(error)}`,

@@ -1,6 +1,6 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { JobType } from '@prisma/client';
+
 import { ConfigService } from '@nestjs/config';
 import { AudioService } from '../audio/audio.service';
 import { R2Service } from '../upload/r2.service';
@@ -12,7 +12,7 @@ import * as child_process from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const mp3Duration = require('mp3-duration');
 
 const exec = util.promisify(child_process.exec);
@@ -198,7 +198,7 @@ export class TimelineService {
             // Replicate output for Llama 3 is usually an array of strings (tokens) or a single string depending on stream settings.
             // The SDK usually returns the full output if not streaming.
             // If it returns an array of strings, we join them.
-            const content = Array.isArray(output) ? output.join('') : String(output);
+            const content = Array.isArray(output) ? output.join('') : (typeof output === 'object' ? JSON.stringify(output) : String(output));
 
             this.logger.debug(`Replicate output: ${content.substring(0, 100)}...`);
 
@@ -226,7 +226,7 @@ export class TimelineService {
     private async getAudioDuration(buffer: Buffer): Promise<number> {
         return new Promise((resolve, reject) => {
             mp3Duration(buffer, (err: any, duration: number) => {
-                if (err) return reject(err);
+                if (err) return reject(err instanceof Error ? err : new Error(String(err)));
                 resolve(duration);
             });
         });
