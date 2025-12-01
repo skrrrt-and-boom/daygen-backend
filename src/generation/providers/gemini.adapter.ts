@@ -226,6 +226,15 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
       throw new Error('Gemini API key not configured');
     }
 
+    console.log('Gemini Adapter: generate called with DTO:', JSON.stringify({
+      model: dto.model,
+      prompt: dto.prompt,
+      referencesCount: Array.isArray(dto.references) ? dto.references.length : 0,
+      referencesType: typeof dto.references,
+      hasBaseImage: !!dto.imageBase64,
+      hasImageUrl: !!dto.imageUrl
+    }, null, 2));
+
     // Map friendly IDs to the available Gemini/Imagen image models
     // Map friendly IDs to the available Gemini/Imagen image models
     const modelMap: Record<string, string> = {
@@ -241,10 +250,18 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
       throw new Error('Prompt is required for Imagen image generation');
     }
 
-    const references = await this.normalizeReferenceInputs(
+    const references = (await this.normalizeReferenceInputs(
       dto.references,
       dto.mimeType || 'image/png',
-    );
+    )).filter(ref => {
+      const isSupported = ref.mimeType === 'image/jpeg' || ref.mimeType === 'image/png';
+      if (!isSupported) {
+        console.warn(`Gemini Adapter: Skipping unsupported reference image format: ${ref.mimeType}. Only JPEG and PNG are supported.`);
+      } else {
+        console.log(`Gemini Adapter: Accepted reference image: ${ref.mimeType}, size: ${ref.data.length}`);
+      }
+      return isSupported;
+    });
 
     const baseImage = normalizeImageInput(
       typeof dto.imageBase64 === 'string' ? dto.imageBase64 : undefined,
@@ -346,17 +363,17 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
       return { url: this.maybeAttachApiKey(rawUrl, apiKey), mimeType: mime };
     };
 
-    const tryGenerateContent = async (modelName: string) => {
+    const tryGenerateContent = async (modelName: string, overrideReferences?: NormalizedImageInput[]) => {
       const parts: Array<Record<string, unknown>> = [{ text: prompt }];
 
-      if (baseImage) {
+      if (baseImage && !overrideReferences) {
         parts.push({
           inline_data: {
             mime_type: baseImage.mimeType,
             data: baseImage.data,
           },
         });
-      } else if (dto.imageUrl) {
+      } else if (dto.imageUrl && !overrideReferences) {
         // Download image if only URL is provided
         const downloaded = await this.fetchImageAsBase64(dto.imageUrl);
         parts.push({
@@ -367,8 +384,10 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
         });
       }
 
-      if (references) {
-        for (const reference of references) {
+      const refsToUse = overrideReferences !== undefined ? overrideReferences : references;
+
+      if (refsToUse) {
+        for (const reference of refsToUse) {
           parts.push({
             inline_data: {
               mime_type: reference.mimeType,
@@ -428,12 +447,7 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
         requestBody.generationConfig = generationConfig;
       }
 
-      console.log('Gemini Adapter Debug:', {
-        endpoint,
-        modelName,
-        requestBody: JSON.stringify(requestBody, null, 2),
-        apiKeyPresent: !!apiKey
-      });
+
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -447,6 +461,44 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
+
+        console.log('Gemini Adapter Error Debug:', {
+          status: response.status,
+          text,
+          hasReferences: references && references.length > 0,
+          hasBaseImage: !!baseImage,
+          hasImageUrl: !!dto.imageUrl,
+          overrideReferences,
+          willRetry: response.status === 400 && (text.includes('Unable to process input image') || text.includes('INVALID_ARGUMENT')) && overrideReferences === undefined && ((references && references.length > 0) || baseImage || dto.imageUrl)
+        });
+
+        // Handle "Unable to process input image" error by retrying without references
+        // Only retry if we haven't already retried (overrideReferences is undefined)
+        if (response.status === 400 && (text.includes('Unable to process input image') || text.includes('INVALID_ARGUMENT')) && overrideReferences === undefined && ((references && references.length > 0) || baseImage || dto.imageUrl)) {
+
+          // If we have multiple references, try them one by one to salvage at least one valid reference
+          if (references && references.length > 1) {
+            console.warn('Gemini Adapter: Batch reference failed. Retrying references individually.');
+            for (const ref of references) {
+              try {
+                console.log('Gemini Adapter: Retrying with single reference...');
+                // Recursive call with single reference
+                // We await it, if it throws (fails), we catch and continue
+                return await tryGenerateContent(modelName, [ref]);
+              } catch (e) {
+                console.warn('Gemini Adapter: Individual reference retry failed.', e);
+                if (e instanceof Error && (e as any).details) {
+                  console.warn('Gemini Adapter: Retry Failure Details:', (e as any).details);
+                }
+                // Continue to next reference
+              }
+            }
+          }
+
+          console.warn('Gemini Adapter: Reference image rejected by API. Retrying without references.');
+          return tryGenerateContent(modelName, []);
+        }
+
         const error: Error & { status?: number; details?: string } = new Error(
           `Gemini image API error ${response.status}: ${text}`,
         );
