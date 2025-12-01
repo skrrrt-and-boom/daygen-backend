@@ -145,8 +145,12 @@ export class AudioService {
         `Failed to generate speech for voice ${voiceId}`,
         error,
       );
+      // Log detailed error if available
+      if (error && typeof error === 'object' && 'body' in error) {
+        this.logger.error(`ElevenLabs Error Body: ${JSON.stringify((error as any).body)}`);
+      }
       throw new ServiceUnavailableException(
-        'Unable to connect to ElevenLabs text-to-speech',
+        `Unable to connect to ElevenLabs text-to-speech: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

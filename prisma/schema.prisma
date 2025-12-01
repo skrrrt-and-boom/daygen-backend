@@ -138,6 +138,7 @@ enum JobType {
   BATCH_GENERATION
   SCENE_GENERATION
   IMAGE_EDIT
+  CYRAN_ROLL
 }
 
 enum JobStatus {

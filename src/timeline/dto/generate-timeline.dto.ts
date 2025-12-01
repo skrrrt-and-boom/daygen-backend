@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class GenerateTimelineDto {
     @IsString()
@@ -10,10 +10,10 @@ export class GenerateTimelineDto {
     style: string;
 
     @IsString()
-    @IsNotEmpty()
-    voiceId: string;
+    @IsOptional()
+    voiceId?: string;
 
     @IsString()
-    @IsNotEmpty()
-    musicId: string;
+    @IsOptional()
+    musicId?: string;
 }
