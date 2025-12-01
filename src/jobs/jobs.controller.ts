@@ -8,6 +8,7 @@ import {
   Body,
   ValidationPipe,
 } from '@nestjs/common';
+import { JobType } from '@prisma/client';
 import { CloudTasksService } from './cloud-tasks.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -27,7 +28,7 @@ const requestValidationPipe = new ValidationPipe({
 @Controller('jobs')
 @UseGuards(JwtAuthGuard)
 export class JobsController {
-  constructor(private readonly cloudTasksService: CloudTasksService) {}
+  constructor(private readonly cloudTasksService: CloudTasksService) { }
 
   @Post('image-generation')
   async createImageGeneration(
@@ -83,12 +84,15 @@ export class JobsController {
     @CurrentUser() user: SanitizedUser,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('type') type?: JobType,
   ) {
+    console.log('getUserJobs called with:', { userId: user.authUserId, limit, cursor, type });
     const parsedLimit = limit ? Number.parseInt(limit, 10) : 20;
     return this.cloudTasksService.getUserJobs(
       user.authUserId,
       parsedLimit,
       cursor,
+      type,
     );
   }
 }

@@ -35,8 +35,8 @@ export class TimelineService {
         this.replicate = new Replicate({ auth: replicateToken });
     }
 
-    async createTimeline(dto: GenerateTimelineDto): Promise<TimelineResponse> {
-        this.logger.log(`Creating timeline for topic: ${dto.topic}`);
+    async createTimeline(dto: GenerateTimelineDto, userId: string): Promise<TimelineResponse> {
+        this.logger.log(`Creating timeline for topic: ${dto.topic} for user: ${userId}`);
 
         // Create Job
         // We need a userId. For now, we'll assume a system user or try to extract from context if available.
@@ -59,7 +59,7 @@ export class TimelineService {
         // Let's just implement the logic assuming userId is passed in DTO or a separate arg.
         // I'll add userId as a second argument to createTimeline.
 
-        return this.createTimelineWithUser(dto, '07ae79dd-1ca3-4fd2-9336-5581d8d86652'); // Using the user ID from the logs
+        return this.createTimelineWithUser(dto, userId);
     }
 
     async createTimelineWithUser(dto: GenerateTimelineDto, userId: string): Promise<TimelineResponse> {
@@ -134,6 +134,13 @@ export class TimelineService {
                 });
 
                 currentTime = endTime;
+
+                // Update Progress
+                const progress = Math.round(((i + 1) / script.length) * 100);
+                await this.prisma.job.update({
+                    where: { id: job.id },
+                    data: { progress }
+                });
             }
 
             const response = {

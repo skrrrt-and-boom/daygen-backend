@@ -352,9 +352,13 @@ export class CloudTasksService {
     }
   }
 
-  async getUserJobs(userId: string, limit = 20, cursor?: string) {
+  async getUserJobs(userId: string, limit = 20, cursor?: string, type?: JobType) {
+    console.log(`CloudTasksService.getUserJobs: Fetching jobs for user ${userId} with type ${type}`);
     const jobs = await this.prisma.job.findMany({
-      where: { userId },
+      where: {
+        userId,
+        ...(type && { type }),
+      },
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
       ...(cursor && {
@@ -370,8 +374,11 @@ export class CloudTasksService {
         error: true,
         createdAt: true,
         completedAt: true,
+        metadata: true, // Select metadata to check for topic/prompt
       },
     });
+    console.log(`CloudTasksService.getUserJobs: Found ${jobs.length} jobs. Types: ${jobs.map(j => j.type).join(', ')}`);
+    console.log(`CloudTasksService.getUserJobs: Metadata samples: ${JSON.stringify(jobs.slice(0, 3).map(j => j.metadata))}`);
 
     const hasNextPage = jobs.length > limit;
     if (hasNextPage) {
