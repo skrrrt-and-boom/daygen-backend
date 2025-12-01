@@ -95,7 +95,7 @@ const normalizeImageInput = (
     }
 
     return { data, mimeType };
-  } catch (e) {
+  } catch {
     return null;
   }
 };
