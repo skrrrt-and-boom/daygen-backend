@@ -24,6 +24,7 @@ export const PROVIDER_ROUTES: Record<string, ProviderRouteConfig> = {
     gemini: {
         defaultModel: 'gemini-3.0-pro-image',
         allowedModels: new Set([
+            'gemini-3-pro-image-preview',
             'gemini-3.0-pro-image',
             'gemini-3.0-pro',
             'gemini-3.0-pro-exp-01',

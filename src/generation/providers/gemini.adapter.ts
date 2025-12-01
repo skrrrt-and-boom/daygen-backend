@@ -6,13 +6,98 @@ import type { SanitizedUser } from '../../users/types';
  * Imagen image adapter using Google's Imagen API for reliable image generation.
  * Uses the dedicated Imagen models instead of Gemini's multimodal API to avoid NO_IMAGE errors.
  */
-const stripDataUrlPrefix = (value: string): string => {
-  if (!value) return value;
-  const commaIndex = value.indexOf(',');
-  if (value.startsWith('data:') && commaIndex !== -1) {
-    return value.slice(commaIndex + 1);
+type NormalizedImageInput = { data: string; mimeType: string };
+
+const normalizeImageInput = (
+  value: string | undefined,
+  defaultMime: string,
+): NormalizedImageInput | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  // Handle Data URI
+  if (trimmed.startsWith('data:')) {
+    const commaIndex = trimmed.indexOf(',');
+    if (commaIndex !== -1) {
+      const header = trimmed.slice(0, commaIndex);
+      const rawData = trimmed.slice(commaIndex + 1);
+
+      const mimeMatch = header.match(/^data:([^;]+)/);
+      const mimeType = mimeMatch ? mimeMatch[1] : defaultMime;
+
+      try {
+        // Convert URL-safe to standard base64 just in case
+        const standardBase64 = rawData.replace(/-/g, '+').replace(/_/g, '/');
+        // Use Buffer to normalize base64 (ignores whitespace, handles padding)
+        const buffer = Buffer.from(standardBase64, 'base64');
+        const data = buffer.toString('base64');
+
+        // Detect mime type from magic bytes
+        let detectedMime: string | null = null;
+        if (data.startsWith('/9j/')) {
+          detectedMime = 'image/jpeg';
+        } else if (data.startsWith('iVBORw0KGgo')) {
+          detectedMime = 'image/png';
+        } else if (data.startsWith('UklGR')) {
+          detectedMime = 'image/webp';
+        } else if (data.startsWith('AAAAZGZ0eXBoZWlj') || data.startsWith('AAAHGZnR5cGhlaWM')) {
+          detectedMime = 'image/heic';
+        }
+
+        if (!detectedMime) {
+          console.warn('Gemini Adapter: Unsupported image format detected in Data URI. Header:', data.substring(0, 20));
+          return null;
+        }
+
+        console.log('Gemini Adapter Image Debug:', {
+          declaredMime: mimeType,
+          detectedMime,
+          originalLength: rawData.length,
+          processedLength: data.length,
+          header: data.substring(0, 20)
+        });
+
+        return { data, mimeType: detectedMime };
+      } catch (e) {
+        console.error('Failed to normalize base64 data URI:', e);
+        return null;
+      }
+    }
   }
-  return value;
+
+  // If no data URI prefix, assume it might be raw base64 if it doesn't look like a URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return null;
+  }
+
+  // Treat as raw base64
+  try {
+    const standardBase64 = trimmed.replace(/-/g, '+').replace(/_/g, '/');
+    const buffer = Buffer.from(standardBase64, 'base64');
+    const data = buffer.toString('base64');
+
+    // Detect mime type from magic bytes
+    let mimeType: string | null = null;
+    if (data.startsWith('/9j/')) {
+      mimeType = 'image/jpeg';
+    } else if (data.startsWith('iVBORw0KGgo')) {
+      mimeType = 'image/png';
+    } else if (data.startsWith('UklGR')) {
+      mimeType = 'image/webp';
+    } else if (data.startsWith('AAAAZGZ0eXBoZWlj') || data.startsWith('AAAHGZnR5cGhlaWM')) {
+      mimeType = 'image/heic';
+    }
+
+    if (!mimeType) {
+      console.warn('Gemini Adapter: Unsupported image format detected. Header:', data.substring(0, 20));
+      return null;
+    }
+
+    return { data, mimeType };
+  } catch (e) {
+    return null;
+  }
 };
 
 export class GeminiImageAdapter implements ImageProviderAdapter {
@@ -42,32 +127,59 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     }
   }
 
-  private async fetchImageAsBase64(url: string): Promise<string> {
+  private async fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType?: string }> {
     try {
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to fetch image: ${response.statusText}`);
       }
       const buffer = await response.arrayBuffer();
-      return Buffer.from(buffer).toString('base64');
+      const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim();
+      return {
+        base64: Buffer.from(buffer).toString('base64'),
+        mimeType: mimeType || undefined,
+      };
     } catch (error) {
       throw new Error(`Failed to download image from URL: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
+  private async normalizeReferenceInputs(
+    refs: unknown,
+    defaultMime: string,
+  ): Promise<NormalizedImageInput[]> {
+    if (!Array.isArray(refs) || refs.length === 0) return [];
+
+    const normalized: NormalizedImageInput[] = [];
+    for (const raw of refs) {
+      if (normalized.length >= 14) break;
+      if (typeof raw !== 'string') continue;
+
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+
+      const inline = normalizeImageInput(trimmed, defaultMime);
+      if (inline) {
+        normalized.push(inline);
+        continue;
+      }
+
+      // Fallback: treat http/https as a URL and download to base64
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        const downloaded = await this.fetchImageAsBase64(trimmed);
+        normalized.push({
+          data: downloaded.base64,
+          mimeType: downloaded.mimeType || defaultMime,
+        });
+        continue;
+      }
+    }
+
+    return normalized;
+  }
+
   canHandleModel(model: string): boolean {
-    return (
-      model === 'gemini-3.0-pro-image' ||
-      model === 'gemini-3.0-pro' ||
-      model === 'gemini-3.0-pro-exp-01' ||
-      model === 'gemini-3-pro-image-preview' ||
-      model === 'gemini-3-pro-image' ||
-      model === 'gemini-2.5-flash-image' ||
-      model === 'imagen-4.0-generate-001' ||
-      model === 'imagen-4.0-fast-generate-001' ||
-      model === 'imagen-4.0-ultra-generate-001' ||
-      model === 'imagen-3.0-generate-002'
-    );
+    return model === 'gemini-3-pro-image-preview' || model === 'gemini-3.0-pro-image';
   }
 
   validateOptions(dto: ProviderGenerateDto): void {
@@ -115,39 +227,29 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     }
 
     // Map friendly IDs to the available Gemini/Imagen image models
+    // Map friendly IDs to the available Gemini/Imagen image models
     const modelMap: Record<string, string> = {
+      'gemini-3.0-pro-preview': 'gemini-3-pro-image-preview',
       'gemini-3.0-pro-image': 'gemini-3-pro-image-preview',
-      'gemini-3-pro-image': 'gemini-3-pro-image-preview',
-      'gemini-3-pro': 'gemini-3-pro-image-preview',
-      'gemini-3.0-pro': 'gemini-3-pro-image-preview',
-      'gemini-3.0-pro-exp-01': 'gemini-3-pro-image-preview',
     };
-    const requestedModel = dto.model?.trim() || 'gemini-3.0-pro-image';
-    const primaryModel = modelMap[requestedModel] || requestedModel || 'gemini-3-pro-image-preview';
-    const modelCandidates = Array.from(
-      new Set([
-        primaryModel,
-        'gemini-2.5-flash-image',
-        'imagen-4.0-fast-generate-001',
-        'imagen-4.0-generate-001',
-        'imagen-4.0-ultra-generate-001',
-      ].filter(Boolean)),
-    );
+    const requestedModel = dto.model?.trim();
+    const primaryModel = requestedModel ? (modelMap[requestedModel] || requestedModel) : 'gemini-3-pro-image-preview';
+    const modelCandidates = [primaryModel];
 
     const prompt = (dto.prompt ?? '').toString().trim();
     if (!prompt) {
       throw new Error('Prompt is required for Imagen image generation');
     }
 
-    const references = Array.isArray(dto.references) && dto.references.length > 0
-      ? dto.references
-        .map((ref) => (typeof ref === 'string' ? ref.trim() : ''))
-        .filter((ref) => Boolean(ref) && ref.length > 0)
-        .slice(0, 3)
-        .map((ref) => stripDataUrlPrefix(ref))
-        .map((base64) => base64.trim())
-        .filter((base64) => base64.length > 0)
-      : undefined;
+    const references = await this.normalizeReferenceInputs(
+      dto.references,
+      dto.mimeType || 'image/png',
+    );
+
+    const baseImage = normalizeImageInput(
+      typeof dto.imageBase64 === 'string' ? dto.imageBase64 : undefined,
+      dto.mimeType || 'image/png',
+    );
 
     // Build Imagen/Gemini image parameters from DTO
     const providerOptions = dto.providerOptions || {};
@@ -191,11 +293,11 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     }
 
     const buildPredictPayload = () => {
-      const referenceImages = references
-        ? references.map((base64) => ({
+      const referenceImages = references.length > 0
+        ? references.map((entry) => ({
           image: {
-            imageBytes: base64,
-            mimeType: 'image/png',
+            imageBytes: entry.data,
+            mimeType: entry.mimeType,
           },
         }))
         : undefined;
@@ -247,41 +349,92 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     const tryGenerateContent = async (modelName: string) => {
       const parts: Array<Record<string, unknown>> = [{ text: prompt }];
 
-      if (dto.imageBase64) {
+      if (baseImage) {
         parts.push({
           inline_data: {
-            mime_type: dto.mimeType || 'image/png',
-            data: stripDataUrlPrefix(dto.imageBase64),
+            mime_type: baseImage.mimeType,
+            data: baseImage.data,
           },
         });
       } else if (dto.imageUrl) {
         // Download image if only URL is provided
-        const base64 = await this.fetchImageAsBase64(dto.imageUrl);
+        const downloaded = await this.fetchImageAsBase64(dto.imageUrl);
         parts.push({
           inline_data: {
-            mime_type: dto.mimeType || 'image/png', // We might want to detect mime type from response headers ideally
-            data: base64,
+            mime_type: dto.mimeType || downloaded.mimeType || 'image/png', // Prefer explicit mimeType, then response header
+            data: downloaded.base64,
           },
         });
       }
 
       if (references) {
-        for (const base64 of references) {
+        for (const reference of references) {
           parts.push({
             inline_data: {
-              mime_type: 'image/png',
-              data: base64,
+              mime_type: reference.mimeType,
+              data: reference.data,
             },
           });
         }
       }
 
       const generationConfig: Record<string, unknown> = {};
-      if (dto.temperature !== undefined) generationConfig.temperature = dto.temperature;
-      if (dto.topP !== undefined) generationConfig.top_p = dto.topP;
-      if (dto.outputLength !== undefined) generationConfig.max_output_tokens = dto.outputLength;
 
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      // Add imageConfig for image generation models (gemini-3-pro-image-preview)
+      const isImageGenerationModel =
+        modelName.includes('flash-image') ||
+        modelName.includes('imagen-') ||
+        modelName.includes('gemini-3.0-pro') ||
+        modelName.includes('gemini-3-pro');
+
+      if (isImageGenerationModel) {
+        const imageConfig: Record<string, unknown> = {};
+
+        // Map aspectRatio from providerOptions
+        if (aspectRatio && typeof aspectRatio === 'string') {
+          // Gemini Image supports common aspect ratios
+          const validRatios = ['1:1', '3:4', '4:3', '9:16', '16:9'];
+          if (validRatios.includes(aspectRatio)) {
+            imageConfig.aspectRatio = aspectRatio;
+          }
+        }
+
+        // Map imageSize from providerOptions (1K, 2K, 4K)
+        const imageSize = providerOptions.imageSize as string | undefined;
+        if (imageSize && typeof imageSize === 'string') {
+          const normalizedSize = imageSize.toUpperCase();
+          if (normalizedSize === '1K' || normalizedSize === '2K' || normalizedSize === '4K') {
+            imageConfig.imageSize = normalizedSize;
+          }
+        }
+
+        if (Object.keys(imageConfig).length > 0) {
+          generationConfig.imageConfig = imageConfig;
+        }
+
+        // Explicitly request image output to match the Gemini image generation API shape
+        generationConfig.responseModalities = ['TEXT', 'IMAGE'];
+      } else {
+        // Only add standard generation config for non-image models
+        if (dto.temperature !== undefined) generationConfig.temperature = dto.temperature;
+        if (dto.topP !== undefined) generationConfig.topP = dto.topP;
+        if (dto.outputLength !== undefined) generationConfig.maxOutputTokens = dto.outputLength;
+      }
+
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+      // Remove role: 'user' as it can sometimes cause issues with specific models/endpoints
+      const requestBody: Record<string, unknown> = { contents: [{ parts }] };
+      if (Object.keys(generationConfig).length > 0) {
+        requestBody.generationConfig = generationConfig;
+      }
+
+      console.log('Gemini Adapter Debug:', {
+        endpoint,
+        modelName,
+        requestBody: JSON.stringify(requestBody, null, 2),
+        apiKeyPresent: !!apiKey
+      });
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -289,17 +442,13 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
           'x-goog-api-key': apiKey,
           accept: 'application/json',
         },
-        body: JSON.stringify(
-          generationConfig && Object.keys(generationConfig).length > 0
-            ? { contents: [{ role: 'user', parts }], generation_config: generationConfig }
-            : { contents: [{ role: 'user', parts }] },
-        ),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
         const error: Error & { status?: number; details?: string } = new Error(
-          `Gemini image API error ${response.status}`,
+          `Gemini image API error ${response.status}: ${text}`,
         );
         error.status = response.status;
         error.details = text;
@@ -384,7 +533,7 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     };
 
     const tryPredictModel = async (modelName: string) => {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:predict?key=${apiKey}`;
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:predict`;
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -441,10 +590,13 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     let lastError: unknown;
 
     const runModel = async (modelName: string) => {
+      // gemini-3-pro-image-preview should use generateContent endpoint (not predict)
+      // This supports references and imageConfig properly
       const isGeminiContentModel =
         modelName.startsWith('gemini-') ||
         modelName.includes('gemini') ||
-        modelName.includes('flash-image');
+        modelName.includes('flash-image') ||
+        modelName.includes('gemini-3.0-pro');
 
       const res = isGeminiContentModel
         ? await tryGenerateContent(modelName)

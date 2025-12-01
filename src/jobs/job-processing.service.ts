@@ -893,83 +893,6 @@ export class JobProcessingService {
     return undefined;
   }
 
-  private async uploadToGoogleFileApi(
-    apiKey: string,
-    data: string,
-    mimeType: string,
-  ): Promise<string> {
-    const baseUrl = 'https://generativelanguage.googleapis.com/upload/v1beta/files';
-    const buffer = Buffer.from(data, 'base64');
-    const size = buffer.length;
-
-    // 1. Start the upload
-    const startResponse = await fetch(`${baseUrl}?key=${apiKey}`, {
-      method: 'POST',
-      headers: {
-        'X-Goog-Upload-Protocol': 'resumable',
-        'X-Goog-Upload-Command': 'start',
-        'X-Goog-Upload-Header-Content-Length': size.toString(),
-        'X-Goog-Upload-Header-Content-Type': mimeType,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ display_name: `veo_ref_${Date.now()}` }),
-    });
-
-    if (!startResponse.ok) {
-      const text = await startResponse.text().catch(() => '');
-      throw new Error(`Failed to start file upload: ${startResponse.status} ${text}`);
-    }
-
-    const uploadUrl = startResponse.headers.get('x-goog-upload-url');
-    if (!uploadUrl) {
-      throw new Error('No upload URL returned from Google File API');
-    }
-
-    // 2. Upload the content
-    const uploadResponse = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Length': size.toString(),
-        'X-Goog-Upload-Offset': '0',
-        'X-Goog-Upload-Command': 'upload, finalize',
-      },
-      body: buffer,
-    });
-
-    if (!uploadResponse.ok) {
-      const text = await uploadResponse.text().catch(() => '');
-      throw new Error(`Failed to upload file content: ${uploadResponse.status} ${text}`);
-    }
-
-    const uploadResult = (await uploadResponse.json()) as Record<string, unknown>;
-    const file = this.asRecord(uploadResult.file);
-    const uri = this.pickString(file?.uri);
-
-    if (!uri) {
-      throw new Error('No file URI returned from Google File API');
-    }
-
-    // 3. Wait for file to be active (usually instant for small images)
-    let state = this.pickString(file?.state);
-    const name = this.pickString(file?.name);
-
-    if (state === 'PROCESSING' && name) {
-      const pollDeadline = Date.now() + 60000; // 1 minute timeout
-      while (state === 'PROCESSING' && Date.now() < pollDeadline) {
-        await new Promise(r => setTimeout(r, 1000));
-        const getResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}?key=${apiKey}`);
-        if (getResponse.ok) {
-          const getResult = await getResponse.json() as Record<string, unknown>;
-          state = this.pickString(getResult.state);
-          if (state === 'ACTIVE') break;
-          if (state === 'FAILED') throw new Error('File processing failed');
-        }
-      }
-    }
-
-    return uri;
-  }
-
   private async handleVeoVideoGeneration(
     jobId: string,
     prompt: string,
@@ -990,7 +913,7 @@ export class JobProcessingService {
     void _imageUrls; // Remote image URLs are not yet supported for Veo requests
 
     const apiKey = this.resolveGeminiApiKey();
-    const veoModel = model?.trim() || 'veo-3.1-generate-preview';
+    const requestedModel = model?.trim() || 'veo-3.1-generate-preview';
     const baseUrl =
       this.configService.get<string>('GEMINI_API_BASE_URL')?.trim() ||
       'https://generativelanguage.googleapis.com/v1beta';
@@ -1014,92 +937,50 @@ export class JobProcessingService {
     );
 
     const normalizedReferences = this.normalizeReferences(references);
-    const referenceImages: Array<{
-      referenceId: number;
+    const referenceImages = normalizedReferences.map((entry) => ({
       image: {
-        fileData: {
-          fileUri: string;
-          mimeType: string;
-        };
-      };
-      referenceType: string;
-    }> = [];
+        imageBytes: entry.data,
+        mimeType: entry.mimeType || 'image/png',
+      },
+      referenceType: 'ASSET',
+    }));
+    const supportsReferenceImages = requestedModel === 'veo-3.1-generate-preview';
+    const wantsReferenceImages = referenceImages.length > 0;
 
-    if (normalizedReferences.length > 0) {
-      // Upload references in parallel
-      const uploads = await Promise.all(
-        normalizedReferences.map(async (entry) => {
-          try {
-            const uri = await this.uploadToGoogleFileApi(
-              apiKey,
-              entry.data,
-              entry.mimeType || 'image/png',
-            );
-            return { uri, mimeType: entry.mimeType || 'image/png' };
-          } catch (error) {
-            this.logger.warn(`Failed to upload reference image: ${error}`);
-            return null;
-          }
-        }),
-      );
+    // Reference images are only supported on the standard Veo 3.1 model.
+    let veoModel = requestedModel;
+    let appliedReferences = [] as typeof referenceImages;
 
-      let refIdCounter = 1;
-      for (const upload of uploads) {
-        if (upload) {
-          referenceImages.push({
-            referenceId: refIdCounter++,
-            image: {
-              fileData: {
-                fileUri: upload.uri,
-                mimeType: upload.mimeType,
-              },
-            },
-            referenceType: 'REFERENCE_IMAGE_TYPE_ASSET',
-          });
-        }
+    if (wantsReferenceImages) {
+      if (!supportsReferenceImages) {
+        this.logger.warn(
+          `Reference images requested with unsupported model "${requestedModel}", switching to veo-3.1-generate-preview`,
+        );
       }
+      veoModel = 'veo-3.1-generate-preview';
+      appliedReferences = referenceImages;
     }
+    const hasReferenceImages = appliedReferences.length > 0;
 
     const instance: Record<string, unknown> = { prompt };
     if (imageBase64) {
-      try {
-        const imageUri = await this.uploadToGoogleFileApi(
-          apiKey,
-          imageBase64,
-          imageMimeType || 'image/png',
-        );
-        instance.image = {
-          fileData: {
-            fileUri: imageUri,
-            mimeType: imageMimeType || 'image/png',
-          },
-        };
-      } catch (error) {
-        this.logger.warn(`Failed to upload input image: ${error}`);
-        // Fallback to inlineData if upload fails (though likely to fail if unsupported)
-        instance.image = {
-          inlineData: {
-            data: imageBase64,
-            mimeType: imageMimeType || 'image/png',
-          },
-        };
-      }
-    }
-    if (referenceImages.length > 0) {
-      instance.referenceImages = referenceImages;
+      instance.image = {
+        imageBytes: imageBase64,
+        mimeType: imageMimeType || 'image/png',
+      };
     }
 
     const parameters: Record<string, unknown> = {};
-    const effectiveAspectRatio = referenceImages.length > 0
+    const effectiveAspectRatio = hasReferenceImages
       ? '16:9'
       : aspectRatio ?? undefined;
-    const effectiveDurationSeconds = referenceImages.length > 0
+    const effectiveDurationSeconds = hasReferenceImages
       ? 8
       : typeof durationSeconds === 'number'
         ? durationSeconds
         : undefined;
-    const effectivePersonGeneration = referenceImages.length > 0
-      ? personGeneration ?? 'allow_adult'
+    const effectivePersonGeneration = hasReferenceImages
+      ? 'allow_adult'
       : personGeneration;
 
     if (effectiveAspectRatio) parameters.aspectRatio = effectiveAspectRatio;
@@ -1110,13 +991,26 @@ export class JobProcessingService {
     if (typeof seed === 'number') parameters.seed = seed;
     if (resolution) parameters.resolution = resolution;
     if (effectivePersonGeneration) parameters.personGeneration = effectivePersonGeneration;
+    if (appliedReferences.length > 0) {
+      parameters.referenceImages = appliedReferences;
+      instance.referenceImages = appliedReferences;
+    }
 
     const requestBody: Record<string, unknown> = { instances: [instance] };
     if (Object.keys(parameters).length > 0) {
       requestBody.parameters = parameters;
     }
 
-    this.logger.log(`Veo Request Body: ${JSON.stringify(requestBody, null, 2)}`);
+    this.logger.log('Veo Request Summary', {
+      model: veoModel,
+      aspectRatio: effectiveAspectRatio,
+      durationSeconds: effectiveDurationSeconds,
+      hasReferenceImages,
+      referenceCount: referenceImages.length,
+      personGeneration: effectivePersonGeneration,
+      resolution,
+      hasInputImage: Boolean(instance.image),
+    });
 
     const createResponse = await fetch(
       `${baseUrl}/models/${veoModel}:predictLongRunning`,
@@ -1220,13 +1114,13 @@ export class JobProcessingService {
           videoUrl,
           model: veoModel,
           operationName,
-          aspectRatio: effectiveAspectRatio,
-          durationSeconds: effectiveDurationSeconds,
-          resolution,
-          providerOptions: options,
-          referenceCount: normalizedReferences.length,
-        };
-      }
+      aspectRatio: effectiveAspectRatio,
+      durationSeconds: effectiveDurationSeconds,
+      resolution,
+      providerOptions: options,
+      referenceCount: appliedReferences.length,
+    };
+  }
     }
 
     throw new Error('Timed out waiting for Veo video generation to complete');
