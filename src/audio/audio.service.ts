@@ -38,16 +38,25 @@ const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel
 @Injectable()
 export class AudioService {
   private readonly logger = new Logger(AudioService.name);
-  private readonly client: ElevenLabsClient;
+  private readonly client: ElevenLabsClient | null;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('ELEVENLABS_API_KEY');
     if (!apiKey) {
+      this.logger.warn('ElevenLabs API key not configured - audio features will be unavailable');
+      this.client = null;
+    } else {
+      this.client = new ElevenLabsClient({ apiKey });
+    }
+  }
+
+  private ensureClient(): ElevenLabsClient {
+    if (!this.client) {
       throw new ServiceUnavailableException(
         'ElevenLabs API key not configured',
       );
     }
-    this.client = new ElevenLabsClient({ apiKey });
+    return this.client;
   }
 
   private buildVoiceSummary(voice: Voice): VoiceSummary {
@@ -63,7 +72,8 @@ export class AudioService {
 
   async listVoices(): Promise<{ success: boolean; voices: VoiceSummary[] }> {
     try {
-      const response = await this.client.voices.getAll();
+      const client = this.ensureClient();
+      const response = await client.voices.getAll();
       return {
         success: true,
         voices: response.voices.map((voice) => this.buildVoiceSummary(voice)),
@@ -94,7 +104,8 @@ export class AudioService {
       `Voice ${new Date().toISOString()}`;
 
     try {
-      const response = await this.client.voices.ivc.create({
+      const client = this.ensureClient();
+      const response = await client.voices.ivc.create({
         name: resolvedName,
         description: options.description,
         labels: JSON.stringify(options.labels ?? {}),

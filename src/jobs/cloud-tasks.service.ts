@@ -83,7 +83,7 @@ export class CloudTasksService {
           jobId: job.id,
           userId,
           jobType,
-          data: serializedData,
+          data: data as Record<string, unknown>,
         };
 
         setImmediate(() => {
