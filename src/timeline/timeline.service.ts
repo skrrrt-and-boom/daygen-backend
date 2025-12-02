@@ -37,43 +37,34 @@ export class TimelineService {
         this.replicate = new Replicate({ auth: replicateToken });
     }
 
-    async createTimeline(dto: GenerateTimelineDto, userId: string): Promise<TimelineResponse> {
-        this.logger.log(`Creating timeline for topic: ${dto.topic} for user: ${userId}`);
-
-        // Create Job
-        // We need a userId. For now, we'll assume a system user or try to extract from context if available.
-        // Since the controller doesn't pass user info yet, we might need to mock it or make it optional.
-        // However, the schema requires userId on Job.
-        // I'll check if I can get the user from the request in the controller.
-        // For now, I will use a placeholder or fail if I can't get a user.
-        // Actually, the prompt implies this is a "feature" so it should be tracked.
-        // I'll update the controller to pass the user later. For now, let's assume we have a user ID or use a hardcoded one for testing if needed.
-        // But wait, the user said "I want to see it in job table".
-        // I will assume the controller will be updated to use @User() decorator.
-        // For this step, I'll add userId to the createTimeline signature.
-
-        // Wait, I can't easily change the signature without changing the controller too.
-        // I'll update the controller in the next step.
-        // For now, I'll assume a dummy user ID or look for one.
-        // Let's use a hardcoded ID for now to satisfy the constraint if I can't get it, 
-        // OR better, I'll update the controller to pass the user.
-
-        // Let's just implement the logic assuming userId is passed in DTO or a separate arg.
-        // I'll add userId as a second argument to createTimeline.
-
-        return this.createTimelineWithUser(dto, userId);
+    async getJobStatus(jobId: string) {
+        return this.prisma.job.findUnique({
+            where: { id: jobId }
+        });
     }
 
-    async createTimelineWithUser(dto: GenerateTimelineDto, userId: string): Promise<TimelineResponse> {
+    async createTimeline(dto: GenerateTimelineDto, userId: string): Promise<any> {
+        this.logger.log(`Creating timeline for topic: ${dto.topic} for user: ${userId}`);
+
         const job = await this.prisma.job.create({
             data: {
                 userId: userId,
                 type: 'CYRAN_ROLL' as any,
                 status: 'PROCESSING',
-                metadata: { topic: dto.topic, style: dto.style }
+                metadata: { topic: dto.topic, style: dto.style },
+                progress: 0
             }
         });
 
+        // Start background processing
+        this.processTimelineGeneration(job, dto).catch(err => {
+            this.logger.error(`Background generation failed for job ${job.id}`, err);
+        });
+
+        return job;
+    }
+
+    private async processTimelineGeneration(job: any, dto: GenerateTimelineDto) {
         try {
             // 1. Script Generation
             const script = await this.generateScript(dto.topic, dto.style);
@@ -95,41 +86,58 @@ export class TimelineService {
 
             for (let i = 0; i < script.length; i++) {
                 const item = script[i];
+                let voiceUrl: string | undefined;
+                let duration: number;
+                let endTime: number;
 
-                // Generate Audio
-                const speechResult = await this.audioService.generateSpeech({
-                    text: item.text,
-                    voiceId: dto.voiceId,
-                    stability: 0.5,
-                    similarityBoost: 0.75,
-                });
+                if (dto.includeNarration !== false) {
+                    // Narrative Mode
+                    const speechResult = await this.audioService.generateSpeech({
+                        text: item.text,
+                        voiceId: dto.voiceId,
+                        stability: 0.5,
+                        similarityBoost: 0.75,
+                    });
 
-                // Upload Audio
-                const buffer = Buffer.from(speechResult.audioBase64, 'base64');
-                const voiceUrl = await this.r2Service.uploadBuffer(
-                    buffer,
-                    'audio/mpeg',
-                    'generated-audio'
-                );
+                    // Upload Audio
+                    const buffer = Buffer.from(speechResult.audioBase64, 'base64');
+                    voiceUrl = await this.r2Service.uploadBuffer(
+                        buffer,
+                        'audio/mpeg',
+                        'generated-audio'
+                    );
 
-                // Duration
-                const voiceDuration = await this.getAudioDuration(buffer);
+                    // Duration
+                    const voiceDuration = await this.getAudioDuration(buffer);
 
-                // Sync
-                let endTime = currentTime + voiceDuration;
-                if (beatTimes.length > 0) {
-                    const absoluteTarget = currentTime + voiceDuration;
-                    const nextBeat = beatTimes.find(t => t > absoluteTarget);
-                    if (nextBeat) endTime = nextBeat;
+                    // Sync
+                    endTime = currentTime + voiceDuration;
+                    if (beatTimes.length > 0) {
+                        const absoluteTarget = currentTime + voiceDuration;
+                        const nextBeat = beatTimes.find(t => t > absoluteTarget);
+                        if (nextBeat) endTime = nextBeat;
+                    }
+                    duration = endTime - currentTime;
+                } else {
+                    // Music Mode (No Text)
+                    // Sync strictly to beats or default duration
+                    const minDuration = 3.0; // Minimum segment duration
+                    const targetTime = currentTime + minDuration;
+
+                    if (beatTimes.length > 0) {
+                        const nextBeat = beatTimes.find(t => t >= targetTime);
+                        endTime = nextBeat || (currentTime + minDuration);
+                    } else {
+                        endTime = currentTime + 4.0; // Default fallback
+                    }
+                    duration = endTime - currentTime;
                 }
-
-                const duration = endTime - currentTime;
 
                 segments.push({
                     index: i,
                     script: item.text,
                     visualPrompt: item.visualPrompt,
-                    voiceUrl: voiceUrl,
+                    voiceUrl: voiceUrl, // Can be undefined
                     duration: duration,
                     startTime: currentTime,
                     endTime: endTime,
@@ -156,11 +164,9 @@ export class TimelineService {
                 data: {
                     status: 'COMPLETED',
                     resultUrl: 'completed', // Placeholder or upload JSON to R2
-                    metadata: { ...job.metadata as any, response }
+                    metadata: { ...job.metadata, response }
                 }
             });
-
-            return response;
 
         } catch (error) {
             await this.prisma.job.update({

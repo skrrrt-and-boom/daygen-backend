@@ -328,6 +328,9 @@ export class R2Service {
       'video/mpeg': '.mpeg',
       'video/quicktime': '.mov',
       'video/webm': '.webm',
+      'audio/mpeg': '.mp3',
+      'audio/mp3': '.mp3',
+      'audio/wav': '.wav',
     };
     return mimeToExt[mimeType] || '.png';
   }

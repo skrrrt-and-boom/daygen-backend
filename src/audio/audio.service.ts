@@ -9,21 +9,6 @@ import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import type { Voice } from '@elevenlabs/elevenlabs-js/api';
 import type { GenerateSpeechDto } from './dto/generate-speech.dto';
 
-export interface AudioAlignment {
-  characters: string[];
-  characterStartTimesSeconds: number[];
-  characterEndTimesSeconds: number[];
-}
-
-export interface SpeechResult {
-  success: boolean;
-  audioBase64: string;
-  contentType: 'audio/mpeg';
-  voiceId: string;
-  duration: number;
-  alignment: AudioAlignment;
-}
-
 export type VoiceSummary = {
   id: string;
   name: string;
@@ -33,30 +18,29 @@ export type VoiceSummary = {
   previewUrl: string | null;
 };
 
+export type AlignmentData = {
+  characters: string[];
+  character_start_times_seconds: number[];
+  character_end_times_seconds: number[];
+};
+
 const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel
 
 @Injectable()
 export class AudioService {
   private readonly logger = new Logger(AudioService.name);
-  private readonly client: ElevenLabsClient | null;
+  private readonly client: ElevenLabsClient;
+  private readonly apiKey: string;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('ELEVENLABS_API_KEY');
     if (!apiKey) {
-      this.logger.warn('ElevenLabs API key not configured - audio features will be unavailable');
-      this.client = null;
-    } else {
-      this.client = new ElevenLabsClient({ apiKey });
-    }
-  }
-
-  private ensureClient(): ElevenLabsClient {
-    if (!this.client) {
       throw new ServiceUnavailableException(
         'ElevenLabs API key not configured',
       );
     }
-    return this.client;
+    this.apiKey = apiKey;
+    this.client = new ElevenLabsClient({ apiKey: this.apiKey });
   }
 
   private buildVoiceSummary(voice: Voice): VoiceSummary {
@@ -72,8 +56,7 @@ export class AudioService {
 
   async listVoices(): Promise<{ success: boolean; voices: VoiceSummary[] }> {
     try {
-      const client = this.ensureClient();
-      const response = await client.voices.getAll();
+      const response = await this.client.voices.getAll();
       return {
         success: true,
         voices: response.voices.map((voice) => this.buildVoiceSummary(voice)),
@@ -104,8 +87,7 @@ export class AudioService {
       `Voice ${new Date().toISOString()}`;
 
     try {
-      const client = this.ensureClient();
-      const response = await client.voices.ivc.create({
+      const response = await this.client.voices.ivc.create({
         name: resolvedName,
         description: options.description,
         labels: JSON.stringify(options.labels ?? {}),
@@ -136,71 +118,55 @@ export class AudioService {
     }
   }
 
-  async generateSpeech(dto: GenerateSpeechDto): Promise<SpeechResult> {
+  async generateSpeech(dto: GenerateSpeechDto): Promise<{
+    success: boolean;
+    audioBase64: string;
+    alignment: AlignmentData | null;
+    contentType: string;
+    voiceId: string;
+  }> {
     const voiceId = dto.voiceId?.trim() || DEFAULT_VOICE_ID;
     const modelId = dto.modelId ?? 'eleven_multilingual_v2';
 
-    try {
-      const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`;
-      const apiKey = this.configService.get<string>('ELEVENLABS_API_KEY');
+    this.logger.log(`Generating speech with timestamps for voice ${voiceId} using model ${modelId}`);
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'xi-api-key': apiKey!,
-        },
-        body: JSON.stringify({
-          text: dto.text,
-          model_id: modelId,
-          voice_settings: {
-            stability: dto.stability,
-            similarity_boost: dto.similarityBoost,
+    try {
+      // Direct fetch to accessing the with-timestamps endpoint
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'xi-api-key': this.apiKey,
           },
-        }),
-      });
+          body: JSON.stringify({
+            text: dto.text,
+            model_id: modelId,
+            voice_settings: {
+              stability: dto.stability ?? 0.5,
+              similarity_boost: dto.similarityBoost ?? 0.75,
+            },
+          }),
+        }
+      );
 
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => ({}));
-        this.logger.error(
-          `ElevenLabs API error: ${response.status} ${response.statusText}`,
-          errorBody,
-        );
+        const errorText = await response.text();
+        this.logger.error(`ElevenLabs API error: ${response.status} ${errorText}`);
         throw new ServiceUnavailableException(
-          `ElevenLabs API error: ${response.statusText}`,
+          `ElevenLabs error: ${response.status}`,
         );
       }
 
-      const data = (await response.json()) as {
-        audio_base64: string;
-        alignment: {
-          characters: string[];
-          character_start_times_seconds: number[];
-          character_end_times_seconds: number[];
-        };
-      };
-
-      const alignment: AudioAlignment = {
-        characters: data.alignment.characters,
-        characterStartTimesSeconds: data.alignment.character_start_times_seconds,
-        characterEndTimesSeconds: data.alignment.character_end_times_seconds,
-      };
-
-      // Calculate duration from the last end time, or 0 if empty
-      const duration =
-        alignment.characterEndTimesSeconds.length > 0
-          ? alignment.characterEndTimesSeconds[
-          alignment.characterEndTimesSeconds.length - 1
-          ]
-          : 0;
+      const data = await response.json();
 
       return {
         success: true,
         audioBase64: data.audio_base64,
+        alignment: data.alignment, // This is the payload we need for the Timing Map
         contentType: 'audio/mpeg',
         voiceId,
-        duration,
-        alignment,
       };
     } catch (error) {
       this.logger.error(
@@ -208,10 +174,8 @@ export class AudioService {
         error,
       );
       throw new ServiceUnavailableException(
-        `Unable to connect to ElevenLabs text-to-speech: ${error instanceof Error ? error.message : String(error)
-        }`,
+        'Unable to connect to ElevenLabs text-to-speech',
       );
     }
   }
 }
-

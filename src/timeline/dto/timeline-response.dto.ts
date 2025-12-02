@@ -1,4 +1,4 @@
-import { IsNumber, IsString, IsArray, ValidateNested } from 'class-validator';
+import { IsNumber, IsString, IsArray, ValidateNested, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class TimelineSegment {
@@ -12,7 +12,8 @@ export class TimelineSegment {
     visualPrompt: string;
 
     @IsString()
-    voiceUrl: string;
+    @IsOptional()
+    voiceUrl?: string;
 
     @IsNumber()
     duration: number;

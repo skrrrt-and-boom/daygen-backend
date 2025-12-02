@@ -145,8 +145,8 @@ describe('AudioService', () => {
     expect(result.success).toBe(true);
     expect(result.voiceId).toBe('voice-123');
     expect(result.audioBase64).toBe('base64audio');
-    expect(result.duration).toBe(0.2);
-    expect(result.alignment.characters).toEqual(['H', 'i']);
+
+    expect(result.alignment?.characters).toEqual(['H', 'i']);
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining('v1/text-to-speech/voice-123/with-timestamps'),
       expect.objectContaining({
@@ -162,6 +162,7 @@ describe('AudioService', () => {
       status: 429,
       statusText: 'Too Many Requests',
       json: jest.fn().mockResolvedValue({}),
+      text: jest.fn().mockResolvedValue('Too Many Requests'),
     });
 
     await expect(
