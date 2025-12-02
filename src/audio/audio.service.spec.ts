@@ -123,34 +123,46 @@ describe('AudioService', () => {
     }));
   });
 
-  it('generates speech and returns base64 payload', async () => {
-    const audioBuffer = Buffer.from([0, 1, 2, 3, 4]);
-
-    // Mock the stream response
-    async function* mockStream() {
-      yield audioBuffer;
-    }
-
-    mockElevenLabsClient.textToSpeech.convert.mockResolvedValue(mockStream());
+  it('generates speech with timestamps and returns SpeechResult', async () => {
+    const mockFetchResponse = {
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        audio_base64: 'base64audio',
+        alignment: {
+          characters: ['H', 'i'],
+          character_start_times_seconds: [0, 0.1],
+          character_end_times_seconds: [0.1, 0.2],
+        },
+      }),
+    };
+    global.fetch = jest.fn().mockResolvedValue(mockFetchResponse);
 
     const result = await service.generateSpeech({
-      text: 'Hello!',
+      text: 'Hi',
       voiceId: 'voice-123',
     });
 
     expect(result.success).toBe(true);
     expect(result.voiceId).toBe('voice-123');
-    expect(result.audioBase64).toEqual(audioBuffer.toString('base64'));
-    expect(mockElevenLabsClient.textToSpeech.convert).toHaveBeenCalledWith(
-      'voice-123',
+    expect(result.audioBase64).toBe('base64audio');
+    expect(result.duration).toBe(0.2);
+    expect(result.alignment.characters).toEqual(['H', 'i']);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('v1/text-to-speech/voice-123/with-timestamps'),
       expect.objectContaining({
-        text: 'Hello!',
+        method: 'POST',
+        body: expect.stringContaining('Hi'),
       }),
     );
   });
 
-  it('throws ServiceUnavailableException when ElevenLabs returns generate error', async () => {
-    mockElevenLabsClient.textToSpeech.convert.mockRejectedValue(new Error('Rate limited'));
+  it('throws ServiceUnavailableException when ElevenLabs API fails', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      json: jest.fn().mockResolvedValue({}),
+    });
 
     await expect(
       service.generateSpeech({ text: 'Hello!' }),

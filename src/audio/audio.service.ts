@@ -9,6 +9,21 @@ import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import type { Voice } from '@elevenlabs/elevenlabs-js/api';
 import type { GenerateSpeechDto } from './dto/generate-speech.dto';
 
+export interface AudioAlignment {
+  characters: string[];
+  characterStartTimesSeconds: number[];
+  characterEndTimesSeconds: number[];
+}
+
+export interface SpeechResult {
+  success: boolean;
+  audioBase64: string;
+  contentType: 'audio/mpeg';
+  voiceId: string;
+  duration: number;
+  alignment: AudioAlignment;
+}
+
 export type VoiceSummary = {
   id: string;
   name: string;
@@ -110,47 +125,80 @@ export class AudioService {
     }
   }
 
-  async generateSpeech(dto: GenerateSpeechDto): Promise<{
-    success: boolean;
-    audioBase64: string;
-    contentType: string;
-    voiceId: string;
-  }> {
+  async generateSpeech(dto: GenerateSpeechDto): Promise<SpeechResult> {
     const voiceId = dto.voiceId?.trim() || DEFAULT_VOICE_ID;
+    const modelId = dto.modelId ?? 'eleven_multilingual_v2';
 
     try {
-      const response = await this.client.textToSpeech.convert(voiceId, {
-        text: dto.text,
-        modelId: dto.modelId ?? 'eleven_multilingual_v2',
-        voiceSettings: {
-          stability: dto.stability,
-          similarityBoost: dto.similarityBoost,
+      const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`;
+      const apiKey = this.configService.get<string>('ELEVENLABS_API_KEY');
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': apiKey!,
         },
+        body: JSON.stringify({
+          text: dto.text,
+          model_id: modelId,
+          voice_settings: {
+            stability: dto.stability,
+            similarity_boost: dto.similarityBoost,
+          },
+        }),
       });
 
-      const chunks: Buffer[] = [];
-      for await (const chunk of response) {
-        chunks.push(Buffer.from(chunk));
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        this.logger.error(
+          `ElevenLabs API error: ${response.status} ${response.statusText}`,
+          errorBody,
+        );
+        throw new ServiceUnavailableException(
+          `ElevenLabs API error: ${response.statusText}`,
+        );
       }
-      const buffer = Buffer.concat(chunks);
+
+      const data = (await response.json()) as {
+        audio_base64: string;
+        alignment: {
+          characters: string[];
+          character_start_times_seconds: number[];
+          character_end_times_seconds: number[];
+        };
+      };
+
+      const alignment: AudioAlignment = {
+        characters: data.alignment.characters,
+        characterStartTimesSeconds: data.alignment.character_start_times_seconds,
+        characterEndTimesSeconds: data.alignment.character_end_times_seconds,
+      };
+
+      // Calculate duration from the last end time, or 0 if empty
+      const duration =
+        alignment.characterEndTimesSeconds.length > 0
+          ? alignment.characterEndTimesSeconds[
+          alignment.characterEndTimesSeconds.length - 1
+          ]
+          : 0;
 
       return {
         success: true,
-        audioBase64: buffer.toString('base64'),
+        audioBase64: data.audio_base64,
         contentType: 'audio/mpeg',
         voiceId,
+        duration,
+        alignment,
       };
     } catch (error) {
       this.logger.error(
         `Failed to generate speech for voice ${voiceId}`,
         error,
       );
-      // Log detailed error if available
-      if (error && typeof error === 'object' && 'body' in error) {
-        this.logger.error(`ElevenLabs Error Body: ${JSON.stringify(error.body)}`);
-      }
       throw new ServiceUnavailableException(
-        `Unable to connect to ElevenLabs text-to-speech: ${error instanceof Error ? error.message : String(error)}`,
+        `Unable to connect to ElevenLabs text-to-speech: ${error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
   }
