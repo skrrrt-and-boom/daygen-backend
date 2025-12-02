@@ -32,4 +32,7 @@ export class TimelineResponse {
 
     @IsNumber()
     totalDuration: number;
+
+    @IsString()
+    musicUrl: string;
 }

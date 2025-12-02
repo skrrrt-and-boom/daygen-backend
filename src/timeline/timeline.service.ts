@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { ConfigService } from '@nestjs/config';
 import { AudioService } from '../audio/audio.service';
+import { MusicService } from '../audio/music.service';
 import { R2Service } from '../upload/r2.service';
 import { GenerateTimelineDto } from './dto/generate-timeline.dto';
 import { TimelineResponse, TimelineSegment } from './dto/timeline-response.dto';
@@ -24,6 +25,7 @@ export class TimelineService {
 
     constructor(
         private readonly audioService: AudioService,
+        private readonly musicService: MusicService,
         private readonly configService: ConfigService,
         private readonly r2Service: R2Service,
         private readonly prisma: PrismaService,
@@ -81,7 +83,7 @@ export class TimelineService {
             let currentTime = 0;
 
             // 2. Audio Gen & Beat Sync
-            const musicUrl = dto.musicId;
+            const musicUrl = this.musicService.getBackgroundTrack(dto.style || 'upbeat');
             let beatTimes: number[] = [];
             if (musicUrl) {
                 try {
@@ -143,9 +145,10 @@ export class TimelineService {
                 });
             }
 
-            const response = {
+            const response: TimelineResponse = {
                 segments,
                 totalDuration: currentTime,
+                musicUrl,
             };
 
             await this.prisma.job.update({
