@@ -230,10 +230,19 @@ export class TimelineService {
       Style: ${style}.
       Target Length: ${duration} (${targetSegments} segments).
       
-      NOTE: We are using the ElevenLabs v3 model for speech synthesis. You can use more natural phrasing, pauses, and emotional cues as this model handles them exceptionally well.
-
+      NOTE: We are using the ElevenLabs v3 model for speech synthesis. This model supports advanced audio tags for emotional control and sound effects.
+      
+      Please incorporate the following tags naturally into the "text" where appropriate to enhance the storytelling:
+      - Emotion: [laughs], [laughs harder], [whispers], [sighs], [exhales], [crying], [excited], [sarcastic], [curious]
+      - Pacing: [pause] (e.g. "Wait... [pause] did you hear that?")
+      
+      Guidelines for "text":
+      - Write in a natural, conversational, or narrative style.
+      - Use the tags to add life to the script (e.g., "[whispers] I have a secret to tell you.", "This is amazing! [laughs]").
+      - Do NOT overuse tags; use them effectively for emphasis.
+      
       The output must be a JSON array of EXACTLY ${targetSegments} objects, where each object has:
-      - "text": The spoken narration for this segment.
+      - "text": The spoken narration for this segment (including tags).
       - "visualPrompt": A cinematic, detailed visual description for an AI image generator.
       
       Keep it punchy and engaging.
