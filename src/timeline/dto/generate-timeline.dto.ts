@@ -20,4 +20,8 @@ export class GenerateTimelineDto {
     @IsOptional()
     @IsBoolean()
     includeNarration?: boolean = true;
+
+    @IsString()
+    @IsOptional()
+    duration?: 'short' | 'medium' | 'long';
 }

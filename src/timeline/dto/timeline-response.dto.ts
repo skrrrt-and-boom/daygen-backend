@@ -15,6 +15,10 @@ export class TimelineSegment {
     @IsOptional()
     voiceUrl?: string;
 
+    @IsString()
+    @IsOptional()
+    imageUrl?: string;
+
     @IsNumber()
     duration: number;
 

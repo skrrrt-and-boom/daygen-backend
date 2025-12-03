@@ -179,7 +179,7 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
   }
 
   canHandleModel(model: string): boolean {
-    return model === 'gemini-3-pro-image-preview' || model === 'gemini-3.0-pro-image';
+    return model === 'gemini-3-pro-image-preview' || model === 'gemini-3.0-pro-image' || model === 'nano-banana-pro';
   }
 
   validateOptions(dto: ProviderGenerateDto): void {
@@ -240,6 +240,7 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     const modelMap: Record<string, string> = {
       'gemini-3.0-pro-preview': 'gemini-3-pro-image-preview',
       'gemini-3.0-pro-image': 'gemini-3-pro-image-preview',
+      'nano-banana-pro': 'gemini-3-pro-image-preview',
     };
     const requestedModel = dto.model?.trim();
     const primaryModel = requestedModel ? (modelMap[requestedModel] || requestedModel) : 'gemini-3-pro-image-preview';

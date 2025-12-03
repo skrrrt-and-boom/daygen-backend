@@ -126,7 +126,11 @@ export class AudioService {
     voiceId: string;
   }> {
     const voiceId = dto.voiceId?.trim() || DEFAULT_VOICE_ID;
-    const modelId = dto.modelId ?? 'eleven_multilingual_v2';
+    const modelId = dto.modelId ?? 'eleven_v3';
+
+    if (modelId === 'eleven_v3') {
+      this.logger.warn('Using eleven_v3 (Alpha) model. Be aware of potential latency or character limits.');
+    }
 
     this.logger.log(`Generating speech with timestamps for voice ${voiceId} using model ${modelId}`);
 

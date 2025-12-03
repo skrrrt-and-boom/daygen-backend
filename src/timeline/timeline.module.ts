@@ -8,8 +8,11 @@ import { TimelineController } from './timeline.controller';
 
 import { PrismaModule } from '../prisma/prisma.module';
 
+import { GenerationModule } from '../generation/generation.module';
+import { UsersModule } from '../users/users.module';
+
 @Module({
-    imports: [ConfigModule, AudioModule, UploadModule, PrismaModule],
+    imports: [ConfigModule, AudioModule, UploadModule, PrismaModule, GenerationModule, UsersModule],
     controllers: [TimelineController],
     providers: [TimelineService],
     exports: [TimelineService],

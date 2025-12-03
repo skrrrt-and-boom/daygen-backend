@@ -1,5 +1,7 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { GenerationOrchestrator } from '../generation/generation.orchestrator';
+import { UsersService } from '../users/users.service';
 
 import { ConfigService } from '@nestjs/config';
 import { AudioService } from '../audio/audio.service';
@@ -29,6 +31,8 @@ export class TimelineService {
         private readonly configService: ConfigService,
         private readonly r2Service: R2Service,
         private readonly prisma: PrismaService,
+        private readonly generationOrchestrator: GenerationOrchestrator,
+        private readonly usersService: UsersService,
     ) {
         const replicateToken = this.configService.get<string>('REPLICATE_API_TOKEN');
         if (!replicateToken) {
@@ -66,14 +70,15 @@ export class TimelineService {
 
     private async processTimelineGeneration(job: any, dto: GenerateTimelineDto) {
         try {
+            // 0. Fetch User
+            const user = await this.usersService.findById(job.userId);
+            if (!user) throw new Error('User not found');
+
             // 1. Script Generation
-            const script = await this.generateScript(dto.topic, dto.style);
+            const script = await this.generateScript(dto.topic, dto.style, dto.duration);
             this.logger.log(`Generated script with ${script.length} segments`);
 
-            const segments: TimelineSegment[] = [];
-            let currentTime = 0;
-
-            // 2. Audio Gen & Beat Sync
+            // 2. Audio Gen & Beat Sync Setup
             const musicUrl = this.musicService.getBackgroundTrack(dto.style || 'upbeat');
             let beatTimes: number[] = [];
             if (musicUrl) {
@@ -84,75 +89,103 @@ export class TimelineService {
                 }
             }
 
-            for (let i = 0; i < script.length; i++) {
-                const item = script[i];
-                let voiceUrl: string | undefined;
+            // 3. PHASE 1 - PARALLEL GENERATION
+            this.logger.log('Starting parallel generation phase...');
+            const segmentResults = await Promise.all(script.map(async (item, index) => {
+                try {
+                    // Parallel: Audio & Visuals
+                    const [speechResult, visualResult] = await Promise.all([
+                        // Audio Generation
+                        (async () => {
+                            if (dto.includeNarration === false) return null;
+                            const result = await this.audioService.generateSpeech({
+                                text: item.text,
+                                voiceId: dto.voiceId,
+                                stability: 0.5,
+                                similarityBoost: 0.75,
+                            });
+                            const buffer = Buffer.from(result.audioBase64, 'base64');
+                            const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
+                            const duration = await this.getAudioDuration(buffer);
+                            return { url, duration };
+                        })(),
+                        // Visual Generation
+                        this.generationOrchestrator.generate(user, {
+                            model: 'nano-banana-pro',
+                            prompt: item.visualPrompt,
+                            providerOptions: { aspectRatio: '9:16' }
+                        }, { cost: 1, isJob: true }).catch(err => {
+                            this.logger.error(`Visual generation failed for segment ${index}`, err);
+                            return null;
+                        })
+                    ]);
+
+                    return {
+                        item,
+                        voiceUrl: speechResult?.url,
+                        audioDuration: speechResult?.duration,
+                        imageUrl: visualResult?.assets?.[0]?.r2FileUrl ?? visualResult?.assets?.[0]?.remoteUrl ?? visualResult?.assets?.[0]?.dataUrl,
+                        index
+                    };
+                } catch (err) {
+                    this.logger.error(`Segment ${index} generation failed`, err);
+                    return {
+                        item,
+                        error: true,
+                        index
+                    };
+                }
+            }));
+
+            // 4. PHASE 2 - SEQUENTIAL TIMING
+            const segments: TimelineSegment[] = [];
+            let currentTime = 0;
+
+            for (const result of segmentResults) {
+                if (result.error) continue; // Skip failed segments or handle gracefully
+
+                const { item, voiceUrl, audioDuration, imageUrl } = result;
                 let duration: number;
                 let endTime: number;
 
-                if (dto.includeNarration !== false) {
-                    // Narrative Mode
-                    const speechResult = await this.audioService.generateSpeech({
-                        text: item.text,
-                        voiceId: dto.voiceId,
-                        stability: 0.5,
-                        similarityBoost: 0.75,
-                    });
-
-                    // Upload Audio
-                    const buffer = Buffer.from(speechResult.audioBase64, 'base64');
-                    voiceUrl = await this.r2Service.uploadBuffer(
-                        buffer,
-                        'audio/mpeg',
-                        'generated-audio'
-                    );
-
-                    // Duration
-                    const voiceDuration = await this.getAudioDuration(buffer);
-
-                    // Sync
-                    endTime = currentTime + voiceDuration;
+                if (dto.includeNarration !== false && audioDuration) {
+                    // Narrative Mode Sync
+                    endTime = currentTime + audioDuration;
                     if (beatTimes.length > 0) {
-                        const absoluteTarget = currentTime + voiceDuration;
+                        const absoluteTarget = currentTime + audioDuration;
                         const nextBeat = beatTimes.find(t => t > absoluteTarget);
                         if (nextBeat) endTime = nextBeat;
                     }
                     duration = endTime - currentTime;
                 } else {
-                    // Music Mode (No Text)
-                    // Sync strictly to beats or default duration
-                    const minDuration = 3.0; // Minimum segment duration
+                    // Music Mode Sync
+                    const minDuration = 3.0;
                     const targetTime = currentTime + minDuration;
 
                     if (beatTimes.length > 0) {
                         const nextBeat = beatTimes.find(t => t >= targetTime);
                         endTime = nextBeat || (currentTime + minDuration);
                     } else {
-                        endTime = currentTime + 4.0; // Default fallback
+                        endTime = currentTime + 4.0;
                     }
                     duration = endTime - currentTime;
                 }
 
                 segments.push({
-                    index: i,
+                    index: segments.length,
                     script: item.text,
                     visualPrompt: item.visualPrompt,
-                    voiceUrl: voiceUrl, // Can be undefined
+                    voiceUrl: voiceUrl,
+                    imageUrl: imageUrl, // Add image URL
                     duration: duration,
                     startTime: currentTime,
                     endTime: endTime,
                 });
 
                 currentTime = endTime;
-
-                // Update Progress
-                const progress = Math.round(((i + 1) / script.length) * 100);
-                await this.prisma.job.update({
-                    where: { id: job.id },
-                    data: { progress }
-                });
             }
 
+            // 5. Finalize
             const response: TimelineResponse = {
                 segments,
                 totalDuration: currentTime,
@@ -163,12 +196,14 @@ export class TimelineService {
                 where: { id: job.id },
                 data: {
                     status: 'COMPLETED',
-                    resultUrl: 'completed', // Placeholder or upload JSON to R2
+                    resultUrl: 'completed',
+                    progress: 100,
                     metadata: { ...job.metadata, response }
                 }
             });
 
         } catch (error) {
+            this.logger.error(`Job ${job.id} failed`, error);
             await this.prisma.job.update({
                 where: { id: job.id },
                 data: {
@@ -180,13 +215,24 @@ export class TimelineService {
         }
     }
 
-    private async generateScript(topic: string, style: string): Promise<{ text: string; visualPrompt: string }[]> {
+    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<{ text: string; visualPrompt: string }[]> {
         const modelId = this.configService.get<string>('REPLICATE_MODEL_ID') || 'openai/gpt-5';
+
+        const segmentCounts = {
+            short: 3,
+            medium: 6,
+            long: 12
+        };
+        const targetSegments = segmentCounts[duration] || 6;
 
         const prompt = `
       Generate a script for a viral TikTok video about "${topic}".
       Style: ${style}.
-      The output must be a JSON array of objects, where each object has:
+      Target Length: ${duration} (${targetSegments} segments).
+      
+      NOTE: We are using the ElevenLabs v3 model for speech synthesis. You can use more natural phrasing, pauses, and emotional cues as this model handles them exceptionally well.
+
+      The output must be a JSON array of EXACTLY ${targetSegments} objects, where each object has:
       - "text": The spoken narration for this segment.
       - "visualPrompt": A cinematic, detailed visual description for an AI image generator.
       
