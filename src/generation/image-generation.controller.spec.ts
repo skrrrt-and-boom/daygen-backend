@@ -77,7 +77,7 @@ describe('ImageGenerationController', () => {
                 mockUser.authUserId,
                 expect.objectContaining({
                     provider: 'flux',
-                    model: 'flux.2',
+                    model: 'flux-2-pro',
                 }),
             );
         });
@@ -90,14 +90,14 @@ describe('ImageGenerationController', () => {
         });
 
         it('should allow valid models', async () => {
-            const dto: ProviderGenerateDto = { prompt: 'test', model: 'flux.2', providerOptions: {} };
+            const dto: ProviderGenerateDto = { prompt: 'test', model: 'flux-2-pro', providerOptions: {} };
             await controller.generate('flux', mockUser, dto);
 
             expect(cloudTasksService.createImageGenerationJob).toHaveBeenCalledWith(
                 mockUser.authUserId,
                 expect.objectContaining({
                     provider: 'flux',
-                    model: 'flux.2',
+                    model: 'flux-2-pro',
                 }),
             );
         });
