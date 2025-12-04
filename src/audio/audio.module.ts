@@ -9,6 +9,7 @@ import { AuthModule } from '../auth/auth.module';
   imports: [ConfigModule, AuthModule, UploadModule],
   controllers: [AudioController],
   providers: [AudioService],
+  exports: [AudioService],
 })
 export class AudioModule {}
 
