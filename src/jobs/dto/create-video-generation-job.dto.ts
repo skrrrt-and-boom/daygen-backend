@@ -18,4 +18,9 @@ export class CreateVideoGenerationJobDto {
   @IsArray()
   @IsString({ each: true })
   imageUrls?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  references?: string[];
 }

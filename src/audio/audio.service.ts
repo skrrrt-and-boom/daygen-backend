@@ -10,9 +10,18 @@ import type { Voice } from '@elevenlabs/elevenlabs-js/api';
 import type { GenerateSpeechDto } from './dto/generate-speech.dto';
 
 export type VoiceSummary = {
-  voice_id: string;
+  id: string;
   name: string;
-  category: string;
+  description: string | null;
+  category: string | null;
+  labels: Record<string, string>;
+  previewUrl: string | null;
+};
+
+export type AlignmentData = {
+  characters: string[];
+  character_start_times_seconds: number[];
+  character_end_times_seconds: number[];
 };
 
 const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel
@@ -21,14 +30,17 @@ const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel
 export class AudioService {
   private readonly logger = new Logger(AudioService.name);
   private readonly client: ElevenLabsClient | null;
+  private readonly apiKey: string | null;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('ELEVENLABS_API_KEY');
     if (!apiKey) {
       this.logger.warn('ElevenLabs API key not configured - audio features will be unavailable');
       this.client = null;
+      this.apiKey = null;
     } else {
-      this.client = new ElevenLabsClient({ apiKey });
+      this.apiKey = apiKey;
+      this.client = new ElevenLabsClient({ apiKey: this.apiKey });
     }
   }
 
@@ -43,9 +55,12 @@ export class AudioService {
 
   private buildVoiceSummary(voice: Voice): VoiceSummary {
     return {
-      voice_id: voice.voiceId,
+      id: voice.voiceId,
       name: voice.name ?? 'Unknown Voice',
-      category: voice.category ?? 'premade',
+      description: voice.description ?? null,
+      category: voice.category ?? null,
+      labels: voice.labels ?? {},
+      previewUrl: voice.previewUrl ?? null,
     };
   }
 
@@ -55,10 +70,10 @@ export class AudioService {
       return {
         success: true,
         voices: [
-          { voice_id: 'mock-1', name: 'Rachel (Mock)', category: 'premade' },
-          { voice_id: 'mock-2', name: 'Drew (Mock)', category: 'premade' },
-          { voice_id: 'mock-3', name: 'Clyde (Mock)', category: 'premade' },
-          { voice_id: 'mock-4', name: 'Mimi (Mock)', category: 'cloned' },
+          { id: 'mock-1', name: 'Rachel (Mock)', category: 'premade', description: null, labels: {}, previewUrl: null },
+          { id: 'mock-2', name: 'Drew (Mock)', category: 'premade', description: null, labels: {}, previewUrl: null },
+          { id: 'mock-3', name: 'Clyde (Mock)', category: 'premade', description: null, labels: {}, previewUrl: null },
+          { id: 'mock-4', name: 'Mimi (Mock)', category: 'cloned', description: null, labels: {}, previewUrl: null },
         ],
       };
     }
@@ -109,9 +124,12 @@ export class AudioService {
       // The SDK response only contains voiceId and requiresVerification.
       // We construct the summary from the input data and the new ID.
       const summary: VoiceSummary = {
-        voice_id: response.voiceId,
+        id: response.voiceId,
         name: resolvedName,
+        description: options.description ?? null,
         category: 'generated', // Default category for cloned voices
+        labels: options.labels ?? {},
+        previewUrl: null, // No preview URL immediately available
       };
 
       return {
@@ -133,46 +151,71 @@ export class AudioService {
   async generateSpeech(dto: GenerateSpeechDto): Promise<{
     success: boolean;
     audioBase64: string;
+    alignment: AlignmentData | null;
     contentType: string;
     voiceId: string;
   }> {
     const voiceId = dto.voiceId?.trim() || DEFAULT_VOICE_ID;
 
-    if (!this.client) {
+    if (!this.client || !this.apiKey) {
       this.logger.warn('Returning mock audio because ElevenLabs API key is missing');
       // Return a short silent MP3 base64
       // This is a minimal valid MP3 frame
       const mockAudioBase64 =
         '//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
-      
+
       return {
         success: true,
         audioBase64: mockAudioBase64,
+        alignment: null,
         contentType: 'audio/mpeg',
         voiceId,
       };
     }
 
-    try {
-      const client = this.ensureClient();
-      const response = await client.textToSpeech.convert(voiceId, {
-        text: dto.text,
-        modelId: dto.modelId ?? 'eleven_multilingual_v2',
-        voiceSettings: {
-          stability: dto.stability,
-          similarityBoost: dto.similarityBoost,
-        },
-      });
+    const modelId = dto.modelId ?? 'eleven_v3';
 
-      const chunks: Buffer[] = [];
-      for await (const chunk of response) {
-        chunks.push(Buffer.from(chunk));
+    if (modelId === 'eleven_v3') {
+      this.logger.warn('Using eleven_v3 (Alpha) model. Be aware of potential latency or character limits.');
+    }
+
+    this.logger.log(`Generating speech with timestamps for voice ${voiceId} using model ${modelId}`);
+
+    try {
+      // Direct fetch to accessing the with-timestamps endpoint
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'xi-api-key': this.apiKey,
+          },
+          body: JSON.stringify({
+            text: dto.text,
+            model_id: modelId,
+            voice_settings: {
+              stability: dto.stability ?? 0.5,
+              similarity_boost: dto.similarityBoost ?? 0.75,
+            },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.error(`ElevenLabs API error: ${response.status} ${errorText}`);
+        throw new ServiceUnavailableException(
+          `ElevenLabs error: ${response.status}`,
+        );
       }
-      const buffer = Buffer.concat(chunks);
+
+      const data = await response.json();
 
       return {
         success: true,
-        audioBase64: buffer.toString('base64'),
+        audioBase64: data.audio_base64,
+        alignment: data.alignment, // This is the payload we need for the Timing Map
         contentType: 'audio/mpeg',
         voiceId,
       };

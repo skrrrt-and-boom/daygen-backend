@@ -146,7 +146,7 @@ export class R2Service {
   }
 
   /**
-   * Upload a base64 file (image, audio, or video) to R2
+   * Upload a base64 image to R2
    */
   async uploadBase64Image(
     base64Data: string,
@@ -154,8 +154,8 @@ export class R2Service {
     folder: string = 'generated-images',
     customFilename?: string,
   ): Promise<string> {
-    // Remove data URL prefix if present (supports image, audio, and video)
-    const base64 = base64Data.replace(/^data:(image|audio|video)\/[a-z0-9+-]+;base64,/i, '');
+    // Remove data URL prefix if present
+    const base64 = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
 
     const fileExtension = this.getFileExtensionFromMimeType(mimeType);
@@ -281,12 +281,7 @@ export class R2Service {
    * Check if a URL is a base64 data URL (should not be stored in database)
    */
   isBase64Url(url: string): boolean {
-    return Boolean(
-      url &&
-        (url.startsWith('data:image/') ||
-          url.startsWith('data:audio/') ||
-          url.startsWith('data:video/')),
-    );
+    return Boolean(url && url.startsWith('data:image/'));
   }
 
   /**
@@ -323,39 +318,20 @@ export class R2Service {
 
   private getFileExtensionFromMimeType(mimeType: string): string {
     const mimeToExt: Record<string, string> = {
-      // Image types
       'image/jpeg': '.jpg',
       'image/jpg': '.jpg',
       'image/png': '.png',
       'image/gif': '.gif',
       'image/webp': '.webp',
       'image/svg+xml': '.svg',
-      // Video types
       'video/mp4': '.mp4',
       'video/mpeg': '.mpeg',
       'video/quicktime': '.mov',
       'video/webm': '.webm',
-      // Audio types
-      'audio/webm': '.webm',
       'audio/mpeg': '.mp3',
       'audio/mp3': '.mp3',
       'audio/wav': '.wav',
-      'audio/wave': '.wav',
-      'audio/x-wav': '.wav',
-      'audio/mp4': '.m4a',
-      'audio/m4a': '.m4a',
-      'audio/ogg': '.ogg',
-      'audio/opus': '.opus',
-      'audio/aac': '.aac',
-      'audio/flac': '.flac',
     };
-    // Default to appropriate extension based on MIME type category
-    if (mimeType.startsWith('audio/')) {
-      return mimeToExt[mimeType] || '.webm';
-    }
-    if (mimeType.startsWith('video/')) {
-      return mimeToExt[mimeType] || '.mp4';
-    }
     return mimeToExt[mimeType] || '.png';
   }
 }

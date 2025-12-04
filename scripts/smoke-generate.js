@@ -27,7 +27,7 @@ async function testRealJob() {
     console.log('\n2. Creating real image generation job...');
     const jobResponse = await axios.post(`${baseURL}/jobs/image-generation`, {
       prompt: 'A beautiful sunset over mountains',
-      model: 'flux-1.1',
+      model: 'flux-2-pro',
       provider: 'flux',
       options: { width: 512, height: 512 }
     }, {
@@ -87,5 +87,4 @@ if (require.main === module) {
 }
 
 module.exports = { testRealJob };
-
 

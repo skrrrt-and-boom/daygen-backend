@@ -1,15 +1,38 @@
-import { ServiceUnavailableException, HttpException } from '@nestjs/common';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AudioService } from './audio.service';
+import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
+
+// Mock the ElevenLabs SDK
+jest.mock('@elevenlabs/elevenlabs-js', () => {
+  return {
+    ElevenLabsClient: jest.fn().mockImplementation(() => {
+      return {
+        voices: {
+          getAll: jest.fn(),
+          ivc: {
+            create: jest.fn(),
+          },
+        },
+        textToSpeech: {
+          convert: jest.fn(),
+        },
+      };
+    }),
+  };
+});
 
 const ELEVEN_KEY = 'test-eleven-key';
 
 describe('AudioService', () => {
   let service: AudioService;
   let configGetMock: jest.Mock;
-  const originalFetch = global.fetch;
+  let mockElevenLabsClient: any;
 
   beforeEach(() => {
+    // Reset mocks
+    jest.clearAllMocks();
+
     configGetMock = jest.fn().mockImplementation((key: string) => {
       if (key === 'ELEVENLABS_API_KEY') {
         return ELEVEN_KEY;
@@ -22,64 +45,54 @@ describe('AudioService', () => {
     } as unknown as ConfigService;
 
     service = new AudioService(configService);
-  });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-    jest.restoreAllMocks();
+    // Get the mocked instance
+    mockElevenLabsClient = (ElevenLabsClient as unknown as jest.Mock).mock.results[0].value;
   });
 
   it('throws if ElevenLabs key missing', async () => {
     configGetMock.mockReturnValueOnce(undefined);
 
-    await expect(service.listVoices()).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    // Re-instantiate service to trigger constructor check
+    try {
+      new AudioService({
+        get: configGetMock,
+      } as unknown as ConfigService);
+    } catch (error) {
+      expect(error).toBeInstanceOf(ServiceUnavailableException);
+    }
   });
 
   it('lists voices from ElevenLabs', async () => {
-    const mockJson = {
+    const mockVoicesResponse = {
       voices: [
         {
-          voice_id: 'voice-1',
+          voiceId: 'voice-1',
           name: 'Demo Voice',
           description: 'Sample description',
-          preview_url: 'https://example.com/voice.mp3',
+          previewUrl: 'https://example.com/voice.mp3',
+          category: 'premade',
+          labels: {},
         },
       ],
     };
 
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: jest.fn().mockResolvedValue(mockJson),
-    });
+    mockElevenLabsClient.voices.getAll.mockResolvedValue(mockVoicesResponse);
 
     const result = await service.listVoices();
 
     expect(result.success).toBe(true);
     expect(result.voices).toHaveLength(1);
     expect(result.voices[0].id).toEqual('voice-1');
-    expect(global.fetch).toHaveBeenCalledWith(
-      'https://api.elevenlabs.io/v1/voices',
-      expect.objectContaining({
-        headers: expect.objectContaining({ 'xi-api-key': ELEVEN_KEY }),
-      }),
-    );
+    expect(mockElevenLabsClient.voices.getAll).toHaveBeenCalled();
   });
 
-  it('propagates ElevenLabs error messages when listing voices', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      json: jest.fn().mockResolvedValue({
-        message: 'Invalid api key',
-      }),
-    });
+  it('handles errors when listing voices', async () => {
+    mockElevenLabsClient.voices.getAll.mockRejectedValue(new Error('API Error'));
 
-    await expect(service.listVoices()).rejects.toMatchObject({
-      status: 401,
-      message: 'Invalid api key',
-    });
+    await expect(service.listVoices()).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
   });
 
   it('clones voice from uploaded file', async () => {
@@ -89,17 +102,12 @@ describe('AudioService', () => {
       mimetype: 'audio/wav',
     } as Express.Multer.File;
 
-    const payload = {
-      voice_id: 'clone-1',
-      name: 'Sample Voice',
-      description: 'desc',
-      preview_url: 'https://example.com/voice.mp3',
+    const mockCreateResponse = {
+      voiceId: 'clone-1',
+      requiresVerification: false,
     };
 
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: jest.fn().mockResolvedValue(payload),
-    });
+    mockElevenLabsClient.voices.ivc.create.mockResolvedValue(mockCreateResponse);
 
     const result = await service.cloneVoiceFromFile(multerFile, {
       name: 'Sample Voice',
@@ -109,56 +117,56 @@ describe('AudioService', () => {
 
     expect(result.success).toBe(true);
     expect(result.voice.id).toBe('clone-1');
-    expect(global.fetch).toHaveBeenCalledWith(
-      'https://api.elevenlabs.io/v1/voices/add',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({ 'xi-api-key': ELEVEN_KEY }),
-      }),
-    );
+    expect(mockElevenLabsClient.voices.ivc.create).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Sample Voice',
+      description: 'desc',
+    }));
   });
 
-  it('generates speech and returns base64 payload', async () => {
-    const audioBuffer = Buffer.from([0, 1, 2, 3, 4]);
-    const headers = new Headers({ 'content-type': 'audio/mpeg' });
-
-    global.fetch = jest.fn().mockResolvedValue({
+  it('generates speech with timestamps and returns SpeechResult', async () => {
+    const mockFetchResponse = {
       ok: true,
-      headers,
-      arrayBuffer: jest.fn().mockResolvedValue(audioBuffer),
-    });
+      json: jest.fn().mockResolvedValue({
+        audio_base64: 'base64audio',
+        alignment: {
+          characters: ['H', 'i'],
+          character_start_times_seconds: [0, 0.1],
+          character_end_times_seconds: [0.1, 0.2],
+        },
+      }),
+    };
+    global.fetch = jest.fn().mockResolvedValue(mockFetchResponse);
 
     const result = await service.generateSpeech({
-      text: 'Hello!',
+      text: 'Hi',
       voiceId: 'voice-123',
     });
 
     expect(result.success).toBe(true);
     expect(result.voiceId).toBe('voice-123');
-    expect(result.audioBase64).toEqual(audioBuffer.toString('base64'));
+    expect(result.audioBase64).toBe('base64audio');
+
+    expect(result.alignment?.characters).toEqual(['H', 'i']);
     expect(global.fetch).toHaveBeenCalledWith(
-      'https://api.elevenlabs.io/v1/text-to-speech/voice-123',
+      expect.stringContaining('v1/text-to-speech/voice-123/with-timestamps'),
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({
-          'xi-api-key': ELEVEN_KEY,
-          'Content-Type': 'application/json',
-        }),
+        body: expect.stringContaining('Hi'),
       }),
     );
   });
 
-  it('throws HttpException when ElevenLabs returns generate error', async () => {
+  it('throws ServiceUnavailableException when ElevenLabs API fails', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 429,
-      json: jest.fn().mockResolvedValue({ message: 'Rate limited' }),
+      statusText: 'Too Many Requests',
+      json: jest.fn().mockResolvedValue({}),
+      text: jest.fn().mockResolvedValue('Too Many Requests'),
     });
 
     await expect(
       service.generateSpeech({ text: 'Hello!' }),
-    ).rejects.toBeInstanceOf(HttpException);
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });
-
-

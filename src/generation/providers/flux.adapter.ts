@@ -15,18 +15,23 @@ import { safeDownload, toDataUrl } from '../safe-fetch';
 const FLUX_OPTION_KEYS = [
   'width',
   'height',
-  'aspect_ratio',
-  'raw',
-  'image_prompt',
-  'image_prompt_strength',
+  'seed',
+  'guidance',
+  'steps',
+  'prompt_upsampling',
+  'safety_tolerance',
+  'output_format',
   'input_image',
   'input_image_2',
   'input_image_3',
   'input_image_4',
-  'seed',
-  'output_format',
-  'prompt_upsampling',
-  'safety_tolerance',
+  'input_image_5',
+  'input_image_6',
+  'input_image_7',
+  'input_image_8',
+  'input_image_blob_path',
+  'webhook_url',
+  'webhook_secret',
 ] as const;
 
 const FLUX_POLL_INTERVAL_MS = 5000;
@@ -66,13 +71,37 @@ export class FluxImageAdapter implements ImageProviderAdapter {
       if (v < 64 || v > 2048) {
         throw badRequest(`${name} must be between 64 and 2048`);
       }
+      if (v % 16 !== 0) {
+        throw badRequest(`${name} must be a multiple of 16 for FLUX.2`);
+      }
     };
     checkDim(width, 'width');
     checkDim(height, 'height');
+
     const ar = opts['aspect_ratio'];
     if (typeof ar === 'string' && ar.trim()) {
       if (!/^\d{1,4}[:x]\d{1,4}$/i.test(ar.trim())) {
         throw badRequest('aspect_ratio must be like 1:1, 16:9, or 16x9');
+      }
+    }
+
+    const steps = opts['steps'];
+    if (steps !== undefined) {
+      if (typeof steps !== 'number' || !Number.isFinite(steps)) {
+        throw badRequest('steps must be a number');
+      }
+      if (steps < 1 || steps > 50) {
+        throw badRequest('steps must be between 1 and 50 for FLUX.2');
+      }
+    }
+
+    const guidance = opts['guidance'];
+    if (guidance !== undefined) {
+      if (typeof guidance !== 'number' || !Number.isFinite(guidance)) {
+        throw badRequest('guidance must be a number');
+      }
+      if (guidance < 1.5 || guidance > 10) {
+        throw badRequest('guidance must be between 1.5 and 10 for FLUX.2');
       }
     }
   }
@@ -86,7 +115,7 @@ export class FluxImageAdapter implements ImageProviderAdapter {
     if (!apiKey) throw Object.assign(new Error('BFL_API_KEY is not configured'), { status: 503 });
 
     const apiBase = (this.getApiBase() ?? 'https://api.bfl.ai').replace(/\/$/, '');
-    const model = (dto.model || 'flux-pro-1.1').trim();
+    const model = (dto.model || 'flux-2-pro').trim();
     const endpoint = `${apiBase}/v1/${model}`;
 
     const providerOptions = dto.providerOptions ?? {};
@@ -97,8 +126,25 @@ export class FluxImageAdapter implements ImageProviderAdapter {
       const value = optionsRecord[key];
       if (value !== undefined && value !== null) payload[key] = value;
     }
-    if (Array.isArray(dto.references) && dto.references.length > 0) {
-      payload.references = dto.references;
+    const referenceImages = Array.isArray(dto.references)
+      ? dto.references.filter((r): r is string => typeof r === 'string' && r.trim().length > 0)
+      : [];
+    const hasInputImages =
+      payload.input_image ||
+      payload.input_image_2 ||
+      payload.input_image_3 ||
+      payload.input_image_4 ||
+      payload.input_image_5 ||
+      payload.input_image_6 ||
+      payload.input_image_7 ||
+      payload.input_image_8;
+    if (!hasInputImages && referenceImages.length > 0) {
+      referenceImages.slice(0, 8).forEach((ref, idx) => {
+        const key = idx === 0 ? 'input_image' : (`input_image_${idx + 1}` as const);
+        payload[key] = ref;
+      });
+    } else if (referenceImages.length > 0) {
+      payload.references = referenceImages;
     }
 
     const createResponse = await fetch(endpoint, {
@@ -319,5 +365,3 @@ export class FluxImageAdapter implements ImageProviderAdapter {
     }).filter(Boolean);
   }
 }
-
-

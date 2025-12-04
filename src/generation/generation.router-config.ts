@@ -5,6 +5,8 @@ export interface ProviderRouteConfig {
 }
 
 const FLUX_MODELS = new Set([
+    'flux-2-pro',
+    'flux-2-flex',
     'flux-pro-1.1',
     'flux-pro-1.1-ultra',
     'flux-kontext-pro',
@@ -31,6 +33,7 @@ export const PROVIDER_ROUTES: Record<string, ProviderRouteConfig> = {
     gemini: {
         defaultModel: 'gemini-3.0-pro-image',
         allowedModels: new Set([
+            'gemini-3-pro-image-preview',
             'gemini-3.0-pro-image',
             'gemini-3.0-pro',
             'gemini-3.0-pro-exp-01',
@@ -45,7 +48,7 @@ export const PROVIDER_ROUTES: Record<string, ProviderRouteConfig> = {
         allowInline: true,
     },
     flux: {
-        defaultModel: 'flux-pro-1.1',
+        defaultModel: 'flux-2-pro',
         allowedModels: FLUX_MODELS,
     },
     chatgpt: {

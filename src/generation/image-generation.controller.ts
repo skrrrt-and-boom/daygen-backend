@@ -137,6 +137,7 @@ export class ImageGenerationController {
       model,
       provider,
       options: dto,
+      jobType: dto.jobType,
     });
   }
 

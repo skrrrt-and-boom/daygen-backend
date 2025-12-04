@@ -32,6 +32,7 @@ export class CloudTasksService {
     [JobType.IMAGE_UPSCALE]: 'image-upscale-queue',
     [JobType.BATCH_GENERATION]: 'batch-generation-queue',
     [JobType.SCENE_GENERATION]: 'scene-generation-queue',
+    [JobType.IMAGE_EDIT]: 'image-generation-queue', // Reuse image generation queue
   };
 
   constructor(
@@ -82,7 +83,7 @@ export class CloudTasksService {
           jobId: job.id,
           userId,
           jobType,
-          data: serializedData,
+          data: data as Record<string, unknown>,
         };
 
         setImmediate(() => {
@@ -105,7 +106,29 @@ export class CloudTasksService {
     }
 
     try {
-      return JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+      const copy = JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+
+      // Sanitize heavy fields to prevent metadata bloat
+      const sanitize = (obj: any, depth = 0) => {
+        if (depth > 5 || !obj || typeof obj !== 'object') return;
+
+        for (const key in obj) {
+          if (Object.prototype.hasOwnProperty.call(obj, key)) {
+            const val = obj[key];
+            if (typeof val === 'string' && val.length > 1000) {
+              // Check if it looks like a base64 image or just a long string
+              if (val.startsWith('data:') || val.length > 5000) {
+                obj[key] = val.substring(0, 100) + '...[TRUNCATED]';
+              }
+            } else if (typeof val === 'object') {
+              sanitize(val, depth + 1);
+            }
+          }
+        }
+      };
+
+      sanitize(copy);
+      return copy;
     } catch (error) {
       this.logger.warn(
         'Failed to serialize job metadata, falling back to empty object',
@@ -180,9 +203,13 @@ export class CloudTasksService {
 
   async createImageGenerationJob(
     userId: string,
-    data: CreateImageGenerationJobDto,
+    data: CreateImageGenerationJobDto & { jobType?: string },
   ) {
-    return this.createJob(userId, JobType.IMAGE_GENERATION, data);
+    const type =
+      data.jobType === 'IMAGE_EDIT'
+        ? JobType.IMAGE_EDIT
+        : JobType.IMAGE_GENERATION;
+    return this.createJob(userId, type, data);
   }
 
   async createVideoGenerationJob(
@@ -325,9 +352,13 @@ export class CloudTasksService {
     }
   }
 
-  async getUserJobs(userId: string, limit = 20, cursor?: string) {
+  async getUserJobs(userId: string, limit = 20, cursor?: string, type?: JobType) {
+    console.log(`CloudTasksService.getUserJobs: Fetching jobs for user ${userId} with type ${type}`);
     const jobs = await this.prisma.job.findMany({
-      where: { userId },
+      where: {
+        userId,
+        ...(type && { type }),
+      },
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
       ...(cursor && {
@@ -343,8 +374,11 @@ export class CloudTasksService {
         error: true,
         createdAt: true,
         completedAt: true,
+        metadata: true, // Select metadata to check for topic/prompt
       },
     });
+    console.log(`CloudTasksService.getUserJobs: Found ${jobs.length} jobs. Types: ${jobs.map(j => j.type).join(', ')}`);
+    console.log(`CloudTasksService.getUserJobs: Metadata samples: ${JSON.stringify(jobs.slice(0, 3).map(j => j.metadata))}`);
 
     const hasNextPage = jobs.length > limit;
     if (hasNextPage) {

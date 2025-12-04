@@ -45,6 +45,18 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
     if (!apiKey) throw Object.assign(new Error('IDEOGRAM_API_KEY not configured'), { status: 503 });
 
     const form = new FormData();
+    const opts: Record<string, unknown> = {};
+    Object.assign(opts, dto.providerOptions ?? {});
+
+    // Check if this is an edit request (has mask)
+    const maskDataUrl = opts['mask'] as string | undefined;
+    const isEdit = !!maskDataUrl;
+
+    // Determine endpoint
+    const endpoint = isEdit
+      ? 'https://api.ideogram.ai/v1/ideogram-v3/edit'
+      : 'https://api.ideogram.ai/v1/ideogram-v3/generate';
+
     form.set('prompt', dto.prompt);
 
     const addStr = (name: string, val?: unknown) => {
@@ -54,12 +66,12 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
       if (typeof val === 'number' && Number.isFinite(val)) form.set(name, String(val));
     };
 
-    const opts: Record<string, unknown> = {};
-    Object.assign(opts, dto.providerOptions ?? {});
     const aspect = (opts['aspect_ratio'] ?? opts['aspectRatio']) as string | undefined;
     if (aspect && aspect.trim()) {
       form.set('aspect_ratio', aspect.replace(':', 'x'));
     }
+
+    // Common parameters
     addStr('resolution', opts['resolution']);
     addStr('rendering_speed', opts['rendering_speed'] ?? opts['renderingSpeed']);
     addStr('magic_prompt', opts['magic_prompt'] ?? opts['magicPrompt']);
@@ -82,27 +94,86 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
       if (serialized.trim()) form.set('color_palette', serialized.trim());
     }
 
-    if (!form.has('aspect_ratio')) form.set('aspect_ratio', '1x1');
+    // Defaults
+    if (!form.has('aspect_ratio') && !isEdit) form.set('aspect_ratio', '1x1');
     if (!form.has('rendering_speed')) form.set('rendering_speed', 'DEFAULT');
     if (!form.has('magic_prompt')) form.set('magic_prompt', 'AUTO');
     if (!form.has('num_images')) form.set('num_images', '1');
 
-    // Handle reference image (first one only)
-    if (dto.references && dto.references.length > 0) {
-      const refUrl = dto.references[0];
+    // Handle Image and Mask for Edit
+    if (isEdit) {
+      if (dto.references && dto.references.length > 0) {
+        const refUrl = dto.references[0];
+        try {
+          let buffer: Buffer;
+          if (refUrl.startsWith('data:')) {
+            const matches = refUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+            if (!matches || matches.length !== 3) throw new Error('Invalid data URL');
+            buffer = Buffer.from(matches[2], 'base64');
+          } else {
+            const dl = await safeDownload(refUrl, {
+              allowedHosts: IDEOGRAM_ALLOWED_HOSTS,
+              allowedHostSuffixes: COMMON_ALLOWED_SUFFIXES,
+            });
+            buffer = Buffer.from(dl.arrayBuffer);
+          }
+
+          // Detect MIME type from magic bytes
+          const detection = this.detectMimeType(buffer);
+          if (!detection) {
+            throw Object.assign(new Error('Input image is not a supported format (PNG, JPEG, WEBP) or is corrupted.'), { status: 400 });
+          }
+          const { mimeType: mime, extension: ext } = detection;
+
+          console.log(`[Ideogram] Input image detected as ${mime}, using extension: ${ext}`);
+          const blob = new Blob([new Uint8Array(buffer)], { type: mime });
+          form.set('image', blob, `image.${ext}`);
+        } catch (error) {
+          throw Object.assign(new Error(`Failed to process input image: ${error}`), { status: 400 });
+        }
+      } else {
+        throw Object.assign(new Error('Image is required for editing'), { status: 400 });
+      }
+
+      // Process Mask
       try {
-        const dl = await safeDownload(refUrl, {
-          allowedHosts: IDEOGRAM_ALLOWED_HOSTS,
-          allowedHostSuffixes: COMMON_ALLOWED_SUFFIXES,
-        });
-        const blob = new Blob([dl.arrayBuffer], { type: dl.mimeType });
-        form.set('image_request', blob, 'reference_image');
+        // maskDataUrl is a data URL
+        // We need to fetch it to get a blob. Since it's a data URL, fetch works.
+        // However, in Node environment, fetch(dataUrl) might not work depending on version/polyfill.
+        // But 'undici' (used in package.json) or native fetch in Node 18+ supports it.
+        // Alternatively, we can parse the data URL manually.
+        // Let's try manual parsing to be safe and avoid external fetch for local data.
+        const matches = maskDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        if (matches && matches.length === 3) {
+          const buffer = Buffer.from(matches[2], 'base64');
+          const blob = new Blob([buffer], { type: matches[1] });
+          form.set('mask', blob, 'mask.png');
+        } else {
+          throw new Error('Invalid mask data URL');
+        }
       } catch (error) {
-        throw Object.assign(new Error(`Failed to process reference image: ${error}`), { status: 400 });
+        throw Object.assign(new Error(`Failed to process mask image: ${error}`), { status: 400 });
+      }
+
+    } else {
+      // Normal Generate Flow (Remix / Image-to-Image)
+      // Handle reference image (first one only)
+      if (dto.references && dto.references.length > 0) {
+        const refUrl = dto.references[0];
+        try {
+          const dl = await safeDownload(refUrl, {
+            allowedHosts: IDEOGRAM_ALLOWED_HOSTS,
+            allowedHostSuffixes: COMMON_ALLOWED_SUFFIXES,
+          });
+          const blob = new Blob([dl.arrayBuffer], { type: dl.mimeType });
+          form.set('image_request', blob, 'reference_image');
+        } catch (error) {
+          throw Object.assign(new Error(`Failed to process reference image: ${error}`), { status: 400 });
+        }
       }
     }
 
-    const response = await fetch('https://api.ideogram.ai/v1/ideogram-v3/generate', {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Api-Key': apiKey, Accept: 'application/json' },
       body: form,
@@ -111,7 +182,9 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) {
       const msg = this.extractMessage(payload) || `Ideogram API error: ${response.status}`;
-      throw Object.assign(new Error(msg), { status: response.status, details: payload });
+      const detailedMsg = `${msg} - Details: ${JSON.stringify(payload)}`;
+      console.error(`[Ideogram] API Error: ${detailedMsg}`);
+      throw Object.assign(new Error(detailedMsg), { status: response.status, details: payload });
     }
 
     const urls = this.collectUrls(payload);
@@ -172,6 +245,28 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
     const data = payload['data'];
     tryArray(data);
     return out;
+  }
+
+  private detectMimeType(buffer: Buffer): { mimeType: string, extension: string } | null {
+    if (buffer.length >= 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+      return { mimeType: 'image/png', extension: 'png' };
+    }
+    if (buffer.length >= 3 && buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+      return { mimeType: 'image/jpeg', extension: 'jpg' };
+    }
+    if (buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') {
+      return { mimeType: 'image/webp', extension: 'webp' };
+    }
+
+    // Check for HTML/XML
+    const head = buffer.subarray(0, 50).toString('utf8').trim().toLowerCase();
+    if (head.startsWith('<!doctype html') || head.startsWith('<html') || head.startsWith('<?xml')) {
+      console.error(`[Ideogram] Input appears to be HTML/XML: ${head.substring(0, 100)}`);
+      return null; // Will be handled by caller
+    }
+
+    console.warn(`[Ideogram] Could not detect magic bytes for input image. Header: ${buffer.subarray(0, 8).toString('hex')}`);
+    return null;
   }
 }
 

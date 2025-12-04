@@ -15,6 +15,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { PaymentsModule } from './payments/payments.module';
 import { AudioModule } from './audio/audio.module';
 import { ScenesModule } from './scenes/scenes.module';
+import { TimelineModule } from './timeline/timeline.module';
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import { ScenesModule } from './scenes/scenes.module';
     PaymentsModule,
     AudioModule,
     ScenesModule,
+    TimelineModule,
   ],
   controllers: [AppController],
   providers: [AppService],

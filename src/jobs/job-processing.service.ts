@@ -13,6 +13,8 @@ import type { SanitizedUser } from '../users/types';
 import type { ProviderGenerateDto } from '../generation/dto/base-generate.dto';
 import { ScenesService, SceneGenerationJobPayload } from '../scenes/scenes.service';
 import { R2Service } from '../upload/r2.service';
+import { R2FilesService } from '../r2files/r2files.service';
+import { GEMINI_API_KEY_CANDIDATES } from '../generation/constants';
 
 export interface ProcessJobPayload {
   jobId: string;
@@ -39,6 +41,7 @@ export class JobProcessingService {
     private readonly requestContext: RequestContextService,
     private readonly configService: ConfigService,
     private readonly r2Service: R2Service,
+    private readonly r2FilesService: R2FilesService,
   ) { }
 
   async processJob(payload: ProcessJobPayload) {
@@ -310,6 +313,47 @@ export class JobProcessingService {
         JobStatus.PROCESSING,
       );
 
+      if (provider === 'veo') {
+        const veoResult = await this.handleVeoVideoGeneration(
+          jobId,
+          prompt,
+          model,
+          data.options as Record<string, unknown> | undefined,
+          data.imageUrls as string[] | undefined,
+          data.references as string[] | undefined,
+        );
+
+        await this.usageService.captureCredits(reservationId, {
+          finalStatus: 'COMPLETED',
+          assetCount: 1,
+        });
+
+        const r2File = await this.r2FilesService.create(user.authUserId, {
+          fileName: `veo-${Date.now()}.mp4`,
+          fileUrl: veoResult.videoUrl,
+          mimeType: 'video/mp4',
+          prompt,
+          model: veoResult.model,
+          jobId,
+        });
+
+        await this.cloudTasksService.completeJob(jobId, veoResult.videoUrl, {
+          videoUrl: veoResult.videoUrl,
+          provider: 'veo',
+          model: veoResult.model,
+          prompt,
+          operationName: veoResult.operationName,
+          aspectRatio: veoResult.aspectRatio,
+          durationSeconds: veoResult.durationSeconds,
+          resolution: veoResult.resolution,
+          providerOptions: veoResult.providerOptions,
+          referenceCount: veoResult.referenceCount,
+          r2FileId: r2File.id,
+        });
+
+        return;
+      }
+
       if (provider === 'sora') {
         const soraResult = await this.handleSoraVideoGeneration(
           jobId,
@@ -323,6 +367,15 @@ export class JobProcessingService {
           assetCount: 1,
         });
 
+        const r2File = await this.r2FilesService.create(user.authUserId, {
+          fileName: `sora-${Date.now()}.mp4`,
+          fileUrl: soraResult.videoUrl,
+          mimeType: 'video/mp4',
+          prompt,
+          model: soraResult.model,
+          jobId,
+        });
+
         await this.cloudTasksService.completeJob(jobId, soraResult.videoUrl, {
           videoUrl: soraResult.videoUrl,
           provider: 'sora',
@@ -332,6 +385,7 @@ export class JobProcessingService {
           size: soraResult.size,
           seconds: soraResult.seconds,
           providerOptions: soraResult.providerOptions,
+          r2FileId: r2File.id,
         });
 
         return;
@@ -573,13 +627,17 @@ export class JobProcessingService {
       'imagen-4.0-fast-generate-001': 'imagen-4.0-fast-generate-001',
       'imagen-4.0-ultra-generate-001': 'imagen-4.0-ultra-generate-001',
       'imagen-3.0-generate-002': 'imagen-3.0-generate-002',
-      'flux-1.1': 'flux-pro-1.1',
-      'flux-pro-1.1': 'flux-pro-1.1',
-      'flux-pro-1.1-ultra': 'flux-pro-1.1-ultra',
-      'flux-kontext-pro': 'flux-kontext-pro',
-      'flux-kontext-max': 'flux-kontext-max',
-      'flux-pro': 'flux-pro',
-      'flux-dev': 'flux-dev',
+      'flux-2': 'flux-2-pro',
+      'flux-2-pro': 'flux-2-pro',
+      'flux-2-flex': 'flux-2-flex',
+      // Legacy FLUX.1 models route to FLUX.2 equivalents
+      'flux-1.1': 'flux-2-pro',
+      'flux-pro-1.1': 'flux-2-pro',
+      'flux-pro-1.1-ultra': 'flux-2-flex',
+      'flux-kontext-pro': 'flux-2-pro',
+      'flux-kontext-max': 'flux-2-flex',
+      'flux-pro': 'flux-2-pro',
+      'flux-dev': 'flux-2-pro',
       'reve-image': 'reve-image',
       'reve-image-1.0': 'reve-image-1.0',
       'reve-v1': 'reve-v1',
@@ -637,6 +695,435 @@ export class JobProcessingService {
     }
 
     return dto;
+  }
+
+  private pickString(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  }
+
+  private parseNumeric(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const cleaned = value.trim().replace(/%$/, '');
+      if (!cleaned) return undefined;
+      const parsed = Number.parseFloat(cleaned);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return undefined;
+  }
+
+  private resolveGeminiApiKey(): string {
+    for (const key of GEMINI_API_KEY_CANDIDATES) {
+      const candidate = this.configService.get<string>(key);
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+    throw new Error('Gemini API key is not configured');
+  }
+
+  private normalizeVeoAspectRatio(value: unknown): string | undefined {
+    const text = this.pickString(value);
+    if (!text) return undefined;
+
+    const normalized = text.replace(/\s+/g, '');
+    if (normalized === '16:9' || normalized === '9:16') {
+      return normalized;
+    }
+
+    return undefined;
+  }
+
+  private normalizeVeoDurationSeconds(value: unknown): number | undefined {
+    const parsed = this.parseNumeric(value);
+    if (parsed === undefined) return undefined;
+    if (parsed === 4 || parsed === 6 || parsed === 8) {
+      return parsed;
+    }
+    return undefined;
+  }
+
+  private normalizeVeoSeed(value: unknown): number | undefined {
+    const parsed = this.parseNumeric(value);
+    if (parsed === undefined) return undefined;
+    return Math.round(parsed);
+  }
+
+  private normalizeVeoResolution(value: unknown): string | undefined {
+    const text = this.pickString(value);
+    if (!text) return undefined;
+    const normalized = text.toLowerCase();
+    if (normalized === '720p' || normalized === '1080p') {
+      return normalized;
+    }
+    return undefined;
+  }
+
+  private normalizePersonGeneration(value: unknown): string | undefined {
+    const text = this.pickString(value)?.toLowerCase();
+    if (!text) return undefined;
+    if (['allow_all', 'allow_adult', 'dont_allow'].includes(text)) {
+      return text;
+    }
+    return undefined;
+  }
+
+  private normalizeBase64(value: unknown): string | undefined {
+    const text = this.pickString(value);
+    if (!text) return undefined;
+    return text.replace(/^data:[^;,]+;base64,/, '');
+  }
+
+  private normalizeMimeType(value: unknown): string | undefined {
+    return this.pickString(value);
+  }
+
+  private normalizeReferences(
+    references?: string[],
+  ): Array<{ data: string; mimeType?: string }> {
+    if (!Array.isArray(references)) return [];
+
+    const normalized: Array<{ data: string; mimeType?: string }> = [];
+    for (const entry of references) {
+      if (normalized.length >= 3) break;
+      const text = this.pickString(entry);
+      if (!text) continue;
+
+      const mimeMatch = /^data:([^;]+);base64,/i.exec(text);
+      const mimeType = mimeMatch?.[1];
+      const data = this.normalizeBase64(text);
+      if (data) {
+        normalized.push({ data, mimeType });
+      }
+    }
+
+    return normalized;
+  }
+
+  private parseVeoProgress(payload: Record<string, unknown>): number | undefined {
+    const metadata = this.asRecord(payload.metadata);
+    if (!metadata) return undefined;
+    return (
+      this.parseNumeric(metadata.progressPercent) ??
+      this.parseNumeric(metadata.progress) ??
+      this.parseNumeric(metadata.percentComplete)
+    );
+  }
+
+  private extractOperationError(payload: Record<string, unknown>): string | undefined {
+    const error = (payload as { error?: unknown }).error;
+    if (!error) return undefined;
+
+    if (typeof error === 'string') {
+      return this.pickString(error);
+    }
+
+    const record = this.asRecord(error);
+    if (!record) return undefined;
+
+    return this.pickString(record.message) ??
+      this.pickString(record.status) ??
+      this.pickString(record.code);
+  }
+
+  private extractVeoVideoUri(payload: Record<string, unknown>): string | undefined {
+    const response = this.asRecord(payload.response);
+    if (response) {
+      const generateVideoResponse = this.asRecord(response.generateVideoResponse);
+      if (generateVideoResponse) {
+        const generatedSamples = generateVideoResponse.generatedSamples;
+        if (Array.isArray(generatedSamples)) {
+          for (const sample of generatedSamples) {
+            const sampleRecord = this.asRecord(sample);
+            if (!sampleRecord) continue;
+
+            const video = this.asRecord(sampleRecord.video);
+            const uri =
+              this.pickString(video?.uri) ??
+              this.pickString(sampleRecord.uri);
+
+            if (uri) {
+              return uri;
+            }
+          }
+        }
+
+        const generatedVideos = generateVideoResponse.generatedVideos;
+        if (Array.isArray(generatedVideos)) {
+          for (const entry of generatedVideos) {
+            const videoRecord = this.asRecord(entry);
+            if (!videoRecord) continue;
+            const uri = this.pickString(videoRecord.uri) ??
+              this.pickString(this.asRecord(videoRecord.video)?.uri);
+            if (uri) {
+              return uri;
+            }
+          }
+        }
+      }
+
+      const directVideoUri =
+        this.pickString((response.video as { uri?: unknown } | undefined)?.uri) ??
+        this.pickString(response.videoUri);
+      if (directVideoUri) {
+        return directVideoUri;
+      }
+    }
+
+    const result = this.asRecord((payload as { result?: unknown }).result);
+    if (result) {
+      const nested = this.extractVeoVideoUri(result);
+      if (nested) {
+        return nested;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async handleVeoVideoGeneration(
+    jobId: string,
+    prompt: string,
+    model?: string,
+    options?: Record<string, unknown>,
+    _imageUrls?: string[],
+    references?: string[],
+  ): Promise<{
+    videoUrl: string;
+    model: string;
+    operationName: string;
+    aspectRatio?: string;
+    durationSeconds?: number;
+    resolution?: string;
+    providerOptions?: Record<string, unknown>;
+    referenceCount?: number;
+  }> {
+    void _imageUrls; // Remote image URLs are not yet supported for Veo requests
+
+    const apiKey = this.resolveGeminiApiKey();
+    const requestedModel = model?.trim() || 'veo-3.1-generate-preview';
+    const baseUrl =
+      this.configService.get<string>('GEMINI_API_BASE_URL')?.trim() ||
+      'https://generativelanguage.googleapis.com/v1beta';
+
+    const aspectRatio = this.normalizeVeoAspectRatio(options?.aspect_ratio ?? options?.aspectRatio);
+    const negativePrompt = this.pickString(options?.negative_prompt ?? options?.negativePrompt);
+    const durationSeconds = this.normalizeVeoDurationSeconds(
+      options?.duration ?? options?.durationSeconds,
+    );
+    const seed = this.normalizeVeoSeed(options?.seed);
+    const resolution = this.normalizeVeoResolution(options?.resolution);
+    const personGeneration = this.normalizePersonGeneration(
+      options?.person_generation ?? options?.personGeneration,
+    );
+
+    const imageBase64 = this.normalizeBase64(
+      options?.image_base64 ?? options?.imageBase64,
+    );
+    const imageMimeType = this.normalizeMimeType(
+      options?.image_mime_type ?? options?.imageMimeType,
+    );
+
+    const normalizedReferences = this.normalizeReferences(references);
+    const referenceImages = normalizedReferences.map((entry) => ({
+      image: {
+        imageBytes: entry.data,
+        mimeType: entry.mimeType || 'image/png',
+      },
+      referenceType: 'ASSET',
+    }));
+    const supportsReferenceImages = requestedModel === 'veo-3.1-generate-preview';
+    const wantsReferenceImages = referenceImages.length > 0;
+
+    // Reference images are only supported on the standard Veo 3.1 model.
+    let veoModel = requestedModel;
+    let appliedReferences = [] as typeof referenceImages;
+
+    if (wantsReferenceImages) {
+      if (!supportsReferenceImages) {
+        this.logger.warn(
+          `Reference images requested with unsupported model "${requestedModel}", switching to veo-3.1-generate-preview`,
+        );
+      }
+      veoModel = 'veo-3.1-generate-preview';
+      appliedReferences = referenceImages;
+    }
+    const hasReferenceImages = appliedReferences.length > 0;
+
+    const instance: Record<string, unknown> = { prompt };
+    if (imageBase64) {
+      instance.image = {
+        imageBytes: imageBase64,
+        mimeType: imageMimeType || 'image/png',
+      };
+    }
+
+    const parameters: Record<string, unknown> = {};
+    const effectiveAspectRatio = hasReferenceImages
+      ? '16:9'
+      : aspectRatio ?? undefined;
+    const effectiveDurationSeconds = hasReferenceImages
+      ? 8
+      : typeof durationSeconds === 'number'
+        ? durationSeconds
+        : undefined;
+    const effectivePersonGeneration = hasReferenceImages
+      ? 'allow_adult'
+      : personGeneration;
+
+    if (effectiveAspectRatio) parameters.aspectRatio = effectiveAspectRatio;
+    if (negativePrompt) parameters.negativePrompt = negativePrompt;
+    if (typeof effectiveDurationSeconds === 'number') {
+      parameters.durationSeconds = effectiveDurationSeconds;
+    }
+    if (typeof seed === 'number') parameters.seed = seed;
+    if (resolution) parameters.resolution = resolution;
+    if (effectivePersonGeneration) parameters.personGeneration = effectivePersonGeneration;
+    if (appliedReferences.length > 0) {
+      parameters.referenceImages = appliedReferences;
+      instance.referenceImages = appliedReferences;
+    }
+
+    const requestBody: Record<string, unknown> = { instances: [instance] };
+    if (Object.keys(parameters).length > 0) {
+      requestBody.parameters = parameters;
+    }
+
+    this.logger.log('Veo Request Summary', {
+      model: veoModel,
+      aspectRatio: effectiveAspectRatio,
+      durationSeconds: effectiveDurationSeconds,
+      hasReferenceImages,
+      referenceCount: referenceImages.length,
+      personGeneration: effectivePersonGeneration,
+      resolution,
+      hasInputImage: Boolean(instance.image),
+    });
+
+    const createResponse = await fetch(
+      `${baseUrl}/models/${veoModel}:predictLongRunning`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify(requestBody),
+      },
+    );
+
+    if (!createResponse.ok) {
+      const errorText = await createResponse.text().catch(() => '');
+      throw new Error(
+        errorText?.trim() ||
+        `Failed to start Veo generation (status ${createResponse.status})`,
+      );
+    }
+
+    const createPayload = (await createResponse.json()) as Record<string, unknown>;
+    const operationName = this.pickString(createPayload.name) ??
+      this.pickString((createPayload.operation as { name?: unknown } | undefined)?.name) ??
+      this.pickString((createPayload as { operationName?: unknown }).operationName);
+    if (!operationName) {
+      throw new Error('Veo did not return an operation name');
+    }
+
+    await this.cloudTasksService.updateJobProgress(jobId, 10, JobStatus.PROCESSING);
+
+    const pollDeadline = Date.now() + 15 * 60 * 1000; // 15 minutes
+    let lastProgress = 10;
+
+    while (Date.now() < pollDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      const statusResponse = await fetch(`${baseUrl}/${operationName}`, {
+        headers: { 'x-goog-api-key': apiKey },
+      });
+
+      if (!statusResponse.ok) {
+        const errorText = await statusResponse.text().catch(() => '');
+        throw new Error(
+          errorText?.trim() ||
+          `Failed to poll Veo video status (status ${statusResponse.status})`,
+        );
+      }
+
+      const statusPayload = (await statusResponse.json()) as Record<string, unknown>;
+      const opError = this.extractOperationError(statusPayload);
+      if (opError) {
+        throw new Error(opError);
+      }
+
+      const progress = this.parseVeoProgress(statusPayload);
+      if (typeof progress === 'number' && progress > lastProgress) {
+        lastProgress = Math.min(95, Math.max(progress, lastProgress));
+        await this.cloudTasksService.updateJobProgress(jobId, lastProgress, JobStatus.PROCESSING);
+      } else if (lastProgress < 90) {
+        lastProgress = Math.min(90, lastProgress + 5);
+        await this.cloudTasksService.updateJobProgress(jobId, lastProgress, JobStatus.PROCESSING);
+      }
+
+      const done = statusPayload.done === true || statusPayload.done === 'true';
+      if (done) {
+        const videoUri = this.extractVeoVideoUri(statusPayload);
+        if (!videoUri) {
+          throw new Error('Veo did not return a video URI');
+        }
+
+        const downloadResponse = await fetch(videoUri, {
+          headers: { 'x-goog-api-key': apiKey },
+          redirect: 'follow',
+        });
+
+        if (!downloadResponse.ok) {
+          const errorText = await downloadResponse.text().catch(() => '');
+          throw new Error(
+            errorText?.trim() ||
+            `Failed to download Veo video content (status ${downloadResponse.status})`,
+          );
+        }
+
+        const contentType =
+          downloadResponse.headers.get('content-type')?.split(';')[0]?.trim() ??
+          'video/mp4';
+        const buffer = Buffer.from(await downloadResponse.arrayBuffer());
+
+        const safeOperationName = operationName.replace(/[^\w.-]+/g, '_');
+        const fileName = `${safeOperationName || 'veo-video'}-${Date.now()}.mp4`;
+
+        const videoUrl = await this.r2Service.uploadBuffer(
+          buffer,
+          contentType,
+          'generated-videos',
+          fileName,
+        );
+
+        return {
+          videoUrl,
+          model: veoModel,
+          operationName,
+      aspectRatio: effectiveAspectRatio,
+      durationSeconds: effectiveDurationSeconds,
+      resolution,
+      providerOptions: options,
+      referenceCount: appliedReferences.length,
+    };
+  }
+    }
+
+    throw new Error('Timed out waiting for Veo video generation to complete');
   }
 
   private resolveSoraSize(options: Record<string, unknown> | undefined): string | undefined {
