@@ -19,6 +19,10 @@ export class TimelineSegment {
     @IsOptional()
     imageUrl?: string;
 
+    @IsString()
+    @IsOptional()
+    videoUrl?: string;
+
     @IsNumber()
     duration: number;
 

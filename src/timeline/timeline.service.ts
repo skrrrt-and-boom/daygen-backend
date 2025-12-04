@@ -9,6 +9,7 @@ import { MusicService } from '../audio/music.service';
 import { R2Service } from '../upload/r2.service';
 import { GenerateTimelineDto } from './dto/generate-timeline.dto';
 import { TimelineResponse, TimelineSegment } from './dto/timeline-response.dto';
+import { KlingProvider } from '../generation/providers/kling.provider';
 import Replicate from 'replicate';
 import * as util from 'util';
 import * as child_process from 'child_process';
@@ -33,6 +34,7 @@ export class TimelineService {
         private readonly prisma: PrismaService,
         private readonly generationOrchestrator: GenerationOrchestrator,
         private readonly usersService: UsersService,
+        private readonly klingProvider: KlingProvider,
     ) {
         const replicateToken = this.configService.get<string>('REPLICATE_API_TOKEN');
         if (!replicateToken) {
@@ -89,53 +91,78 @@ export class TimelineService {
                 }
             }
 
-            // 3. PHASE 1 - PARALLEL GENERATION
-            this.logger.log('Starting parallel generation phase...');
-            const segmentResults = await Promise.all(script.map(async (item, index) => {
-                try {
-                    // Parallel: Audio & Visuals
-                    const [speechResult, visualResult] = await Promise.all([
-                        // Audio Generation
-                        (async () => {
-                            if (dto.includeNarration === false) return null;
-                            const result = await this.audioService.generateSpeech({
-                                text: item.text,
-                                voiceId: dto.voiceId,
-                                stability: 0.5,
-                                similarityBoost: 0.75,
-                            });
-                            const buffer = Buffer.from(result.audioBase64, 'base64');
-                            const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
-                            const duration = await this.getAudioDuration(buffer);
-                            return { url, duration };
-                        })(),
-                        // Visual Generation
-                        this.generationOrchestrator.generate(user, {
-                            model: 'nano-banana-pro',
-                            prompt: item.visualPrompt,
-                            providerOptions: { aspectRatio: '9:16' }
-                        }, { cost: 1, isJob: true }).catch(err => {
-                            this.logger.error(`Visual generation failed for segment ${index}`, err);
-                            return null;
-                        })
-                    ]);
+            // 3. PHASE 1 - SEQUENTIAL GENERATION (To avoid rate limits)
+            this.logger.log('Starting sequential generation phase...');
+            const segmentResults: any[] = [];
 
-                    return {
+            for (let index = 0; index < script.length; index++) {
+                const item = script[index];
+                try {
+                    this.logger.log(`Processing segment ${index + 1}/${script.length}...`);
+
+                    // Audio Generation
+                    let speechResult: { url: string; duration: number } | null = null;
+                    if (dto.includeNarration !== false) {
+                        const result = await this.audioService.generateSpeech({
+                            text: item.text,
+                            voiceId: dto.voiceId,
+                            stability: 0.5,
+                            similarityBoost: 0.75,
+                        });
+                        const buffer = Buffer.from(result.audioBase64, 'base64');
+                        const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
+                        const duration = await this.getAudioDuration(buffer);
+                        speechResult = { url, duration };
+                    }
+
+                    // Visual Generation (Image)
+                    const imgRes = await this.generationOrchestrator.generate(user, {
+                        model: 'nano-banana-pro',
+                        prompt: item.visualPrompt,
+                        providerOptions: { aspectRatio: '9:16' }
+                    }, { cost: 1, isJob: true }).catch(err => {
+                        this.logger.error(`Visual generation failed for segment ${index}`, err);
+                        return null;
+                    });
+
+                    const imageUrl = imgRes?.assets?.[0]?.r2FileUrl
+                        ?? imgRes?.assets?.[0]?.remoteUrl
+                        ?? imgRes?.assets?.[0]?.dataUrl;
+
+                    let videoUrl: string | null = null;
+                    if (imageUrl) {
+                        // Visual Generation (Video) - Sequential
+                        try {
+                            videoUrl = await this.klingProvider.generateVideoFromImage(
+                                imageUrl,
+                                item.visualPrompt
+                            );
+                        } catch (err) {
+                            this.logger.error(`Kling video generation failed for segment ${index}`, err);
+                            // We continue even if video fails, just returning image
+                        }
+                    } else {
+                        this.logger.warn(`Image generation failed for segment ${index}, skipping video`);
+                    }
+
+                    segmentResults.push({
                         item,
                         voiceUrl: speechResult?.url,
                         audioDuration: speechResult?.duration,
-                        imageUrl: visualResult?.assets?.[0]?.r2FileUrl ?? visualResult?.assets?.[0]?.remoteUrl ?? visualResult?.assets?.[0]?.dataUrl,
+                        imageUrl,
+                        videoUrl,
                         index
-                    };
+                    });
+
                 } catch (err) {
                     this.logger.error(`Segment ${index} generation failed`, err);
-                    return {
+                    segmentResults.push({
                         item,
                         error: true,
                         index
-                    };
+                    });
                 }
-            }));
+            }
 
             // 4. PHASE 2 - SEQUENTIAL TIMING
             const segments: TimelineSegment[] = [];
@@ -144,7 +171,7 @@ export class TimelineService {
             for (const result of segmentResults) {
                 if (result.error) continue; // Skip failed segments or handle gracefully
 
-                const { item, voiceUrl, audioDuration, imageUrl } = result;
+                const { item, voiceUrl, audioDuration, imageUrl, videoUrl } = result;
                 let duration: number;
                 let endTime: number;
 
@@ -176,7 +203,8 @@ export class TimelineService {
                     script: item.text,
                     visualPrompt: item.visualPrompt,
                     voiceUrl: voiceUrl,
-                    imageUrl: imageUrl, // Add image URL
+                    imageUrl: imageUrl || undefined, // Add image URL
+                    videoUrl: videoUrl || undefined, // Add video URL
                     duration: duration,
                     startTime: currentTime,
                     endTime: endTime,

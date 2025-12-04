@@ -11,10 +11,12 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { GenerationModule } from '../generation/generation.module';
 import { UsersModule } from '../users/users.module';
 
+import { KlingProvider } from '../generation/providers/kling.provider';
+
 @Module({
     imports: [ConfigModule, AudioModule, UploadModule, PrismaModule, GenerationModule, UsersModule],
     controllers: [TimelineController],
-    providers: [TimelineService],
+    providers: [TimelineService, KlingProvider],
     exports: [TimelineService],
 })
 export class TimelineModule { }
