@@ -293,7 +293,7 @@ export class TimelineService {
                     imageUrl,
                     visualPrompt,
                     webhookUrl,
-                    (motionPrompt ? `${motionPrompt}. Fast motion, 30fps.` : undefined)
+                    (motionPrompt ? `${motionPrompt}. High speed action, dynamic motion, blur, 30fps.` : 'Dynamic motion, high speed, 30fps.')
                 ),
                 index
             );

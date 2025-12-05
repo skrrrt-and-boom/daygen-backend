@@ -24,7 +24,8 @@ export class KlingProvider {
             start_image: imageUrl,
             duration: 5, // Default to 5s for consistency
             cfg_scale: 0.5,
-            mode: "std"
+            mode: "std",
+            negative_prompt: "static, frozen, slow motiob, motionless, text, watermark"
         };
 
         try {
@@ -53,8 +54,9 @@ export class KlingProvider {
             prompt: fullPrompt,
             start_image: imageUrl,
             duration: 5,
-            cfg_scale: 0.5,
-            mode: "std"
+            cfg_scale: 0.6, // Increased slightly for better prompt adherence
+            mode: "std",
+            negative_prompt: "static, frozen, slow motion, motionless, text, watermark"
         };
 
         try {
