@@ -34,7 +34,7 @@ const DEFAULT_VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Fallback to Rachel if user v
 export class AudioService {
   private readonly logger = new Logger(AudioService.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: ConfigService) { }
 
   private ensureApiKey(): string {
     const apiKey = this.configService.get<string>('ELEVENLABS_API_KEY');
@@ -114,9 +114,9 @@ export class AudioService {
     const apiKey = this.ensureApiKey();
     const form = new FormData();
     const resolvedName =
-        options.name?.trim() ||
-        file.originalname?.replace(/\.[^/.]+$/, '') ||
-        `Voice ${new Date().toISOString()}`;
+      options.name?.trim() ||
+      file.originalname?.replace(/\.[^/.]+$/, '') ||
+      `Voice ${new Date().toISOString()}`;
     form.set('name', resolvedName);
     if (options.description) {
       form.set('description', options.description);
@@ -183,7 +183,7 @@ export class AudioService {
     const voiceId = dto.voiceId?.trim() || DEFAULT_VOICE_ID;
     const requestBody: Record<string, unknown> = {
       text: dto.text,
-      model_id: dto.modelId ?? 'eleven_multilingual_v2',
+      model_id: dto.modelId ?? 'eleven_v3',
     };
 
     const voiceSettings: Record<string, number> = {};
@@ -233,7 +233,7 @@ export class AudioService {
 
     // Returning mock audio logic was removed as we are using fetch directly now and not checking for this.client
     // If apiKey check passes, we assume we want real audio.
-    
+
     try {
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);

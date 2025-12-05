@@ -165,6 +165,7 @@ export class TimelineService {
                         const result = await this.audioService.generateSpeech({
                             text: item.text,
                             voiceId: dto.voiceId,
+                            modelId: 'eleven_v3',
                             stability: 0.5,
                             similarityBoost: 0.75,
                         });
