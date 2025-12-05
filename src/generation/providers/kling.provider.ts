@@ -30,7 +30,7 @@ export class KlingProvider {
         try {
             const output = await this.replicate.run(this.modelId as any, { input });
             // Handle Replicate output (usually string URL or array of strings)
-            const videoUrl = Array.isArray(output) ? output[0] : String(output);
+            const videoUrl = Array.isArray(output) ? output[0] : (output as unknown as string);
 
             if (!videoUrl || !videoUrl.startsWith('http')) {
                 throw new Error(`Invalid output from Kling: ${JSON.stringify(output)}`);
@@ -83,7 +83,7 @@ export class KlingProvider {
         } catch (error) {
             this.logger.error("Kling async generation failed", error);
             if (error && typeof error === 'object' && 'response' in error) {
-                this.logger.error(`Replicate API Error: ${JSON.stringify((error as any).response?.data)}`);
+                this.logger.error(`Replicate API Error: ${JSON.stringify((error).response?.data)}`);
             }
             throw error;
         }
