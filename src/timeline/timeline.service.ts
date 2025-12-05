@@ -77,38 +77,57 @@ export class TimelineService {
             return;
         }
 
-        const job = await this.prisma.job.findUnique({ where: { id: jobId } });
-        if (!job || job.status !== 'PROCESSING') return;
-
-        const metadata: any = job.metadata || {};
-        const segments = metadata.segments || [];
         const index = parseInt(segmentIndex);
 
-        if (segments[index]) {
-            if (payload.status === 'succeeded') {
-                // Kling output is usually an array of strings (URLs)
-                const videoUrl = Array.isArray(payload.output) ? payload.output[0] : payload.output;
-                segments[index].videoUrl = videoUrl;
-                segments[index].status = 'completed';
-                this.logger.log(`Segment ${index} video generated: ${videoUrl}`);
-            } else if (payload.status === 'failed' || payload.status === 'canceled') {
-                segments[index].status = 'failed';
-                segments[index].error = payload.error;
-                this.logger.error(`Segment ${index} video failed: ${payload.error}`);
-            }
+        // Determine status and output
+        let status = 'generating';
+        let videoUrl = undefined;
+        let error = undefined;
+
+        if (payload.status === 'succeeded') {
+            videoUrl = Array.isArray(payload.output) ? payload.output[0] : payload.output;
+            status = 'completed';
+            this.logger.log(`Segment ${index} video generated: ${videoUrl}`);
+        } else if (payload.status === 'failed' || payload.status === 'canceled') {
+            status = 'failed';
+            error = payload.error;
+            this.logger.error(`Segment ${index} video failed: ${payload.error}`);
+        } else {
+            // Ignore other statuses (processing, starting)
+            return;
         }
 
-        // Update job metadata
-        await this.prisma.job.update({
-            where: { id: jobId },
-            data: { metadata: { ...metadata, segments } }
+        try {
+            // Step B1: Update the specific TimelineSegment row
+            await this.prisma.timelineSegment.update({
+                where: {
+                    jobId_index: {
+                        jobId,
+                        index
+                    }
+                },
+                data: {
+                    status,
+                    videoUrl,
+                    error
+                }
+            });
+        } catch (err) {
+            this.logger.error(`Failed to update segment ${index} for job ${jobId}`, err);
+            // If segment not found, maybe job deleted?
+            return;
+        }
+
+        // Step B2: Check for pending segments
+        const pendingCount = await this.prisma.timelineSegment.count({
+            where: {
+                jobId,
+                status: 'generating'
+            }
         });
 
-        // Check if all segments are done (completed, failed, or skipped)
-        // We only wait for segments that have a predictionId (i.e., video generation started)
-        // Segments without video (skipped) should be marked as such initially.
-        const pending = segments.some((s: any) => s.status === 'generating');
-        if (!pending) {
+        // Step B3: If count is 0, call finalizeJob
+        if (pendingCount === 0) {
             this.logger.log(`All segments for job ${jobId} finished. Finalizing...`);
             await this.finalizeJob(jobId);
         }
@@ -191,62 +210,82 @@ export class TimelineService {
                 this.logger.warn('WEBHOOK_HOST not set. Video generation might fail or not report back if using async.');
             }
 
-            const segmentsMetadata: any[] = [];
+            // Create TimelineSegment rows and trigger generation concurrently
+            const videoGenerationPromises = preparedSegments.map(async (segment) => {
+                // Create initial row
+                const dbSegment = await this.prisma.timelineSegment.create({
+                    data: {
+                        jobId: job.id,
+                        index: segment.index,
+                        script: segment.item.text,
+                        visualPrompt: segment.item.visualPrompt,
+                        audioUrl: segment.voiceUrl,
+                        imageUrl: segment.imageUrl,
+                        duration: segment.audioDuration,
+                        status: (segment.status === 'failed' || !segment.imageUrl) ? 'failed' : 'pending',
+                        error: segment.error ? 'Preparation failed' : undefined
+                    }
+                });
 
-            for (const segment of preparedSegments) {
-                if (segment.status === 'failed' || !segment.imageUrl) {
-                    segmentsMetadata.push({ ...segment, status: 'failed' });
-                    continue;
-                }
+                if (dbSegment.status === 'failed') return;
 
-                let predictionId = null;
-                let status = 'skipped';
-
+                // Trigger Video Generation
                 if (webhookHost) {
                     try {
                         const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${job.id}&segmentIndex=${segment.index}`;
                         const prediction = await this.klingProvider.generateVideoFromImageAsync(
-                            segment.imageUrl,
-                            segment.item.visualPrompt,
+                            dbSegment.imageUrl!,
+                            dbSegment.visualPrompt,
                             webhookUrl
                         );
-                        predictionId = prediction.id;
-                        status = 'generating';
+
+                        // Update with prediction ID
+                        await this.prisma.timelineSegment.update({
+                            where: { id: dbSegment.id },
+                            data: {
+                                predictionId: prediction.id,
+                                status: 'generating'
+                            }
+                        });
                     } catch (err) {
                         this.logger.error(`Failed to start video generation for segment ${segment.index}`, err);
-                        status = 'failed';
+                        await this.prisma.timelineSegment.update({
+                            where: { id: dbSegment.id },
+                            data: {
+                                status: 'failed',
+                                error: err instanceof Error ? err.message : String(err)
+                            }
+                        });
                     }
                 } else {
-                    // Fallback to sync if no webhook host (or just fail/skip video)
-                    // For now, we'll mark as skipped or try sync if we wanted, but the goal is async.
-                    // We will just skip video generation if no webhook host is configured to avoid hanging.
-                    this.logger.warn(`Skipping video generation for segment ${segment.index} due to missing WEBHOOK_HOST`);
+                    // Fallback or skip
+                    await this.prisma.timelineSegment.update({
+                        where: { id: dbSegment.id },
+                        data: { status: 'skipped' }
+                    });
                 }
+            });
 
-                segmentsMetadata.push({
-                    ...segment,
-                    predictionId,
-                    status
-                });
-            }
+            await Promise.all(videoGenerationPromises);
 
-            // Save initial state
+            // Save initial state (musicUrl, beatTimes, dto) but NOT segments in metadata
             await this.prisma.job.update({
                 where: { id: job.id },
                 data: {
                     metadata: {
                         ...job.metadata,
-                        segments: segmentsMetadata,
                         musicUrl,
                         beatTimes,
-                        dto // Store DTO for finalization
+                        dto
                     }
                 }
             });
 
             // If no videos are generating (e.g. all failed or no webhook host), finalize immediately
-            const anyGenerating = segmentsMetadata.some(s => s.status === 'generating');
-            if (!anyGenerating) {
+            const generatingCount = await this.prisma.timelineSegment.count({
+                where: { jobId: job.id, status: 'generating' }
+            });
+            if (generatingCount === 0) {
                 await this.finalizeJob(job.id);
             }
 
@@ -267,22 +306,27 @@ export class TimelineService {
         if (!job) return;
 
         const metadata: any = job.metadata || {};
-        const segmentsData = metadata.segments || [];
         const beatTimes = metadata.beatTimes || [];
         const musicUrl = metadata.musicUrl;
         const dto = metadata.dto || {};
 
+        // Fetch segments from DB
+        const dbSegments = await this.prisma.timelineSegment.findMany({
+            where: { jobId },
+            orderBy: { index: 'asc' }
+        });
+
         const segments: TimelineSegment[] = [];
         let currentTime = 0;
 
-        for (const data of segmentsData) {
-            if (data.status === 'failed' && !data.imageUrl) continue; // Skip completely failed segments
+        for (const seg of dbSegments) {
+            if (seg.status === 'failed' && !seg.imageUrl) continue;
 
-            const { item, voiceUrl, audioDuration, imageUrl, videoUrl } = data;
+            const audioDuration = seg.duration || 0;
             let duration: number;
             let endTime: number;
 
-            if (dto.includeNarration !== false && audioDuration) {
+            if (dto.includeNarration !== false && audioDuration > 0) {
                 // Narrative Mode Sync
                 endTime = currentTime + audioDuration;
                 if (beatTimes.length > 0) {
@@ -306,12 +350,12 @@ export class TimelineService {
             }
 
             segments.push({
-                index: segments.length,
-                script: item.text,
-                visualPrompt: item.visualPrompt,
-                voiceUrl: voiceUrl,
-                imageUrl: imageUrl || undefined,
-                videoUrl: videoUrl || undefined,
+                index: seg.index,
+                script: seg.script,
+                visualPrompt: seg.visualPrompt,
+                voiceUrl: seg.audioUrl || undefined,
+                imageUrl: seg.imageUrl || undefined,
+                videoUrl: seg.videoUrl || undefined,
                 duration: duration,
                 startTime: currentTime,
                 endTime: endTime,

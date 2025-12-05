@@ -96,6 +96,7 @@ model Job {
   completedAt DateTime?
   user        User      @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
   r2Files     R2File[]
+  timelineSegments TimelineSegment[]
 
   @@index([userId, status])
   @@index([status, createdAt])
@@ -203,5 +204,49 @@ model WebhookEvent {
   createdAt DateTime @default(now())
 }
 
+model TimelineSegment {
+  id            String   @id @default(cuid())
+  jobId         String
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  index         Int
+  
+  // Content
+  script        String   @db.Text
+  visualPrompt  String   @db.Text
+  
+  // Assets
+  audioUrl      String?
+  imageUrl      String?
+  videoUrl      String?
+  
+  // State
+  predictionId  String?  // External ID from Replicate/Kling
+  status        String   @default("pending") // pending, generating, completed, failed
+  error         String?
+  
+  // Metadata
+  duration      Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([jobId, index])
+  @@index([predictionId])
+}
+
 // Plan table removed – plans now live in code
+
+enum CreditReason {
+  JOB
+  PAYMENT
+  REFUND
+  ADJUSTMENT
+  SUBSCRIPTION_CYCLE
+}
+
+enum CreditSourceType {
+  JOB
+  PAYMENT
+  SUBSCRIPTION_CYCLE
+  SYSTEM
+}
 
