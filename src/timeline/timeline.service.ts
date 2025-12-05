@@ -9,7 +9,7 @@ import { MusicService } from '../audio/music.service';
 import { R2Service } from '../upload/r2.service';
 import { GenerateTimelineDto } from './dto/generate-timeline.dto';
 import { RegenerateSegmentDto } from './dto/regenerate-segment.dto';
-import { TimelineResponse, TimelineSegment } from './dto/timeline-response.dto';
+import { TimelineResponse, TimelineSegment as TimelineSegmentDto } from './dto/timeline-response.dto';
 import { KlingProvider } from '../generation/providers/kling.provider';
 import { REEL_GENERATOR_SYSTEM_PROMPT } from './timeline.constants';
 import Replicate from 'replicate';
@@ -153,6 +153,10 @@ export class TimelineService {
                 await this.finalizeJob(jobId);
             } else {
                 this.logger.log(`Segment ${index} finished for completed job ${jobId}. Skipping auto-stitch (regeneration flow).`);
+
+                // IMPORTANT: For regeneration, we must sync the new video URL to the Job metadata
+                // so the frontend sees the update on next load.
+                await this._syncJobMetadata(jobId);
             }
         }
     }
@@ -206,6 +210,9 @@ export class TimelineService {
                         duration: audioDuration
                     }
                 });
+
+                // Sync metadata after audio update
+                await this._syncJobMetadata(jobId);
             } catch (err) {
                 this.logger.error(`Failed to regenerate audio for segment ${index}`, err);
                 // Don't block video regen if audio failed? Or throw?
@@ -223,12 +230,31 @@ export class TimelineService {
         // If prompt is NOT present but text IS => Skip Visuals.
         // If prompt is NOT present AND text is NOT present => Regenerate Visuals (default re-roll behavior).
 
-        const shouldRegenerateVisuals = !!dto.prompt || (!dto.text && !dto.prompt);
+        const isExplicit = dto.regenerateImage !== undefined || dto.regenerateVideo !== undefined;
 
-        if (!shouldRegenerateVisuals) {
-            this.logger.log(`Skipping visual regeneration for segment ${index} (Text-only update)`);
+        let shouldRegenerateImage = false;
+        if (dto.regenerateImage !== undefined) {
+            shouldRegenerateImage = dto.regenerateImage;
+        } else {
+            // Fallback: If prompt provided, or if it's a bare "regenerate" call (no args), regen image.
+            shouldRegenerateImage = !!dto.prompt || (!dto.text && !dto.prompt && !dto.motionPrompt);
+        }
+
+        let shouldRegenerateVideo = false;
+        if (dto.regenerateVideo !== undefined) {
+            shouldRegenerateVideo = dto.regenerateVideo;
+        } else {
+            // Fallback: If image regenerated, or motion prompt provided, regen video.
+            shouldRegenerateVideo = shouldRegenerateImage || !!dto.motionPrompt;
+        }
+
+        // If neither, and we just updated text, we return early above? 
+        // No, we handle audio first. 
+        // If we only updated text and didn't trigger visuals, we return.
+        if (!shouldRegenerateImage && !shouldRegenerateVideo && dto.text) {
+            this.logger.log(`Skipping visual/video regeneration for segment ${index} (Text-only update)`);
             return {
-                status: 'completed', // Or whatever strict status we want.
+                status: 'completed',
                 imageUrl: segment.imageUrl,
                 audioUrl: speechUrl,
                 script,
@@ -236,83 +262,99 @@ export class TimelineService {
             };
         }
 
-        let imageUrl = segment.imageUrl;
+        // Use supplied prompts or fallback to existing
         const visualPrompt = dto.prompt || segment.visualPrompt;
-        const motionPrompt = dto.motionPrompt || segment.motionPrompt;
+        const motionPrompt = dto.motionPrompt || (segment as any).motionPrompt;
+        let imageUrl = segment.imageUrl;
 
-        // Fetch User for Orchestrator
-        const user = await this.usersService.findById(job.userId);
-        if (!user) throw new InternalServerErrorException('User not found');
+        // 3. Visual Regeneration (Image)
+        if (shouldRegenerateImage) {
+            // Fetch User for Orchestrator
+            const user = await this.usersService.findById(job.userId);
+            if (!user) throw new InternalServerErrorException('User not found');
 
-        try {
-            // Generate New Image
-            const imgRes = await this.generationOrchestrator.generate(user, {
-                model: 'nano-banana-pro',
-                prompt: visualPrompt,
-                providerOptions: { aspectRatio: '9:16' }
-            }, {
-                cost: 1,
-                isJob: true,
-                persistenceOptions: {
-                    bucket: 'cyran-roll-images',
-                    skipR2FileRecord: true
-                }
-            });
+            try {
+                // Generate New Image
+                const imgRes = await this.generationOrchestrator.generate(user, {
+                    model: 'nano-banana-pro',
+                    prompt: visualPrompt,
+                    providerOptions: { aspectRatio: '9:16' }
+                }, {
+                    cost: 1,
+                    isJob: true,
+                    persistenceOptions: {
+                        bucket: 'cyran-roll-images',
+                        skipR2FileRecord: true
+                    }
+                });
 
-            imageUrl = (imgRes?.assets?.[0]?.r2FileUrl
-                ?? imgRes?.assets?.[0]?.remoteUrl
-                ?? imgRes?.assets?.[0]?.dataUrl) || null;
+                imageUrl = (imgRes?.assets?.[0]?.r2FileUrl
+                    ?? imgRes?.assets?.[0]?.remoteUrl
+                    ?? imgRes?.assets?.[0]?.dataUrl) || null;
 
-            if (!imageUrl) throw new Error('Failed to generate image');
+                if (!imageUrl) throw new Error('Failed to generate image');
 
-        } catch (err) {
-            this.logger.error(`Regeneration image failed for segment ${index}`, err);
-            throw new InternalServerErrorException(`Image generation failed: ${err instanceof Error ? err.message : String(err)}`);
+            } catch (err) {
+                this.logger.error(`Regeneration image failed for segment ${index}`, err);
+                throw new InternalServerErrorException(`Image generation failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+
+        if (!imageUrl && shouldRegenerateVideo) {
+            throw new InternalServerErrorException('Cannot regenerate video without an image');
         }
 
         // 4. Update Segment State
         await this.prisma.timelineSegment.update({
             where: { jobId_index: { jobId, index } },
             data: {
-                status: 'generating',
+                status: shouldRegenerateVideo ? 'generating' : 'completed', // If video not regenerating, we are done
                 imageUrl: imageUrl,
                 visualPrompt: visualPrompt,
                 motionPrompt: motionPrompt,
-                videoUrl: null, // Clear old video
+                // Only clear videoUrl if we are regenerating video OR if we generated a NEW image (old video invalid)
+                videoUrl: (shouldRegenerateVideo || shouldRegenerateImage) ? null : segment.videoUrl,
                 error: null
-            }
+            } as any
         });
 
+        // Sync Job Metadata to reflect changes (prompts, image, status)
+        await this._syncJobMetadata(jobId);
+
         // 5. Trigger Video Generation
-        const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
-        const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${jobId}&segmentIndex=${index}`;
+        if (shouldRegenerateVideo && imageUrl) {
+            const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
+            const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${jobId}&segmentIndex=${index}`;
 
-        try {
-            const prediction = await this.runWithSmartRetry(
-                () => this.klingProvider.generateVideoFromImageAsync(
-                    imageUrl,
-                    visualPrompt,
-                    webhookUrl,
-                    (motionPrompt ? `${motionPrompt}. High speed action, dynamic motion, blur, 30fps.` : 'Dynamic motion, high speed, 30fps.')
-                ),
-                index
-            );
+            try {
+                const prediction = await this.runWithSmartRetry(
+                    () => this.klingProvider.generateVideoFromImageAsync(
+                        imageUrl!,
+                        visualPrompt,
+                        webhookUrl,
+                        (motionPrompt ? `${motionPrompt}. High speed action, dynamic motion, blur, 30fps.` : 'Dynamic motion, high speed, 30fps.')
+                    ),
+                    index
+                );
 
-            await this.prisma.timelineSegment.update({
-                where: { jobId_index: { jobId, index } },
-                data: { predictionId: prediction.id }
-            });
+                await this.prisma.timelineSegment.update({
+                    where: { jobId_index: { jobId, index } },
+                    data: { predictionId: prediction.id }
+                });
 
-        } catch (err) {
-            this.logger.error(`Regeneration video start failed for segment ${index}`, err);
-            await this.prisma.timelineSegment.update({
-                where: { jobId_index: { jobId, index } },
-                data: { status: 'failed', error: String(err) }
-            });
-            throw new InternalServerErrorException('Failed to start video generation');
+            } catch (err) {
+                this.logger.error(`Regeneration video start failed for segment ${index}`, err);
+                await this.prisma.timelineSegment.update({
+                    where: { jobId_index: { jobId, index } },
+                    data: { status: 'failed', error: String(err) }
+                });
+                throw new InternalServerErrorException('Failed to start video generation');
+            }
+            return { status: 'generating', imageUrl };
+        } else {
+            // Image only regen
+            return { status: 'completed', imageUrl };
         }
-
-        return { status: 'generating', imageUrl };
     }
 
     private async processTimelineGeneration(job: any, dto: GenerateTimelineDto) {
@@ -604,7 +646,7 @@ export class TimelineService {
             // but the main deliverable is the resultUrl.
 
             // Re-calculate response for metadata (similar to previous code)
-            const segments: TimelineSegment[] = [];
+            const segments: TimelineSegmentDto[] = [];
             let currentTime = 0;
             // Use dbSegments to maintain index order even if some failed (though we only stitched valid ones)
             // But effectively the final video only has validSegments.
@@ -837,5 +879,67 @@ export class TimelineService {
         if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
         const arrayBuffer = await response.arrayBuffer();
         return Buffer.from(arrayBuffer);
+    }
+
+    /**
+     * Helper to sync the TimelineSegment table state back to the Job.metadata.response
+     * This ensures that any individual segment updates (regeneration, webhooks) are reflected
+     * when the frontend loads the job again.
+     */
+    private async _syncJobMetadata(jobId: string) {
+        try {
+            const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+            if (!job || !job.metadata) return;
+
+            const segments = await this.prisma.timelineSegment.findMany({
+                where: { jobId },
+                orderBy: { index: 'asc' }
+            });
+
+            const currentResponse = (job.metadata as any).response || {};
+
+            // Map segments to the response format
+            const responseSegments = segments.map(s => ({
+                id: s.id,
+                index: s.index,
+                script: s.script,
+                visualPrompt: s.visualPrompt,
+                motionPrompt: s.motionPrompt,
+                voiceUrl: s.audioUrl,
+                imageUrl: s.imageUrl,
+                videoUrl: s.videoUrl,
+                duration: s.duration || 3.0,
+                startTime: 0,
+                endTime: 0
+            }));
+
+            // Recalculate timings
+            let currentTime = 0;
+            for (const seg of responseSegments) {
+                seg.startTime = currentTime;
+                seg.endTime = currentTime + seg.duration;
+                currentTime += seg.duration;
+            }
+
+            const newResponse = {
+                ...currentResponse,
+                segments: responseSegments,
+                totalDuration: currentTime
+            };
+
+            await this.prisma.job.update({
+                where: { id: jobId },
+                data: {
+                    metadata: {
+                        ...(job.metadata as any),
+                        response: newResponse
+                    }
+                }
+            });
+
+            this.logger.log(`Synced job metadata for job ${jobId}`);
+        } catch (error) {
+            this.logger.error(`Failed to sync job metadata for job ${jobId}`, error);
+        }
     }
 }

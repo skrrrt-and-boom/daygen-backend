@@ -23,6 +23,10 @@ export class TimelineSegment {
     @IsOptional()
     videoUrl?: string;
 
+    @IsString()
+    @IsOptional()
+    motionPrompt?: string;
+
     @IsNumber()
     duration: number;
 

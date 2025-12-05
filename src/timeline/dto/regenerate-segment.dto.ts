@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, IsBoolean } from 'class-validator';
 
 export class RegenerateSegmentDto {
     @IsOptional()
@@ -16,4 +16,12 @@ export class RegenerateSegmentDto {
     @IsOptional()
     @IsString()
     motionPrompt?: string;
+
+    @IsOptional()
+    @IsBoolean()
+    regenerateImage?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    regenerateVideo?: boolean;
 }
