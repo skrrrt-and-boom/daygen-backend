@@ -10,6 +10,7 @@ import { R2Service } from '../upload/r2.service';
 import { GenerateTimelineDto } from './dto/generate-timeline.dto';
 import { TimelineResponse, TimelineSegment } from './dto/timeline-response.dto';
 import { KlingProvider } from '../generation/providers/kling.provider';
+import { REEL_GENERATOR_SYSTEM_PROMPT } from './timeline.constants';
 import Replicate from 'replicate';
 import * as util from 'util';
 import * as child_process from 'child_process';
@@ -81,13 +82,27 @@ export class TimelineService {
 
         // Determine status and output
         let status = 'generating';
-        let videoUrl = undefined;
-        let error = undefined;
+        let videoUrl: string | undefined = undefined;
+        let error: string | undefined = undefined;
 
         if (payload.status === 'succeeded') {
-            videoUrl = Array.isArray(payload.output) ? payload.output[0] : payload.output;
-            status = 'completed';
-            this.logger.log(`Segment ${index} video generated: ${videoUrl}`);
+            const rawVideoUrl = Array.isArray(payload.output) ? payload.output[0] : payload.output;
+            if (rawVideoUrl) {
+                try {
+                    // Upload to R2 (cyran-roll-clips)
+                    const buffer = await this.downloadToBuffer(rawVideoUrl);
+                    videoUrl = await this.r2Service.uploadBuffer(buffer, 'video/mp4', 'cyran-roll-clips');
+                    status = 'completed';
+                    this.logger.log(`Segment ${index} video uploaded to R2: ${videoUrl}`);
+                } catch (err) {
+                    this.logger.error(`Failed to upload video segment ${index} to R2`, err);
+                    status = 'failed';
+                    error = 'Failed to upload video to storage';
+                }
+            } else {
+                status = 'failed';
+                error = 'No video output from provider';
+            }
         } else if (payload.status === 'failed' || payload.status === 'canceled') {
             status = 'failed';
             error = payload.error;
@@ -180,7 +195,14 @@ export class TimelineService {
                         model: 'nano-banana-pro',
                         prompt: item.visualPrompt,
                         providerOptions: { aspectRatio: '9:16' }
-                    }, { cost: 1, isJob: true }).catch(err => {
+                    }, {
+                        cost: 1,
+                        isJob: true,
+                        persistenceOptions: {
+                            bucket: 'cyran-roll-images',
+                            skipR2FileRecord: true
+                        }
+                    }).catch(err => {
                         this.logger.error(`Visual generation failed for segment ${index}`, err);
                         return null;
                     });
@@ -406,47 +428,19 @@ export class TimelineService {
         throw new Error(`Segment ${segmentIndex} failed after ${maxRetries} rate-limit retries`);
     }
 
-    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<{ text: string; visualPrompt: string }[]> {
+    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<any[]> {
         const modelId = this.configService.get<string>('REPLICATE_MODEL_ID') || 'openai/gpt-5';
 
-        const segmentCounts = {
-            short: 3,
-            medium: 6,
-            long: 12
-        };
-        const targetSegments = segmentCounts[duration] || 6;
-
-        const prompt = `
-      Generate a script for a viral TikTok video about "${topic}".
-      Style: ${style}.
-      Target Length: ${duration} (${targetSegments} segments).
-      
-      NOTE: We are using the ElevenLabs v3 model for speech synthesis. This model supports advanced audio tags for emotional control and sound effects.
-      
-      Please incorporate the following tags naturally into the "text" where appropriate to enhance the storytelling:
-      - Emotion: [laughs], [laughs harder], [whispers], [sighs], [exhales], [crying], [excited], [sarcastic], [curious]
-      - Pacing: [pause] (e.g. "Wait... [pause] did you hear that?")
-      
-      Guidelines for "text":
-      - Write in a natural, conversational, or narrative style.
-      - Use the tags to add life to the script (e.g., "[whispers] I have a secret to tell you.", "This is amazing! [laughs]").
-      - Do NOT overuse tags; use them effectively for emphasis.
-      
-      The output must be a JSON array of EXACTLY ${targetSegments} objects, where each object has:
-      - "text": The spoken narration for this segment (including tags).
-      - "visualPrompt": A cinematic, detailed visual description for an AI image generator.
-      
-      Keep it punchy and engaging.
-      IMPORTANT: Return ONLY the raw JSON array. Do not include markdown formatting like \`\`\`json or \`\`\`.
-    `;
+        const durationText = duration === 'short' ? 'Short (2 scenes)' : duration;
+        const prompt = `Topic: ${topic}\nStyle: ${style}\nTarget Total Duration: ${durationText}`;
 
         try {
             const output = await this.replicate.run(modelId as any, {
                 input: {
                     prompt: prompt,
-                    max_tokens: 1024,
+                    max_tokens: 2048,
                     temperature: 0.7,
-                    system_prompt: "You are a creative scriptwriter. You always output valid JSON arrays. You never add markdown formatting or explanations."
+                    system_prompt: REEL_GENERATOR_SYSTEM_PROMPT
                 }
             });
 
@@ -460,9 +454,29 @@ export class TimelineService {
             // Clean up potential markdown code blocks if the model ignores instructions
             const cleanedContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
 
-            const parsed = JSON.parse(cleanedContent);
+            let parsed: any;
+            try {
+                parsed = JSON.parse(cleanedContent);
+            } catch (e) {
+                // Sometimes the model might add text before or after JSON
+                const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    parsed = JSON.parse(jsonMatch[0]);
+                } else {
+                    throw e;
+                }
+            }
 
-            // Handle cases where the array might be wrapped in a key like "segments" or just be the array
+            // Handle cases where the array might be wrapped in a key like "scenes"
+            if (parsed.scenes && Array.isArray(parsed.scenes)) {
+                return parsed.scenes.map((s: any) => ({
+                    ...s,
+                    visualPrompt: s.visual_prompt, // Map for compatibility
+                    motionPrompt: s.motion_prompt
+                }));
+            }
+
+            // Fallbacks for older formats or unexpected structures
             if (Array.isArray(parsed)) return parsed;
             if (parsed.script && Array.isArray(parsed.script)) return parsed.script;
             if (parsed.segments && Array.isArray(parsed.segments)) return parsed.segments;
@@ -471,7 +485,7 @@ export class TimelineService {
             const arrayVal = values.find(v => Array.isArray(v));
             if (arrayVal) return arrayVal as any;
 
-            throw new Error('Could not find array in JSON response');
+            throw new Error('Could not find scenes array in JSON response');
         } catch (e) {
             this.logger.error('Failed to generate/parse script from Replicate', e);
             throw new InternalServerErrorException(`Script generation failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -541,5 +555,12 @@ export class TimelineService {
         if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
         const arrayBuffer = await response.arrayBuffer();
         fs.writeFileSync(dest, Buffer.from(arrayBuffer));
+    }
+
+    private async downloadToBuffer(url: string): Promise<Buffer> {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
     }
 }

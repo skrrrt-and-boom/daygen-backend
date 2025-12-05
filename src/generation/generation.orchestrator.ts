@@ -43,9 +43,13 @@ export class GenerationOrchestrator {
             skipPersistence?: boolean;
             retries?: number;
             isJob?: boolean;
+            persistenceOptions?: {
+                bucket?: string;
+                skipR2FileRecord?: boolean;
+            };
         } = {},
     ): Promise<OrchestrationResult> {
-        const { cost = 1, skipPersistence = false, retries = 0, isJob = false } = options;
+        const { cost = 1, skipPersistence = false, retries = 0, isJob = false, persistenceOptions } = options;
         const prompt = dto.prompt?.trim();
         const model = dto.model?.trim();
 
@@ -77,6 +81,7 @@ export class GenerationOrchestrator {
                     prompt,
                     result,
                     dto,
+                    persistenceOptions
                 );
             }
 

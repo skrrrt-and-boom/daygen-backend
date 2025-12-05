@@ -91,6 +91,10 @@ export class GeneratedAssetService {
     prompt: string,
     providerResult: PersistableProviderResult,
     dto: ProviderGenerateDto,
+    options: {
+      bucket?: string;
+      skipR2FileRecord?: boolean;
+    } = {},
   ): Promise<void> {
     const assets = providerResult.assets;
     if (!assets || assets.length === 0) {
@@ -104,7 +108,7 @@ export class GeneratedAssetService {
         avatarId: dto.avatarId,
         avatarImageId: dto.avatarImageId,
         productId: dto.productId,
-      });
+      }, options);
     }
 
     // Update client payload with R2 info from the first asset (backward compatibility)
@@ -145,6 +149,10 @@ export class GeneratedAssetService {
       productId?: string;
       jobId?: string;
     },
+    options: {
+      bucket?: string;
+      skipR2FileRecord?: boolean;
+    } = {},
   ): Promise<void> {
     if (!this.r2Service.isConfigured()) {
       this.logger.error(
@@ -190,27 +198,35 @@ export class GeneratedAssetService {
       const publicUrl = await this.r2Service.uploadBase64Image(
         asset.base64,
         asset.mimeType,
-        'generated-images',
+        options.bucket || 'generated-images',
         filename,
       );
 
-      const r2File = await this.r2FilesService.create(user.authUserId, {
-        fileName: `image-${Date.now()}.${ext}`, // We might want to keep unique filenames for user downloads?
-        fileUrl: publicUrl,
-        fileSize: Math.round((asset.base64.length * 3) / 4),
-        mimeType: asset.mimeType,
-        prompt: metadata.prompt,
-        model: metadata.model,
-        avatarId: metadata.avatarId,
-        avatarImageId: metadata.avatarImageId,
-        productId: metadata.productId,
-        jobId: metadata.jobId,
-      });
+      // Only create R2File record if not skipped
+      let r2File: any = null;
+      if (!options.skipR2FileRecord) {
+        r2File = await this.r2FilesService.create(user.authUserId, {
+          fileName: `image-${Date.now()}.${ext}`, // We might want to keep unique filenames for user downloads?
+          fileUrl: publicUrl,
+          fileSize: Math.round((asset.base64.length * 3) / 4),
+          mimeType: asset.mimeType,
+          prompt: metadata.prompt,
+          model: metadata.model,
+          avatarId: metadata.avatarId,
+          avatarImageId: metadata.avatarImageId,
+          productId: metadata.productId,
+          jobId: metadata.jobId,
+        });
+      }
 
       asset.dataUrl = publicUrl;
       asset.remoteUrl = publicUrl;
-      asset.r2FileId = r2File.id;
-      asset.r2FileUrl = r2File.fileUrl;
+      if (r2File) {
+        asset.r2FileId = r2File.id;
+        asset.r2FileUrl = r2File.fileUrl;
+      } else {
+        asset.r2FileUrl = publicUrl;
+      }
 
     } catch (error) {
       const errorMessage =
