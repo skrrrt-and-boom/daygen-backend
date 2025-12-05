@@ -198,75 +198,71 @@ export class TimelineService {
                     };
                 } catch (err) {
                     this.logger.error(`Segment ${index} preparation failed`, err);
-                    return { item, index, error: true, status: 'failed' };
+                    return { item, index, error: String(err), status: 'failed' };
                 }
             });
 
             const preparedSegments = await Promise.all(segmentPromises);
 
-            // 4. Start Async Video Generation
+            // 3.5. Save Segments to DB (Create Phase)
+            // We must create them before we try to update them in the next step.
+            await this.prisma.timelineSegment.createMany({
+                data: preparedSegments.map(seg => ({
+                    jobId: job.id,
+                    index: seg.index,
+                    script: seg.item.text,
+                    visualPrompt: seg.item.visualPrompt,
+                    audioUrl: (seg as any).voiceUrl,
+                    imageUrl: (seg as any).imageUrl,
+                    duration: (seg as any).audioDuration,
+                    status: seg.status === 'failed' ? 'failed' : 'pending',
+                    error: (seg as any).error ? String((seg as any).error) : undefined
+                }))
+            });
+
+            // 4. Start Video Generation (Sequentially with Smart Retry to survive Rate Limits)
             const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
             if (!webhookHost) {
                 this.logger.warn('WEBHOOK_HOST not set. Video generation might fail or not report back if using async.');
             }
+            this.logger.log('Starting video generation queue...');
 
-            // Create TimelineSegment rows and trigger generation concurrently
-            const videoGenerationPromises = preparedSegments.map(async (segment) => {
-                // Create initial row
-                const dbSegment = await this.prisma.timelineSegment.create({
-                    data: {
-                        jobId: job.id,
-                        index: segment.index,
-                        script: segment.item.text,
-                        visualPrompt: segment.item.visualPrompt,
-                        audioUrl: segment.voiceUrl,
-                        imageUrl: segment.imageUrl,
-                        duration: segment.audioDuration,
-                        status: (segment.status === 'failed' || !segment.imageUrl) ? 'failed' : 'pending',
-                        error: segment.error ? 'Preparation failed' : undefined
-                    }
+            for (const segment of preparedSegments) {
+                if (segment.status === 'failed' || !segment.imageUrl) continue;
+
+                // Save "generating" status to DB (using your new TimelineSegment logic)
+                await this.prisma.timelineSegment.update({
+                    where: { jobId_index: { jobId: job.id, index: segment.index } },
+                    data: { status: 'generating' }
                 });
 
-                if (dbSegment.status === 'failed') return;
+                // Run with retry
+                try {
+                    const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${job.id}&segmentIndex=${segment.index}`;
 
-                // Trigger Video Generation
-                if (webhookHost) {
-                    try {
-                        const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${job.id}&segmentIndex=${segment.index}`;
-                        const prediction = await this.klingProvider.generateVideoFromImageAsync(
-                            dbSegment.imageUrl!,
-                            dbSegment.visualPrompt,
+                    const prediction = await this.runWithSmartRetry(
+                        () => this.klingProvider.generateVideoFromImageAsync(
+                            segment.imageUrl!,
+                            segment.item.visualPrompt,
                             webhookUrl
-                        );
+                        ),
+                        segment.index
+                    );
 
-                        // Update with prediction ID
-                        await this.prisma.timelineSegment.update({
-                            where: { id: dbSegment.id },
-                            data: {
-                                predictionId: prediction.id,
-                                status: 'generating'
-                            }
-                        });
-                    } catch (err) {
-                        this.logger.error(`Failed to start video generation for segment ${segment.index}`, err);
-                        await this.prisma.timelineSegment.update({
-                            where: { id: dbSegment.id },
-                            data: {
-                                status: 'failed',
-                                error: err instanceof Error ? err.message : String(err)
-                            }
-                        });
-                    }
-                } else {
-                    // Fallback or skip
+                    // Update DB with prediction ID
                     await this.prisma.timelineSegment.update({
-                        where: { id: dbSegment.id },
-                        data: { status: 'skipped' }
+                        where: { jobId_index: { jobId: job.id, index: segment.index } },
+                        data: { predictionId: prediction.id }
+                    });
+
+                } catch (err) {
+                    this.logger.error(`Segment ${segment.index} failed to start video:`, err);
+                    await this.prisma.timelineSegment.update({
+                        where: { jobId_index: { jobId: job.id, index: segment.index } },
+                        data: { status: 'failed', error: String(err) }
                     });
                 }
-            });
-
-            await Promise.all(videoGenerationPromises);
+            }
 
             // Save initial state (musicUrl, beatTimes, dto) but NOT segments in metadata
             await this.prisma.job.update({
@@ -381,6 +377,32 @@ export class TimelineService {
         });
 
         this.logger.log(`Job ${jobId} completed successfully.`);
+    }
+
+    private async runWithSmartRetry<T>(
+        operation: () => Promise<T>,
+        segmentIndex: number,
+        maxRetries = 3
+    ): Promise<T> {
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                return await operation();
+            } catch (error: any) {
+                // Check for Rate Limit (429)
+                if (error?.response?.status === 429 || error?.status === 429 || error?.toString().includes('429')) {
+                    // Extract wait time from error message or header, default to 10s
+                    // Replicate error example: "... limit resets in ~9s"
+                    const match = error.message?.match(/resets in ~(\d+)s/);
+                    const waitSeconds = match ? parseInt(match[1]) + 2 : 12; // Add 2s buffer
+
+                    this.logger.warn(`Segment ${segmentIndex} throttled (429). Waiting ${waitSeconds}s before retry ${i + 1}/${maxRetries}...`);
+                    await new Promise(r => setTimeout(r, waitSeconds * 1000));
+                    continue;
+                }
+                throw error; // Throw other errors immediately
+            }
+        }
+        throw new Error(`Segment ${segmentIndex} failed after ${maxRetries} rate-limit retries`);
     }
 
     private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<{ text: string; visualPrompt: string }[]> {
