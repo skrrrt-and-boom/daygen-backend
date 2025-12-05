@@ -230,7 +230,7 @@ export class TimelineService {
         // If prompt is NOT present but text IS => Skip Visuals.
         // If prompt is NOT present AND text is NOT present => Regenerate Visuals (default re-roll behavior).
 
-        const isExplicit = dto.regenerateImage !== undefined || dto.regenerateVideo !== undefined;
+
 
         let shouldRegenerateImage = false;
         if (dto.regenerateImage !== undefined) {
@@ -329,7 +329,7 @@ export class TimelineService {
             try {
                 const prediction = await this.runWithSmartRetry(
                     () => this.klingProvider.generateVideoFromImageAsync(
-                        imageUrl!,
+                        imageUrl,
                         visualPrompt,
                         webhookUrl,
                         (motionPrompt ? `${motionPrompt}. High speed action, dynamic motion, blur, 30fps.` : 'Dynamic motion, high speed, 30fps.')
