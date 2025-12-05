@@ -8,6 +8,7 @@ import { AudioService } from '../audio/audio.service';
 import { MusicService } from '../audio/music.service';
 import { R2Service } from '../upload/r2.service';
 import { GenerateTimelineDto } from './dto/generate-timeline.dto';
+import { RegenerateSegmentDto } from './dto/regenerate-segment.dto';
 import { TimelineResponse, TimelineSegment } from './dto/timeline-response.dto';
 import { KlingProvider } from '../generation/providers/kling.provider';
 import { REEL_GENERATOR_SYSTEM_PROMPT } from './timeline.constants';
@@ -143,9 +144,116 @@ export class TimelineService {
 
         // Step B3: If count is 0, call finalizeJob
         if (pendingCount === 0) {
-            this.logger.log(`All segments for job ${jobId} finished. Finalizing...`);
-            await this.finalizeJob(jobId);
+            const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+
+            // If job status is COMPLETED, assume it's a regeneration and DO NOT stitch.
+            // If job status is PROCESSING, it's the initial run, so DO stitch.
+            if (job && job.status !== 'COMPLETED') {
+                this.logger.log(`All segments for job ${jobId} finished. Finalizing...`);
+                await this.finalizeJob(jobId);
+            } else {
+                this.logger.log(`Segment ${index} finished for completed job ${jobId}. Skipping auto-stitch (regeneration flow).`);
+            }
         }
+    }
+
+    async regenerateSegment(jobId: string, index: number, dto: RegenerateSegmentDto) {
+        this.logger.log(`Regenerating segment ${index} for job ${jobId}`);
+
+        // 1. Fetch Segment & Job
+        const segment = await this.prisma.timelineSegment.findUnique({
+            where: { jobId_index: { jobId, index } }
+        });
+        if (!segment) throw new InternalServerErrorException('Segment not found');
+
+        const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+        if (!job) throw new InternalServerErrorException('Job not found');
+
+        // 2. Re-run Image Generation (if needed or standard flow)
+        // Current flow: Image -> Video. If we regenerate, we usually want a new Image too?
+        // Task says: "Re-run generationOrchestrator.generate (Image) -> klingProvider (Video)"
+
+        let imageUrl = segment.imageUrl;
+        let visualPrompt = dto.prompt || segment.visualPrompt;
+
+        // Fetch User for Orchestrator
+        const user = await this.usersService.findById(job.userId);
+        if (!user) throw new InternalServerErrorException('User not found');
+
+        try {
+            // Generate New Image
+            const imgRes = await this.generationOrchestrator.generate(user, {
+                model: 'nano-banana-pro',
+                prompt: visualPrompt,
+                providerOptions: { aspectRatio: '9:16' }
+            }, {
+                cost: 1,
+                isJob: true,
+                persistenceOptions: {
+                    bucket: 'cyran-roll-images',
+                    skipR2FileRecord: true
+                }
+            });
+
+            imageUrl = (imgRes?.assets?.[0]?.r2FileUrl
+                ?? imgRes?.assets?.[0]?.remoteUrl
+                ?? imgRes?.assets?.[0]?.dataUrl) || null;
+
+            if (!imageUrl) throw new Error('Failed to generate image');
+
+        } catch (err) {
+            this.logger.error(`Regeneration image failed for segment ${index}`, err);
+            throw new InternalServerErrorException(`Image generation failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        // 3. Update Segment State
+        await this.prisma.timelineSegment.update({
+            where: { jobId_index: { jobId, index } },
+            data: {
+                status: 'generating',
+                imageUrl: imageUrl,
+                visualPrompt: visualPrompt,
+                videoUrl: null, // Clear old video
+                error: null
+            }
+        });
+
+        // 4. Trigger Video Generation
+        const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
+        const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${jobId}&segmentIndex=${index}`;
+
+        // Run async video gen
+        // We use runWithSmartRetry but we don't want to block the HTTP response too long?
+        // Actually, the previous 'processTimelineGeneration' runs in background.
+        // But here we are in a Controller handler. We should probably NOT await the video generation if it takes time (Kling takes minutes).
+        // But `klingProvider.generateVideoFromImageAsync` IS async (returns prediction immediately).
+        // So we can await it.
+
+        try {
+            const prediction = await this.runWithSmartRetry(
+                () => this.klingProvider.generateVideoFromImageAsync(
+                    imageUrl!,
+                    visualPrompt,
+                    webhookUrl
+                ),
+                index
+            );
+
+            await this.prisma.timelineSegment.update({
+                where: { jobId_index: { jobId, index } },
+                data: { predictionId: prediction.id }
+            });
+
+        } catch (err) {
+            this.logger.error(`Regeneration video start failed for segment ${index}`, err);
+            await this.prisma.timelineSegment.update({
+                where: { jobId_index: { jobId, index } },
+                data: { status: 'failed', error: String(err) }
+            });
+            throw new InternalServerErrorException('Failed to start video generation');
+        }
+
+        return { status: 'generating', imageUrl };
     }
 
     private async processTimelineGeneration(job: any, dto: GenerateTimelineDto) {
@@ -338,7 +446,6 @@ export class TimelineService {
         if (!job) return;
 
         const metadata: any = job.metadata || {};
-        const beatTimes = metadata.beatTimes || [];
         const musicUrl = metadata.musicUrl;
         const dto = metadata.dto || {};
 
@@ -348,71 +455,155 @@ export class TimelineService {
             orderBy: { index: 'asc' }
         });
 
-        const segments: TimelineSegment[] = [];
-        let currentTime = 0;
+        // Filter valid segments for stitching
+        const validSegments = dbSegments.filter(s => s.status === 'completed' && s.videoUrl);
 
-        for (const seg of dbSegments) {
-            if (seg.status === 'failed' && !seg.imageUrl) continue;
-
-            const audioDuration = seg.duration || 0;
-            let duration: number;
-            let endTime: number;
-
-            if (dto.includeNarration !== false && audioDuration > 0) {
-                // Narrative Mode Sync
-                endTime = currentTime + audioDuration;
-                if (beatTimes.length > 0) {
-                    const absoluteTarget = currentTime + audioDuration;
-                    const nextBeat = beatTimes.find((t: number) => t > absoluteTarget);
-                    if (nextBeat) endTime = nextBeat;
-                }
-                duration = endTime - currentTime;
-            } else {
-                // Music Mode Sync
-                const minDuration = 3.0;
-                const targetTime = currentTime + minDuration;
-
-                if (beatTimes.length > 0) {
-                    const nextBeat = beatTimes.find((t: number) => t >= targetTime);
-                    endTime = nextBeat || (currentTime + minDuration);
-                } else {
-                    endTime = currentTime + 4.0;
-                }
-                duration = endTime - currentTime;
-            }
-
-            segments.push({
-                index: seg.index,
-                script: seg.script,
-                visualPrompt: seg.visualPrompt,
-                voiceUrl: seg.audioUrl || undefined,
-                imageUrl: seg.imageUrl || undefined,
-                videoUrl: seg.videoUrl || undefined,
-                duration: duration,
-                startTime: currentTime,
-                endTime: endTime,
+        if (validSegments.length === 0) {
+            this.logger.warn(`No valid video segments found for job ${jobId}. Marking as failed.`);
+            await this.prisma.job.update({
+                where: { id: jobId },
+                data: { status: 'FAILED', error: 'No video segments generated' }
             });
-
-            currentTime = endTime;
+            return;
         }
 
-        const response: TimelineResponse = {
-            segments,
-            totalDuration: currentTime,
-            musicUrl,
-        };
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `job-${jobId}-`));
+        this.logger.log(`Created temp dir for stitching: ${tempDir}`);
 
-        await this.prisma.job.update({
-            where: { id: job.id },
-            data: {
-                status: 'COMPLETED',
-                resultUrl: 'completed',
-                progress: 100,
-                metadata: { ...metadata, response }
+        try {
+            // 1. Download Video Segments
+            const localVideoPaths: string[] = [];
+            for (const seg of validSegments) {
+                const ext = path.extname(seg.videoUrl!) || '.mp4';
+                const localPath = path.join(tempDir, `seg-${seg.index}${ext}`);
+                await this.downloadFile(seg.videoUrl!, localPath);
+                localVideoPaths.push(localPath);
             }
-        });
 
-        this.logger.log(`Job ${jobId} completed successfully.`);
+            // 2. Download Background Music (if exists)
+            let localMusicPath: string | undefined = undefined;
+            if (musicUrl) {
+                try {
+                    const ext = path.extname(musicUrl) || '.mp3';
+                    localMusicPath = path.join(tempDir, `music${ext}`);
+                    await this.downloadFile(musicUrl, localMusicPath);
+                } catch (e) {
+                    this.logger.warn(`Failed to download background music: ${e}. Proceeding without music.`);
+                }
+            }
+
+            // 3. Construct Input JSON
+            const inputJsonPath = path.join(tempDir, 'input.json');
+            fs.writeFileSync(inputJsonPath, JSON.stringify(localVideoPaths));
+
+            // 4. Spawn Python Script
+            const outputPath = path.join(tempDir, 'final.mp4');
+            const scriptPath = path.resolve(process.cwd(), 'scripts/stitch_clips.py');
+
+            // Arguments: [script, --clips input.json, --output output.mp4, --format 9:16]
+            // Add --audio if music exists
+            const args = [
+                scriptPath,
+                '--clips', inputJsonPath,
+                '--output', outputPath,
+                '--format', '9:16' // For now hardcoded or get from dto.aspectRatio if available
+            ];
+
+            if (localMusicPath) {
+                args.push('--audio', localMusicPath);
+            }
+
+            this.logger.log(`Spawning stitch_clips.py: python3 ${args.join(' ')}`);
+            await exec(`python3 "${args[0]}" --clips "${args[2]}" --output "${args[4]}" --format "${args[6]}" ${localMusicPath ? `--audio "${localMusicPath}"` : ''}`);
+
+            // 5. Upload Result
+            if (!fs.existsSync(outputPath)) {
+                throw new Error('Video stitching script finished but output file missing');
+            }
+
+            const videoBuffer = fs.readFileSync(outputPath);
+            // Upload to 'cyran-roll-outputs' bucket/folder
+            // R2Service.uploadBuffer(buffer, mime, folder)
+            const resultUrl = await this.r2Service.uploadBuffer(videoBuffer, 'video/mp4', 'cyran-roll-outputs');
+
+            this.logger.log(`Stitched video uploaded: ${resultUrl}`);
+
+            // 6. Update Job Record
+            // Calculate final metadata (scene timings based on actual file lengths?)
+            // For now, we reuse the estimation logic or just save the final URL.
+            // But strict timeline response might be needed for frontend. 
+            // Let's keep the estimation logic for the 'response' metadata for now, 
+            // but the main deliverable is the resultUrl.
+
+            // Re-calculate response for metadata (similar to previous code)
+            const segments: TimelineSegment[] = [];
+            let currentTime = 0;
+            // Use dbSegments to maintain index order even if some failed (though we only stitched valid ones)
+            // But effectively the final video only has validSegments.
+            // Let's assume for metadata we show what is in the video.
+
+            for (const seg of validSegments) {
+                // Approximate duration or getting it from file would be better, 
+                // but let's stick to the previous logic or simplified one.
+                // The previous logic used 'duration' from audio/sync.
+                // We can keep that logic if we want perfectly synced metadata, 
+                // but strictly speaking we just stitched them back-to-back.
+
+                // Let's copy the "previous" metadata logic for consistency so frontend can display "segments"
+                const audioDuration = seg.duration || 3.0;
+                const duration = audioDuration; // Simplified
+
+                segments.push({
+                    index: seg.index,
+                    script: seg.script,
+                    visualPrompt: seg.visualPrompt,
+                    voiceUrl: seg.audioUrl || undefined,
+                    imageUrl: seg.imageUrl || undefined,
+                    videoUrl: seg.videoUrl || undefined,
+                    duration: duration,
+                    startTime: currentTime,
+                    endTime: currentTime + duration,
+                });
+                currentTime += duration;
+            }
+
+            const response: TimelineResponse = {
+                segments,
+                totalDuration: currentTime,
+                musicUrl,
+            };
+
+
+            await this.prisma.job.update({
+                where: { id: jobId },
+                data: {
+                    status: 'COMPLETED',
+                    resultUrl: resultUrl,
+                    progress: 100,
+                    metadata: { ...metadata, response }
+                }
+            });
+
+            this.logger.log(`Job ${jobId} finalized successfully.`);
+
+        } catch (error) {
+            this.logger.error(`Failed to Stitch/Finalize Job ${jobId}`, error);
+            await this.prisma.job.update({
+                where: { id: jobId },
+                data: {
+                    status: 'FAILED',
+                    error: error instanceof Error ? error.message : String(error)
+                }
+            });
+        } finally {
+            // Cleanup Temp Dir
+            try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+                this.logger.log(`Cleaned up temp dir: ${tempDir}`);
+            } catch (cleanupErr) {
+                this.logger.warn(`Failed to clean up temp dir ${tempDir}`, cleanupErr);
+            }
+        }
     }
 
     private async runWithSmartRetry<T>(

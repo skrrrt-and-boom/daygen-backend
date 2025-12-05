@@ -1,6 +1,7 @@
 import { Body, Controller, Post, Get, Param, InternalServerErrorException, UseGuards } from '@nestjs/common';
 import { TimelineService } from './timeline.service';
 import { GenerateTimelineDto } from './dto/generate-timeline.dto';
+import { RegenerateSegmentDto } from './dto/regenerate-segment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
@@ -27,5 +28,14 @@ export class TimelineController {
     @Get(':jobId')
     async getJobStatus(@Param('jobId') jobId: string) {
         return await this.timelineService.getJobStatus(jobId);
+    }
+
+    @Post(':jobId/segments/:index/regenerate')
+    async regenerateSegment(
+        @Param('jobId') jobId: string,
+        @Param('index') index: string,
+        @Body() dto: RegenerateSegmentDto
+    ) {
+        return await this.timelineService.regenerateSegment(jobId, parseInt(index), dto);
     }
 }
