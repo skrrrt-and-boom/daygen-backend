@@ -21,7 +21,15 @@ export class AudioController {
 
   @Get('voices')
   async listVoices() {
-    return this.audioService.listVoices();
+    console.log('GET /audio/voices - Request received');
+    try {
+      const result = await this.audioService.listVoices();
+      console.log('GET /audio/voices - Success', { count: result.voices.length });
+      return result;
+    } catch (error) {
+      console.error('GET /audio/voices - Error', error);
+      throw error;
+    }
   }
 
   @Post('voices/clone')

@@ -78,6 +78,13 @@ export class FluxImageAdapter implements ImageProviderAdapter {
     checkDim(width, 'width');
     checkDim(height, 'height');
 
+    const ar = opts['aspect_ratio'];
+    if (typeof ar === 'string' && ar.trim()) {
+      if (!/^\d{1,4}[:x]\d{1,4}$/i.test(ar.trim())) {
+        throw badRequest('aspect_ratio must be like 1:1, 16:9, or 16x9');
+      }
+    }
+
     const steps = opts['steps'];
     if (steps !== undefined) {
       if (typeof steps !== 'number' || !Number.isFinite(steps)) {

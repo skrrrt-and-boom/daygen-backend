@@ -4,7 +4,16 @@ export interface ProviderRouteConfig {
     allowInline?: boolean;
 }
 
-const FLUX_MODELS = new Set(['flux-2-pro', 'flux-2-flex']);
+const FLUX_MODELS = new Set([
+    'flux-2-pro',
+    'flux-2-flex',
+    'flux-pro-1.1',
+    'flux-pro-1.1-ultra',
+    'flux-kontext-pro',
+    'flux-kontext-max',
+    'flux-pro',
+    'flux-dev',
+]);
 
 const RUNWAY_MODELS = new Set(['runway-gen4', 'runway-gen4-turbo']);
 const RECRAFT_MODELS = new Set(['recraft-v3', 'recraft-v2']);

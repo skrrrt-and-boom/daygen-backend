@@ -7,7 +7,7 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 ## 🚀 Features
 
 ### Image Generation
-- **FLUX.2 Models**: FLUX.2 Pro & Flex via BFL API
+- **FLUX Models**: Flux Pro 1.1, Ultra, Kontext Pro/Max via BFL API
 - **Grok 2 Image**: xAI's Grok image generation endpoint with revised prompt metadata
 - **Gemini 3 Pro**: Google's latest text-to-image model with experimental preview support
 - **Ideogram V3**: Advanced text-to-image with turbo mode and style presets
@@ -19,7 +19,7 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 - **Luma AI**: Dream Shaper, Realistic Vision, and Photon models for various styles
 ### Image Generation
 - `POST /api/image/gemini` - Gemini 3 Pro image generation
-- `POST /api/image/flux` - FLUX.2 model generation
+- `POST /api/image/flux` - FLUX model generation
 - `POST /api/image/ideogram` - Ideogram generation
 - `POST /api/image/runway` - Runway generation
 - `POST /api/image/recraft` - Recraft generation
@@ -27,7 +27,7 @@ A comprehensive NestJS backend service for the DayGen AI-powered content generat
 - `POST /api/image/luma` - Luma AI generation
 
 ### Video Generation
-- **Veo 3.1**: Google's latest cinematic video generation with advanced prompting
+- **Veo 3**: Google's latest cinematic video generation with advanced prompting
 - **Kling**: Advanced video generation with multiple models and camera controls
 - **Runway Gen-4 Video**: Professional video generation with style consistency
 - **Wan 2.2**: Alibaba's text-to-video generation with high quality output
@@ -146,7 +146,7 @@ Configure API keys for the providers you want to use:
 ### Image Generation
 - `POST /api/image/grok` - Grok 2 image generation
 - `POST /api/image/gemini` - Gemini 3 Pro image generation
-- `POST /api/image/flux` - FLUX.2 model generation
+- `POST /api/image/flux` - FLUX model generation
 - `POST /api/image/gemini` - Gemini generation
 - `POST /api/image/ideogram` - Ideogram generation
 - `POST /api/image/runway` - Runway generation
@@ -155,7 +155,7 @@ Configure API keys for the providers you want to use:
 - `POST /api/image/luma` - Luma AI generation
 
 ### Video Generation
-- `POST /api/video/veo` - Google Veo 3.1 generation
+- `POST /api/video/veo` - Google Veo 3 generation
 - `POST /api/video/kling` - Kling video generation
 - `POST /api/video/runway` - Runway video generation
 - `POST /api/video/luma` - Luma video generation

@@ -93,8 +93,8 @@ Authorization: Bearer <jwt-token>
 
 {
   "prompt": "A beautiful sunset",
-  "model": "flux-2-pro",
-  "provider": "flux",
+  "model": "flux-1.1-pro",
+  "provider": "bfl",
   "options": {
     "width": 1024,
     "height": 1024
@@ -146,8 +146,8 @@ Authorization: Bearer <jwt-token>
     "A cat playing",
     "A mountain landscape"
   ],
-  "model": "flux-2-pro",
-  "provider": "flux",
+  "model": "flux-1.1-pro",
+  "provider": "bfl",
   "batchSize": 5,
   "options": {}
 }
@@ -227,7 +227,7 @@ socket.on('jobUpdate', (data) => {
 ### Supported Models
 
 **Image Generation Models:**
-- FLUX.2 Pro, FLUX.2 Flex (BFL API)
+- FLUX Pro 1.1, Ultra, Kontext Pro/Max (BFL API)
 - Gemini 3 Pro (Google)
 - Ideogram V3
 - Recraft v2/v3
@@ -238,7 +238,7 @@ socket.on('jobUpdate', (data) => {
 - Luma AI (Dream Shaper, Realistic Vision, Photon)
 
 **Video Generation Models:**
-- Veo 3.1 (Google)
+- Veo 3 (Google)
 - Kling (ByteDance)
 - Runway Gen-4 Video
 - Wan 2.2 (Alibaba)

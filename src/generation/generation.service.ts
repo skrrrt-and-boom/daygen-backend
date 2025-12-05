@@ -408,8 +408,17 @@ export class GenerationService {
     }
 
     switch (model) {
-
-
+      case 'gemini-3.0-pro-image':
+      case 'gemini-3.0-pro':
+      case 'gemini-3.0-pro-exp-01':
+      case 'imagen-4.0-generate-001':
+      case 'imagen-4.0-fast-generate-001':
+      case 'imagen-4.0-ultra-generate-001':
+      case 'imagen-3.0-generate-002':
+        return this.withCircuit('gemini', () => this.handleGemini({
+          ...dto,
+          model: model, // Pass through the model name to adapter for proper mapping
+        }));
       case 'ideogram':
         return this.withCircuit('ideogram', () => this.handleIdeogram(dto));
       case 'qwen-image':
