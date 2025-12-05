@@ -471,13 +471,33 @@ export class TimelineService {
         this.logger.log(`Created temp dir for stitching: ${tempDir}`);
 
         try {
-            // 1. Download Video Segments
-            const localVideoPaths: string[] = [];
+            // 1. Prepare Assets & Manifest
+            const manifest: Array<{ video: string; audio: string; text: string }> = [];
+
             for (const seg of validSegments) {
-                const ext = path.extname(seg.videoUrl!) || '.mp4';
-                const localPath = path.join(tempDir, `seg-${seg.index}${ext}`);
-                await this.downloadFile(seg.videoUrl!, localPath);
-                localVideoPaths.push(localPath);
+                // Video
+                const vExt = path.extname(seg.videoUrl!) || '.mp4';
+                const localVideoPath = path.join(tempDir, `seg-${seg.index}-video${vExt}`);
+                await this.downloadFile(seg.videoUrl!, localVideoPath);
+
+                // Audio
+                const localAudioPath = path.join(tempDir, `seg-${seg.index}-audio.mp3`);
+                if (seg.audioUrl) {
+                    await this.downloadFile(seg.audioUrl, localAudioPath);
+                } else {
+                    // Generate 1s silent audio
+                    try {
+                        await exec(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t 1 -c:a libmp3lame -q:a 4 "${localAudioPath}"`);
+                    } catch (e) {
+                        this.logger.warn(`Failed to generate silent audio for segment ${seg.index}: ${e}`);
+                    }
+                }
+
+                manifest.push({
+                    video: localVideoPath,
+                    audio: localAudioPath,
+                    text: seg.script || ''
+                });
             }
 
             // 2. Download Background Music (if exists)
@@ -492,29 +512,17 @@ export class TimelineService {
                 }
             }
 
-            // 3. Construct Input JSON
-            const inputJsonPath = path.join(tempDir, 'input.json');
-            fs.writeFileSync(inputJsonPath, JSON.stringify(localVideoPaths));
+            // 3. Write Manifest
+            const manifestPath = path.join(tempDir, 'manifest.json');
+            fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
             // 4. Spawn Python Script
             const outputPath = path.join(tempDir, 'final.mp4');
             const scriptPath = path.resolve(process.cwd(), 'scripts/stitch_clips.py');
 
-            // Arguments: [script, --clips input.json, --output output.mp4, --format 9:16]
-            // Add --audio if music exists
-            const args = [
-                scriptPath,
-                '--clips', inputJsonPath,
-                '--output', outputPath,
-                '--format', '9:16' // For now hardcoded or get from dto.aspectRatio if available
-            ];
-
-            if (localMusicPath) {
-                args.push('--audio', localMusicPath);
-            }
-
-            this.logger.log(`Spawning stitch_clips.py: python3 ${args.join(' ')}`);
-            await exec(`python3 "${args[0]}" --clips "${args[2]}" --output "${args[4]}" --format "${args[6]}" ${localMusicPath ? `--audio "${localMusicPath}"` : ''}`);
+            const cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16"${localMusicPath ? ` --audio "${localMusicPath}"` : ''}`;
+            this.logger.log(`Spawning stitch_clips.py: ${cmd}`);
+            await exec(cmd);
 
             // 5. Upload Result
             if (!fs.existsSync(outputPath)) {

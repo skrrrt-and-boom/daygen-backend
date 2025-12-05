@@ -5,142 +5,193 @@ import sys
 import os
 import ffmpeg
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Stitch multiple video clips into a single master video.")
-    parser.add_argument("--clips", required=True, help="JSON string or file path containing list of video file paths/URLs")
-    parser.add_argument("--output", required=True, help="Output file path")
-    parser.add_argument("--audio", help="Optional path to background music")
-    parser.add_argument("--format", choices=["9:16", "16:9"], default="9:16", help="Target aspect ratio (default: 9:16)")
-    return parser.parse_args()
-
-def get_resolution(aspect_ratio):
-    if aspect_ratio == "16:9":
-        return 1920, 1080
-    else:  # 9:16
-        return 1080, 1920
-
-def process_clip(input_path, width, height):
-    """
-    Scales and pads a video clip to fit within the target resolution (width x height)
-    while maintaining aspect ratio. Adds black bars if necessary.
-    """
+def get_audio_duration(path):
+    """Get the duration of an audio file using ffprobe."""
     try:
-        container = ffmpeg.input(input_path)
-        # Probe video to get metadata (optional, but good for validation if needed)
-        # probe = ffmpeg.probe(input_path)
-        
-        # Scale to fit in the box while preserving aspect ratio
-        # force_original_aspect_ratio='decrease' ensures it fits inside
-        video = container.video.filter('scale', width, height, force_original_aspect_ratio='decrease')
-        
-        # Pad to fill the remaining space
-        # x=(ow-iw)/2:y=(oh-ih)/2 centers the video
-        video = video.filter('pad', width, height, '(ow-iw)/2', '(oh-ih)/2')
-        
-        # Force SAR to 1/1 to match master
-        video = video.filter('setsar', '1')
-        
-        # Get audio stream, or generate silent audio if missing? 
-        # For simplicity, we assume clips have audio. If not, we might need a more complex check.
-        # But `ffmpeg-python` concat handles missing audio streams if we are careful, 
-        # usually simpler to just take the audio stream if it exists.
-        # Checking for audio stream existence is safer.
-        has_audio = False
-        try:
-           probe = ffmpeg.probe(input_path)
-           for stream in probe['streams']:
-               if stream['codec_type'] == 'audio':
-                   has_audio = True
-                   break
-        except ffmpeg.Error as e:
-            print(f"Error probing {input_path}: {e.stderr.decode()}", file=sys.stderr)
-            # Proceed assuming no audio or broken file, ffmpeg might fail later
-            pass
-
-        audio = container.audio if has_audio else ffmpeg.input('anullsrc', f='lavfi', t=0.1).audio # Placeholder, might be tricky with concat
-        # Actually, for concat filter in ffmpeg-python, it's best to have consistent streams.
-        # If a clip has no audio, we should generate silent audio of the same duration.
-        # However, that requires knowing the duration.
-        # Let's start simple: assume clips have audio or accept that silent clips might drop audio in the final mix if not handled.
-        # Enhanced approach: Use a `concat` input of streams.
-        
-        if not has_audio:
-             # Create silent audio for the duration of the video
-            # Getting duration requires check
-            video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
-            duration = float(video_info.get('duration', 0))
-            if duration == 0:
-                 # fallback to tags or container duration
-                 duration = float(probe['format']['duration'])
-            
-            # generated silence
-            audio = ffmpeg.input(f'anullsrc=d={duration}', f='lavfi').audio
-
-        return video, audio
+        probe = ffmpeg.probe(path)
+        return float(probe['format']['duration'])
+    except ffmpeg.Error as e:
+        print(f"Error probing {path}: {e.stderr.decode() if hasattr(e, 'stderr') else str(e)}", file=sys.stderr)
+        raise
     except Exception as e:
-        print(f"Error preparing clip {input_path}: {e}", file=sys.stderr)
-        raise e
+        print(f"Error probing {path}: {e}", file=sys.stderr)
+        raise
+
+def process_segment(segment, index, output_path, width, height):
+    """
+    Process a single segment:
+    1. Get Video and Audio (Voiceover)
+    2. Loop Video to be at least as long as Audio
+    3. Trim Video to match Audio duration
+    4. Burn Subtitles (drawtext)
+    5. Output temporary segment
+    """
+    video_path = segment.get('video')
+    audio_path = segment.get('audio')
+    text = segment.get('text', '')
+
+    if not video_path or not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video file not found: {video_path}")
+    if not audio_path or not os.path.exists(audio_path):
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    try:
+        # Audio-First Conforming: master duration comes from audio
+        audio_duration = get_audio_duration(audio_path)
+
+        # Inputs
+        # stream_loop=-1 makes the video input infinite (looping)
+        in_video = ffmpeg.input(video_path, stream_loop=-1)
+        in_audio = ffmpeg.input(audio_path)
+
+        # Video Operations
+        # 1. Trim video to exactly match audio duration
+        # Note: We loop first, then trim.
+        v = in_video.trim(duration=audio_duration).setpts('PTS-STARTPTS')
+
+        # 2. Scale and Pad to target resolution (Contain mode / Black bars)
+        # force_original_aspect_ratio='decrease' ensures it fits inside output box
+        v = v.filter('scale', width, height, force_original_aspect_ratio='decrease')
+        # pad to fill the rest with black
+        v = v.filter('pad', width, height, '(ow-iw)/2', '(oh-ih)/2')
+        # set sar to 1 to avoid aspect ratio issues during concat
+        v = v.filter('setsar', '1')
+
+        # 3. Subtitles
+        # Settings: Bottom center, white text, black border (fontsize 48, Arial or similar)
+        # Position: x centered, y at bottom with some margin (100px)
+        if text:
+            # We assume 'Arial' is available. 
+            # If text contains special chars, we rely on python string passing to ffmpeg-python 
+            # and ffmpeg-python to handle simple escaping. 
+            # Ideally, proper escaping for the complex filter string is needed, 
+            # but basic text usually works.
+            v = v.drawtext(
+                text=text,
+                font='Arial',
+                fontsize=48,
+                fontcolor='white',
+                borderw=2,
+                bordercolor='black',
+                x='(w-text_w)/2',
+                y='h-th-100'
+            )
+
+        # Output temporary segment
+        # Ensure compatible codecs for concatenation later
+        out = ffmpeg.output(
+            v, 
+            in_audio, 
+            output_path, 
+            vcodec='libx264', 
+            acodec='aac', 
+            pix_fmt='yuv420p', 
+            t=audio_duration, # Explicit duration for safety
+            loglevel='error'
+        )
+        out.run(overwrite_output=True)
+        
+    except ffmpeg.Error as e:
+        print(f"FFmpeg Error in segment {index}:", file=sys.stderr)
+        if e.stderr:
+            print(e.stderr.decode(), file=sys.stderr)
+        raise
 
 def main():
-    args = parse_args()
+    parser = argparse.ArgumentParser(description="Smart Video Stitcher")
+    parser.add_argument("--clips", required=True, help="Path to JSON file with segments")
+    parser.add_argument("--output", required=True, help="Final output MP4 file path")
+    parser.add_argument("--audio", help="Path to background music")
+    parser.add_argument("--format", default="9:16", choices=["9:16", "16:9"], help="Target aspect ratio")
+    args = parser.parse_args()
 
-    # Parse clips argument
+    # 1. Parse JSON Input
     try:
-        if os.path.isfile(args.clips):
-            with open(args.clips, 'r') as f:
-                clips_list = json.load(f)
-        else:
-            clips_list = json.loads(args.clips)
-    except json.JSONDecodeError as e:
-        print(f"Error parsing clips JSON: {e}", file=sys.stderr)
+        with open(args.clips, 'r') as f:
+            segments = json.load(f)
+    except Exception as e:
+        print(f"Error loading clips JSON: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if not clips_list:
-        print("No clips provided.", file=sys.stderr)
+    if not segments:
+        print("No segments provided.", file=sys.stderr)
         sys.exit(1)
 
-    width, height = get_resolution(args.format)
-    
-    processed_streams = []
-    
-    for clip_path in clips_list:
-        v, a = process_clip(clip_path, width, height)
-        processed_streams.append(v)
-        processed_streams.append(a)
-
-    # Concatenate all clips
-    # v=1, a=1 means 1 video stream and 1 audio stream output
-    joined = ffmpeg.concat(*processed_streams, v=1, a=1).node
-    v_joined = joined[0]
-    a_joined = joined[1]
-
-    # Handle Background Music
-    if args.audio:
-        bg_music = ffmpeg.input(args.audio)
-        # We want the background music to play along with the clips audio.
-        # We can use amix.
-        # First, we might want to trim or loop the bg music?
-        # Requirement: "mix it in".
-        # Simplest mix: amix input 1 (clips audio) and input 2 (bg music).
-        # We should ensure bg music is not shorter than video? Or just let it end?
-        # Usually for these pipelines, looping or just playing it is fine. 
-        # Let's just mix. If bg is shorter, it stops. If longer, it continues? 
-        # ffmpeg amix duration default is 'longest', shortest, or first. 'first' is usually good to match video length if video is first.
-        
-        # Let's set duration='first' so it ends when the concatenated video ends.
-        a_final = ffmpeg.filter([a_joined, bg_music], 'amix', duration='first')
+    # 2. Determine Resolution
+    if args.format == "16:9":
+        W, H = 1920, 1080
     else:
-        a_final = a_joined
+        W, H = 1080, 1920
 
-    # Output
+    # 3. Process Each Segment
+    temp_files = []
     try:
-        out = ffmpeg.output(v_joined, a_final, args.output, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', shortest=None)
-        out.run(overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        import uuid
+        session_id = str(uuid.uuid4())[:8] # unique ID for temp files to avoid collisions if running concurrently
+        
+        print(f"Starting processing of {len(segments)} segments...", file=sys.stderr)
+        
+        for i, section in enumerate(segments):
+            temp_path = f"temp_seg_{session_id}_{i}.mp4"
+            # print(f"Processing segment {i+1} -> {temp_path}", file=sys.stderr)
+            process_segment(section, i, temp_path, W, H)
+            temp_files.append(temp_path)
+
+        # 4. Concatenate Segments
+        print("Concatenating segments...", file=sys.stderr)
+        if len(temp_files) == 1:
+            # If only one file, avoiding concat filter might be safer/faster but concat is fine
+            joined_v = ffmpeg.input(temp_files[0]).video
+            joined_a = ffmpeg.input(temp_files[0]).audio
+        else:
+            inputs = [ffmpeg.input(f) for f in temp_files]
+            # concat(v=1, a=1)
+            joined = ffmpeg.concat(*inputs, v=1, a=1).node
+            joined_v = joined[0]
+            joined_a = joined[1]
+
+        # 5. Mix Background Music
+        if args.audio and os.path.exists(args.audio):
+            print(f"Mixing background music: {args.audio}", file=sys.stderr)
+            bg_music = ffmpeg.input(args.audio)
+            # Volume 0.3
+            bg_music = bg_music.filter('volume', 0.3)
+            
+            # Use amix to mix voiceover (joined_a) and background (bg_music)
+            # duration='first' ensures the output length matches the video/voiceover track
+            # weights not strictly supported in basic amix without complex filter, but volume filter processes it before.
+            mixed_audio = ffmpeg.filter([joined_a, bg_music], 'amix', duration='first', dropout_transition=2)
+            final_audio = mixed_audio
+        else:
+            final_audio = joined_a
+
+        # 6. Final Output
+        print(f"Rendering final video to {args.output}...", file=sys.stderr)
+        out = ffmpeg.output(
+            joined_v, 
+            final_audio, 
+            args.output, 
+            vcodec='libx264', 
+            acodec='aac', 
+            pix_fmt='yuv420p',
+            loglevel='error'
+        )
+        out.run(overwrite_output=True)
+        
+        # Success output (stdout)
         print(args.output)
-    except ffmpeg.Error as e:
-        print("FFmpeg error:", file=sys.stderr)
-        print(e.stderr.decode(), file=sys.stderr)
+
+    except Exception as e:
+        print(f"Process failed: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        # Cleanup temp files
+        for f in temp_files:
+            if os.path.exists(f):
+                try:
+                    os.remove(f)
+                except:
+                    pass
 
 if __name__ == "__main__":
     main()
