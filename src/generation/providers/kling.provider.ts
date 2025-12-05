@@ -43,4 +43,49 @@ export class KlingProvider {
             throw error;
         }
     }
+
+    async generateVideoFromImageAsync(imageUrl: string, prompt: string, webhookUrl?: string): Promise<any> {
+        this.logger.log(`Starting async animation with Kling (${this.modelId})...`);
+
+        const input = {
+            prompt: prompt,
+            start_image: imageUrl,
+            duration: 5,
+            cfg_scale: 0.5,
+            mode: "std"
+        };
+
+        try {
+            // We need to resolve the model version first because predictions.create requires a version ID
+            // modelId is "kwaivgi/kling-v2.5-turbo-pro"
+            const [owner, name] = this.modelId.split('/');
+            const model = await this.replicate.models.get(owner, name);
+            const version = model.latest_version?.id;
+
+            if (!version) {
+                throw new Error(`Could not find latest version for model ${this.modelId}`);
+            }
+
+            const options: any = {
+                version: version,
+                input: input,
+            };
+
+            if (webhookUrl) {
+                options.webhook = webhookUrl;
+                options.webhook_events_filter = ["completed"];
+            }
+
+            const prediction = await this.replicate.predictions.create(options);
+
+            this.logger.log(`Kling async generation started. Prediction ID: ${prediction.id}`);
+            return prediction;
+        } catch (error) {
+            this.logger.error("Kling async generation failed", error);
+            if (error && typeof error === 'object' && 'response' in error) {
+                this.logger.error(`Replicate API Error: ${JSON.stringify((error as any).response?.data)}`);
+            }
+            throw error;
+        }
+    }
 }

@@ -70,6 +70,50 @@ export class TimelineService {
         return job;
     }
 
+    async handleWebhookUpdate(payload: any, query: any) {
+        const { jobId, segmentIndex } = query;
+        if (!jobId || segmentIndex === undefined) {
+            this.logger.warn('Webhook missing jobId or segmentIndex');
+            return;
+        }
+
+        const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+        if (!job || job.status !== 'PROCESSING') return;
+
+        const metadata: any = job.metadata || {};
+        const segments = metadata.segments || [];
+        const index = parseInt(segmentIndex);
+
+        if (segments[index]) {
+            if (payload.status === 'succeeded') {
+                // Kling output is usually an array of strings (URLs)
+                const videoUrl = Array.isArray(payload.output) ? payload.output[0] : payload.output;
+                segments[index].videoUrl = videoUrl;
+                segments[index].status = 'completed';
+                this.logger.log(`Segment ${index} video generated: ${videoUrl}`);
+            } else if (payload.status === 'failed' || payload.status === 'canceled') {
+                segments[index].status = 'failed';
+                segments[index].error = payload.error;
+                this.logger.error(`Segment ${index} video failed: ${payload.error}`);
+            }
+        }
+
+        // Update job metadata
+        await this.prisma.job.update({
+            where: { id: jobId },
+            data: { metadata: { ...metadata, segments } }
+        });
+
+        // Check if all segments are done (completed, failed, or skipped)
+        // We only wait for segments that have a predictionId (i.e., video generation started)
+        // Segments without video (skipped) should be marked as such initially.
+        const pending = segments.some((s: any) => s.status === 'generating');
+        if (!pending) {
+            this.logger.log(`All segments for job ${jobId} finished. Finalizing...`);
+            await this.finalizeJob(jobId);
+        }
+    }
+
     private async processTimelineGeneration(job: any, dto: GenerateTimelineDto) {
         try {
             // 0. Fetch User
@@ -91,15 +135,11 @@ export class TimelineService {
                 }
             }
 
-            // 3. PHASE 1 - SEQUENTIAL GENERATION (To avoid rate limits)
-            this.logger.log('Starting sequential generation phase...');
-            const segmentResults: any[] = [];
+            // 3. Concurrent Generation (Audio & Image)
+            this.logger.log('Starting concurrent generation (Audio & Image)...');
 
-            for (let index = 0; index < script.length; index++) {
-                const item = script[index];
+            const segmentPromises = script.map(async (item, index) => {
                 try {
-                    this.logger.log(`Processing segment ${index + 1}/${script.length}...`);
-
                     // Audio Generation
                     let speechResult: { url: string; duration: number } | null = null;
                     if (dto.includeNarration !== false) {
@@ -129,109 +169,89 @@ export class TimelineService {
                         ?? imgRes?.assets?.[0]?.remoteUrl
                         ?? imgRes?.assets?.[0]?.dataUrl;
 
-                    let videoUrl: string | null = null;
-                    if (imageUrl) {
-                        // Visual Generation (Video) - Sequential
-                        try {
-                            videoUrl = await this.klingProvider.generateVideoFromImage(
-                                imageUrl,
-                                item.visualPrompt
-                            );
-                        } catch (err) {
-                            this.logger.error(`Kling video generation failed for segment ${index}`, err);
-                            // We continue even if video fails, just returning image
-                        }
-                    } else {
-                        this.logger.warn(`Image generation failed for segment ${index}, skipping video`);
-                    }
-
-                    segmentResults.push({
+                    return {
                         item,
+                        index,
                         voiceUrl: speechResult?.url,
                         audioDuration: speechResult?.duration,
                         imageUrl,
-                        videoUrl,
-                        index
-                    });
-
+                        status: 'ready_for_video'
+                    };
                 } catch (err) {
-                    this.logger.error(`Segment ${index} generation failed`, err);
-                    segmentResults.push({
-                        item,
-                        error: true,
-                        index
-                    });
-                }
-            }
-
-            // 4. PHASE 2 - SEQUENTIAL TIMING
-            const segments: TimelineSegment[] = [];
-            let currentTime = 0;
-
-            for (const result of segmentResults) {
-                if (result.error) continue; // Skip failed segments or handle gracefully
-
-                const { item, voiceUrl, audioDuration, imageUrl, videoUrl } = result;
-                let duration: number;
-                let endTime: number;
-
-                if (dto.includeNarration !== false && audioDuration) {
-                    // Narrative Mode Sync
-                    endTime = currentTime + audioDuration;
-                    if (beatTimes.length > 0) {
-                        const absoluteTarget = currentTime + audioDuration;
-                        const nextBeat = beatTimes.find(t => t > absoluteTarget);
-                        if (nextBeat) endTime = nextBeat;
-                    }
-                    duration = endTime - currentTime;
-                } else {
-                    // Music Mode Sync
-                    const minDuration = 3.0;
-                    const targetTime = currentTime + minDuration;
-
-                    if (beatTimes.length > 0) {
-                        const nextBeat = beatTimes.find(t => t >= targetTime);
-                        endTime = nextBeat || (currentTime + minDuration);
-                    } else {
-                        endTime = currentTime + 4.0;
-                    }
-                    duration = endTime - currentTime;
-                }
-
-                segments.push({
-                    index: segments.length,
-                    script: item.text,
-                    visualPrompt: item.visualPrompt,
-                    voiceUrl: voiceUrl,
-                    imageUrl: imageUrl || undefined, // Add image URL
-                    videoUrl: videoUrl || undefined, // Add video URL
-                    duration: duration,
-                    startTime: currentTime,
-                    endTime: endTime,
-                });
-
-                currentTime = endTime;
-            }
-
-            // 5. Finalize
-            const response: TimelineResponse = {
-                segments,
-                totalDuration: currentTime,
-                musicUrl,
-            };
-
-            await this.prisma.job.update({
-                where: { id: job.id },
-                data: {
-                    status: 'COMPLETED',
-                    resultUrl: 'completed',
-                    progress: 100,
-                    metadata: { ...job.metadata, response }
+                    this.logger.error(`Segment ${index} preparation failed`, err);
+                    return { item, index, error: true, status: 'failed' };
                 }
             });
 
+            const preparedSegments = await Promise.all(segmentPromises);
+
+            // 4. Start Async Video Generation
+            const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
+            if (!webhookHost) {
+                this.logger.warn('WEBHOOK_HOST not set. Video generation might fail or not report back if using async.');
+            }
+
+            const segmentsMetadata: any[] = [];
+
+            for (const segment of preparedSegments) {
+                if (segment.status === 'failed' || !segment.imageUrl) {
+                    segmentsMetadata.push({ ...segment, status: 'failed' });
+                    continue;
+                }
+
+                let predictionId = null;
+                let status = 'skipped';
+
+                if (webhookHost) {
+                    try {
+                        const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${job.id}&segmentIndex=${segment.index}`;
+                        const prediction = await this.klingProvider.generateVideoFromImageAsync(
+                            segment.imageUrl,
+                            segment.item.visualPrompt,
+                            webhookUrl
+                        );
+                        predictionId = prediction.id;
+                        status = 'generating';
+                    } catch (err) {
+                        this.logger.error(`Failed to start video generation for segment ${segment.index}`, err);
+                        status = 'failed';
+                    }
+                } else {
+                    // Fallback to sync if no webhook host (or just fail/skip video)
+                    // For now, we'll mark as skipped or try sync if we wanted, but the goal is async.
+                    // We will just skip video generation if no webhook host is configured to avoid hanging.
+                    this.logger.warn(`Skipping video generation for segment ${segment.index} due to missing WEBHOOK_HOST`);
+                }
+
+                segmentsMetadata.push({
+                    ...segment,
+                    predictionId,
+                    status
+                });
+            }
+
+            // Save initial state
+            await this.prisma.job.update({
+                where: { id: job.id },
+                data: {
+                    metadata: {
+                        ...job.metadata,
+                        segments: segmentsMetadata,
+                        musicUrl,
+                        beatTimes,
+                        dto // Store DTO for finalization
+                    }
+                }
+            });
+
+            // If no videos are generating (e.g. all failed or no webhook host), finalize immediately
+            const anyGenerating = segmentsMetadata.some(s => s.status === 'generating');
+            if (!anyGenerating) {
+                await this.finalizeJob(job.id);
+            }
+
         } catch (error) {
-            this.logger.error(`Job ${job.id} failed`, error);
+            this.logger.error(`Job ${job.id} failed during initialization`, error);
             await this.prisma.job.update({
                 where: { id: job.id },
                 data: {
@@ -239,8 +259,84 @@ export class TimelineService {
                     error: error instanceof Error ? error.message : String(error)
                 }
             });
-            throw error;
         }
+    }
+
+    private async finalizeJob(jobId: string) {
+        const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+        if (!job) return;
+
+        const metadata: any = job.metadata || {};
+        const segmentsData = metadata.segments || [];
+        const beatTimes = metadata.beatTimes || [];
+        const musicUrl = metadata.musicUrl;
+        const dto = metadata.dto || {};
+
+        const segments: TimelineSegment[] = [];
+        let currentTime = 0;
+
+        for (const data of segmentsData) {
+            if (data.status === 'failed' && !data.imageUrl) continue; // Skip completely failed segments
+
+            const { item, voiceUrl, audioDuration, imageUrl, videoUrl } = data;
+            let duration: number;
+            let endTime: number;
+
+            if (dto.includeNarration !== false && audioDuration) {
+                // Narrative Mode Sync
+                endTime = currentTime + audioDuration;
+                if (beatTimes.length > 0) {
+                    const absoluteTarget = currentTime + audioDuration;
+                    const nextBeat = beatTimes.find((t: number) => t > absoluteTarget);
+                    if (nextBeat) endTime = nextBeat;
+                }
+                duration = endTime - currentTime;
+            } else {
+                // Music Mode Sync
+                const minDuration = 3.0;
+                const targetTime = currentTime + minDuration;
+
+                if (beatTimes.length > 0) {
+                    const nextBeat = beatTimes.find((t: number) => t >= targetTime);
+                    endTime = nextBeat || (currentTime + minDuration);
+                } else {
+                    endTime = currentTime + 4.0;
+                }
+                duration = endTime - currentTime;
+            }
+
+            segments.push({
+                index: segments.length,
+                script: item.text,
+                visualPrompt: item.visualPrompt,
+                voiceUrl: voiceUrl,
+                imageUrl: imageUrl || undefined,
+                videoUrl: videoUrl || undefined,
+                duration: duration,
+                startTime: currentTime,
+                endTime: endTime,
+            });
+
+            currentTime = endTime;
+        }
+
+        const response: TimelineResponse = {
+            segments,
+            totalDuration: currentTime,
+            musicUrl,
+        };
+
+        await this.prisma.job.update({
+            where: { id: job.id },
+            data: {
+                status: 'COMPLETED',
+                resultUrl: 'completed',
+                progress: 100,
+                metadata: { ...metadata, response }
+            }
+        });
+
+        this.logger.log(`Job ${jobId} completed successfully.`);
     }
 
     private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<{ text: string; visualPrompt: string }[]> {

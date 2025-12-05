@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { TimelineModule } from '../timeline/timeline.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ImageGenerationController } from './image-generation.controller';
 import { GenerationService } from './generation.service';
@@ -168,6 +169,7 @@ const registryProvider = {
     UsageModule,
     PaymentsModule,
     forwardRef(() => JobsModule),
+    forwardRef(() => TimelineModule),
   ],
   controllers: [ImageGenerationController, VideoGenerationController],
   providers: [
