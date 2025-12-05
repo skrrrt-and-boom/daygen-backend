@@ -17,12 +17,12 @@ describe('MusicService', () => {
     });
 
     it('should return correct URL for known styles', () => {
-        expect(service.getBackgroundTrack('upbeat')).toBe('https://pub-82eeb6c8781b41e6ad18622c727f1cfc.r2.dev/music-cyran-roll/test-audio.mp3');
-        expect(service.getBackgroundTrack('cinematic')).toBe('https://pub-82eeb6c8781b41e6ad18622c727f1cfc.r2.dev/music-cyran-roll/tcmac.fr%20-%20Kanye%20West%20-%20On%20God.mp3');
-        expect(service.getBackgroundTrack('CHILL')).toBe('https://pub-82eeb6c8781b41e6ad18622c727f1cfc.r2.dev/music-cyran-roll/tcmac.fr%20-%20Kanye%20West%20-%20Use%20This%20Gospel.mp3');
+        expect(service.getBackgroundTrack('upbeat')).toBe('https://r2.daygen.ai/music/upbeat.mp3');
+        expect(service.getBackgroundTrack('cinematic')).toBe('https://r2.daygen.ai/music/cinematic.mp3');
+        expect(service.getBackgroundTrack('CHILL')).toBe('https://r2.daygen.ai/music/chill.mp3');
     });
 
     it('should return default URL for unknown style', () => {
-        expect(service.getBackgroundTrack('unknown')).toBe('https://pub-82eeb6c8781b41e6ad18622c727f1cfc.r2.dev/music-cyran-roll/test-audio.mp3');
+        expect(service.getBackgroundTrack('unknown')).toBe('https://r2.daygen.ai/music/upbeat.mp3');
     });
 });
