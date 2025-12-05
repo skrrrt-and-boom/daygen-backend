@@ -174,7 +174,7 @@ export class TimelineService {
         // Task says: "Re-run generationOrchestrator.generate (Image) -> klingProvider (Video)"
 
         let imageUrl = segment.imageUrl;
-        let visualPrompt = dto.prompt || segment.visualPrompt;
+        const visualPrompt = dto.prompt || segment.visualPrompt;
 
         // Fetch User for Orchestrator
         const user = await this.usersService.findById(job.userId);
@@ -232,7 +232,7 @@ export class TimelineService {
         try {
             const prediction = await this.runWithSmartRetry(
                 () => this.klingProvider.generateVideoFromImageAsync(
-                    imageUrl!,
+                    imageUrl,
                     visualPrompt,
                     webhookUrl
                 ),
@@ -447,7 +447,7 @@ export class TimelineService {
 
         const metadata: any = job.metadata || {};
         const musicUrl = metadata.musicUrl;
-        const dto = metadata.dto || {};
+
 
         // Fetch segments from DB
         const dbSegments = await this.prisma.timelineSegment.findMany({
