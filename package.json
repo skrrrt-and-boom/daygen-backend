@@ -16,7 +16,7 @@
     "lint:check": "eslint \"{src,apps,libs}/**/*.ts\"",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "docs:toc": "node scripts/update-docs-toc.js",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
