@@ -173,6 +173,69 @@ export class TimelineService {
         // Current flow: Image -> Video. If we regenerate, we usually want a new Image too?
         // Task says: "Re-run generationOrchestrator.generate (Image) -> klingProvider (Video)"
 
+        // 2. Audio Regeneration (if text provided)
+        let speechUrl = segment.audioUrl;
+        let audioDuration = segment.duration;
+        let script = segment.script;
+
+        if (dto.text && dto.text !== segment.script) {
+            this.logger.log(`Regenerating audio for segment ${index}`);
+            // Generate Speech
+            try {
+                const result = await this.audioService.generateSpeech({
+                    text: dto.text,
+                    voiceId: undefined, // Use default or fetch from job metadata if stored? For now default.
+                    modelId: 'eleven_v3',
+                    stability: 0.5,
+                    similarityBoost: 0.75,
+                });
+                const buffer = Buffer.from(result.audioBase64, 'base64');
+                const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
+                const duration = await this.getAudioDuration(buffer);
+
+                speechUrl = url;
+                audioDuration = duration;
+                script = dto.text;
+
+                // Update DB immediately for audio
+                await this.prisma.timelineSegment.update({
+                    where: { jobId_index: { jobId, index } },
+                    data: {
+                        script: dto.text,
+                        audioUrl: speechUrl,
+                        duration: audioDuration
+                    }
+                });
+            } catch (err) {
+                this.logger.error(`Failed to regenerate audio for segment ${index}`, err);
+                // Don't block video regen if audio failed? Or throw?
+                // If the user explicitly asked for text change, we should probably throw.
+                throw new InternalServerErrorException(`Audio generation failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+
+        // 3. Visual Regeneration (Image -> Video)
+        // If 'prompt' is provided OR 'text' was NOT provided (setup: if only text provided, we skip visual unless prompted).
+        // Wait, if I click "Regenerate" on the image, I want new image.
+        // If I click "Save" on the text, I want new audio.
+        // What if I send both?
+        // Let's say: If prompt is present => Regenerate Visuals.
+        // If prompt is NOT present but text IS => Skip Visuals.
+        // If prompt is NOT present AND text is NOT present => Regenerate Visuals (default re-roll behavior).
+
+        const shouldRegenerateVisuals = !!dto.prompt || (!dto.text && !dto.prompt);
+
+        if (!shouldRegenerateVisuals) {
+            this.logger.log(`Skipping visual regeneration for segment ${index} (Text-only update)`);
+            return {
+                status: 'completed', // Or whatever strict status we want.
+                imageUrl: segment.imageUrl,
+                audioUrl: speechUrl,
+                script,
+                duration: audioDuration
+            };
+        }
+
         let imageUrl = segment.imageUrl;
         const visualPrompt = dto.prompt || segment.visualPrompt;
 
@@ -206,7 +269,7 @@ export class TimelineService {
             throw new InternalServerErrorException(`Image generation failed: ${err instanceof Error ? err.message : String(err)}`);
         }
 
-        // 3. Update Segment State
+        // 4. Update Segment State
         await this.prisma.timelineSegment.update({
             where: { jobId_index: { jobId, index } },
             data: {
@@ -218,16 +281,9 @@ export class TimelineService {
             }
         });
 
-        // 4. Trigger Video Generation
+        // 5. Trigger Video Generation
         const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
         const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${jobId}&segmentIndex=${index}`;
-
-        // Run async video gen
-        // We use runWithSmartRetry but we don't want to block the HTTP response too long?
-        // Actually, the previous 'processTimelineGeneration' runs in background.
-        // But here we are in a Controller handler. We should probably NOT await the video generation if it takes time (Kling takes minutes).
-        // But `klingProvider.generateVideoFromImageAsync` IS async (returns prediction immediately).
-        // So we can await it.
 
         try {
             const prediction = await this.runWithSmartRetry(

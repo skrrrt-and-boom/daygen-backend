@@ -8,4 +8,8 @@ export class RegenerateSegmentDto {
     @IsOptional()
     @IsString()
     style?: string;
+
+    @IsOptional()
+    @IsString()
+    text?: string;
 }
