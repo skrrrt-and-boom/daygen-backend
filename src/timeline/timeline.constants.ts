@@ -35,7 +35,8 @@ Return ONLY a raw JSON object with this structure (no markdown, no backticks):
 {
   "meta": {
     "detected_vibe": "String (e.g., Dark Horror, Fast Comedy)",
-    "estimated_total_duration": "Number (seconds)"
+    "estimated_total_duration": "Number (seconds)",
+    "title": "String (Short, catchy title for the video)"
   },
   "scenes": [
     {

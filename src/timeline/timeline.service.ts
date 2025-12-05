@@ -155,8 +155,21 @@ export class TimelineService {
             if (!user) throw new Error('User not found');
 
             // 1. Script Generation
-            const script = await this.generateScript(dto.topic, dto.style, dto.duration);
-            this.logger.log(`Generated script with ${script.length} segments`);
+            const { script, title } = await this.generateScript(dto.topic, dto.style, dto.duration);
+            this.logger.log(`Generated script with ${script.length} segments. Title: "${title}"`);
+
+            // 1.5 Update Job Title
+            if (title) {
+                await this.prisma.job.update({
+                    where: { id: job.id },
+                    data: {
+                        metadata: {
+                            ...job.metadata,
+                            title: title
+                        }
+                    }
+                });
+            }
 
             // 2. Audio Gen & Beat Sync Setup
             const musicUrl = this.musicService.getBackgroundTrack(dto.style || 'upbeat');
@@ -428,7 +441,7 @@ export class TimelineService {
         throw new Error(`Segment ${segmentIndex} failed after ${maxRetries} rate-limit retries`);
     }
 
-    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<any[]> {
+    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<{ script: any[]; title?: string }> {
         const modelId = this.configService.get<string>('REPLICATE_MODEL_ID') || 'openai/gpt-5';
 
         const durationText = duration === 'short' ? 'Short (2 scenes)' : duration;
@@ -469,21 +482,24 @@ export class TimelineService {
 
             // Handle cases where the array might be wrapped in a key like "scenes"
             if (parsed.scenes && Array.isArray(parsed.scenes)) {
-                return parsed.scenes.map((s: any) => ({
-                    ...s,
-                    visualPrompt: s.visual_prompt, // Map for compatibility
-                    motionPrompt: s.motion_prompt
-                }));
+                return {
+                    script: parsed.scenes.map((s: any) => ({
+                        ...s,
+                        visualPrompt: s.visual_prompt, // Map for compatibility
+                        motionPrompt: s.motion_prompt
+                    })),
+                    title: parsed.meta?.title || parsed.title
+                };
             }
 
             // Fallbacks for older formats or unexpected structures
-            if (Array.isArray(parsed)) return parsed;
-            if (parsed.script && Array.isArray(parsed.script)) return parsed.script;
-            if (parsed.segments && Array.isArray(parsed.segments)) return parsed.segments;
+            if (Array.isArray(parsed)) return { script: parsed };
+            if (parsed.script && Array.isArray(parsed.script)) return { script: parsed.script, title: parsed.title };
+            if (parsed.segments && Array.isArray(parsed.segments)) return { script: parsed.segments, title: parsed.title };
 
             const values = Object.values(parsed);
             const arrayVal = values.find(v => Array.isArray(v));
-            if (arrayVal) return arrayVal as any;
+            if (arrayVal) return { script: arrayVal as any };
 
             throw new Error('Could not find scenes array in JSON response');
         } catch (e) {
