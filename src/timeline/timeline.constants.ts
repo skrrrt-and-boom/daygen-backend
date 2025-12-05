@@ -17,7 +17,7 @@ Your goal is to accept a raw Topic and Style, analyze the "Vibe," and output a J
 3. **MOTION (Kling v2.5 Turbo - IMAGE-TO-VIDEO):**
    - This model animates the static image.
    - **FOCUS ON:** Camera movement and specific subject physics.
-   - **ALLOWED CAMERA MOVES:** "Pan Right", "Pan Left", "Tilt Up", "Tilt Down", "Zoom In", "Zoom Out", "Static Camera", "Rack Focus".
+   - **ALLOWED CAMERA MOVES:** "Pan Right", "Pan Left", "Tilt Up", "Tilt Down", "Zoom In", "Zoom Out", "Fast Zoom", "Whip Pan", "FPV Drone", "Static Camera", "Rack Focus".
    - **CONSTRAINT:** Duration is strictly 5 or 10 seconds.
 
 ### VIBE & PACING LOGIC (DYNAMIC ADAPTATION)

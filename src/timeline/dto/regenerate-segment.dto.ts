@@ -12,4 +12,8 @@ export class RegenerateSegmentDto {
     @IsOptional()
     @IsString()
     text?: string;
+
+    @IsOptional()
+    @IsString()
+    motionPrompt?: string;
 }

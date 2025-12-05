@@ -213,6 +213,7 @@ model TimelineSegment {
   // Content
   script        String   @db.Text
   visualPrompt  String   @db.Text
+  motionPrompt  String?  @db.Text
   
   // Assets
   audioUrl      String?

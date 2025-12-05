@@ -238,6 +238,7 @@ export class TimelineService {
 
         let imageUrl = segment.imageUrl;
         const visualPrompt = dto.prompt || segment.visualPrompt;
+        const motionPrompt = dto.motionPrompt || segment.motionPrompt;
 
         // Fetch User for Orchestrator
         const user = await this.usersService.findById(job.userId);
@@ -276,6 +277,7 @@ export class TimelineService {
                 status: 'generating',
                 imageUrl: imageUrl,
                 visualPrompt: visualPrompt,
+                motionPrompt: motionPrompt,
                 videoUrl: null, // Clear old video
                 error: null
             }
@@ -290,7 +292,8 @@ export class TimelineService {
                 () => this.klingProvider.generateVideoFromImageAsync(
                     imageUrl,
                     visualPrompt,
-                    webhookUrl
+                    webhookUrl,
+                    (motionPrompt ? `${motionPrompt}. Fast motion, 30fps.` : undefined)
                 ),
                 index
             );
@@ -412,6 +415,7 @@ export class TimelineService {
                     index: seg.index,
                     script: seg.item.text,
                     visualPrompt: seg.item.visualPrompt,
+                    motionPrompt: seg.item.motionPrompt,
                     audioUrl: (seg as any).voiceUrl,
                     imageUrl: (seg as any).imageUrl,
                     duration: (seg as any).audioDuration,

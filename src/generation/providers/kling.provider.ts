@@ -44,11 +44,13 @@ export class KlingProvider {
         }
     }
 
-    async generateVideoFromImageAsync(imageUrl: string, prompt: string, webhookUrl?: string): Promise<any> {
+    async generateVideoFromImageAsync(imageUrl: string, prompt: string, webhookUrl?: string, motionPrompt?: string): Promise<any> {
         this.logger.log(`Starting async animation with Kling (${this.modelId})...`);
 
+        const fullPrompt = motionPrompt ? `${prompt} ${motionPrompt}` : prompt;
+
         const input = {
-            prompt: prompt,
+            prompt: fullPrompt,
             start_image: imageUrl,
             duration: 5,
             cfg_scale: 0.5,
