@@ -173,9 +173,10 @@ export class AudioService {
     };
   }
 
-  async generateSpeech(dto: GenerateSpeechDto): Promise<{
+  async generateSpeech(dto: GenerateSpeechDto & { withTimestamps?: boolean }): Promise<{
     success: boolean;
     audioBase64: string;
+    alignment?: any;
     contentType: string;
     voiceId: string;
   }> {
@@ -200,9 +201,13 @@ export class AudioService {
     }
 
     let response: Response;
+    const endpoint = dto.withTimestamps
+      ? `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`
+      : `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+
     try {
       response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+        endpoint,
         {
           method: 'POST',
           headers: {
@@ -231,21 +236,31 @@ export class AudioService {
       throw new HttpException(message, response.status);
     }
 
-    // Returning mock audio logic was removed as we are using fetch directly now and not checking for this.client
-    // If apiKey check passes, we assume we want real audio.
-
     try {
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      const contentType =
-        response.headers.get('content-type') || 'audio/mpeg';
+      if (dto.withTimestamps) {
+        // Response is JSON with audio_base64 and alignment
+        const data = await response.json();
+        return {
+          success: true,
+          audioBase64: data.audio_base64,
+          alignment: data.alignment,
+          contentType: 'audio/mpeg', // Usually mp3
+          voiceId,
+        }
+      } else {
+        // Response is raw audio buffer
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const contentType =
+          response.headers.get('content-type') || 'audio/mpeg';
 
-      return {
-        success: true,
-        audioBase64: buffer.toString('base64'),
-        contentType,
-        voiceId,
-      };
+        return {
+          success: true,
+          audioBase64: buffer.toString('base64'),
+          contentType,
+          voiceId,
+        };
+      }
     } catch (error) {
       this.logger.error('Failed to decode ElevenLabs audio payload', error);
       throw new InternalServerErrorException(

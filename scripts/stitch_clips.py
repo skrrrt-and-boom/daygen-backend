@@ -3,6 +3,7 @@ import json
 import argparse
 import sys
 import os
+import re
 import ffmpeg
 
 def get_audio_duration(path):
@@ -17,14 +18,14 @@ def get_audio_duration(path):
         print(f"Error probing {path}: {e}", file=sys.stderr)
         raise
 
-def process_segment(segment, index, output_path, width, height):
+def process_segment(segment, index, output_path, width, height, font_settings):
     """
     Process a single segment:
     1. Get Video and Audio (Voiceover)
     2. Loop Video to be at least as long as Audio
     3. Trim Video to match Audio duration
     4. Force Standards (Scale, Pad, FPS, SAR, Pixel Format)
-    5. Burn Subtitles (drawtext)
+    5. Burn Subtitles (One word at a time)
     6. Output temporary segment
     """
     video_path = segment.get('video')
@@ -41,7 +42,7 @@ def process_segment(segment, index, output_path, width, height):
         audio_duration = get_audio_duration(audio_path)
 
         # Inputs
-        print(f"Segment {index}: Processing Video={video_path}, Audio={audio_path}", file=sys.stderr)
+        print(f"Segment {index}: Processing Video={video_path}, Audio={audio_path}, Text='{text}'", file=sys.stderr)
         
         # stream_loop=-1 makes the video input infinite (looping)
         in_video = ffmpeg.input(video_path, stream_loop=-1)
@@ -62,19 +63,120 @@ def process_segment(segment, index, output_path, width, height):
         v = v.filter('fps', fps=30)       # Force 30 FPS to prevent freezing
         v = v.filter('format', 'yuv420p') # Force pixel format
 
-        # 3. Subtitles
+        # 3. Subtitles (One Word at a Time)
         if text:
-            # Basic subtitle burn-in. Ensure fonts are installed in Docker container.
-            v = v.drawtext(
-                text=text,
-                font='Arial',
-                fontsize=48,
-                fontcolor='white',
-                borderw=2,
-                bordercolor='black',
-                x='(w-text_w)/2',
-                y='h-th-100'
-            )
+            # CLEANUP: Remove [instructions] and extra spaces
+            # Also remove hyphens as requested "-" and "--"
+            clean_text = re.sub(r'\[.*?\]', '', text)
+            clean_text = clean_text.replace('--', ' ').replace('-', ' ') 
+            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+            
+            alignment = segment.get('alignment')
+            
+            if alignment:
+                # PRECISION ALIGNMENT using ElevenLabs timestamps
+                chars = alignment.get('characters', [])
+                starts = alignment.get('character_start_times_seconds', [])
+                ends = alignment.get('character_end_times_seconds', [])
+                
+                # Reconstruct words from characters
+                # We need to group characters into words and find their start of first char and end of last char
+                current_word = ""
+                word_start = -1
+                word_end = -1
+                
+                words_with_timing = []
+                
+                for i, char in enumerate(chars):
+                    if char == ' ':
+                        if current_word:
+                            # Finish word
+                            # Filter unwanted chars from word if needed, but we want to match timing
+                            # Just cleaning display text might mismatch alignment mapping if we are not careful
+                            # But here we build words from the ALIGNMENT characters, so they are ground truth for timing.
+                            
+                            # Clean the word for display
+                            display_word = current_word.replace('--', '').replace('-', '')
+                            if display_word.strip():
+                                words_with_timing.append({
+                                    'text': display_word,
+                                    'start': word_start,
+                                    'end': word_end
+                                })
+                            current_word = ""
+                            word_start = -1
+                            word_end = -1
+                    else:
+                        if word_start == -1:
+                            word_start = starts[i]
+                        word_end = ends[i]
+                        current_word += char
+                
+                # Add last word
+                if current_word:
+                    display_word = current_word.replace('--', '').replace('-', '')
+                    if display_word.strip():
+                        words_with_timing.append({
+                            'text': display_word,
+                            'start': word_start,
+                            'end': word_end
+                        })
+                        
+                # Draw words with precise timing
+                font_path = font_settings.get('font')
+                font_arg = font_path if font_path and os.path.exists(font_path) else 'Arial'
+
+                for w in words_with_timing:
+                    safe_word = w['text'].replace("'", "\\'").replace(":", "\\:")
+                    v = v.drawtext(
+                        text=safe_word,
+                        fontfile=font_arg if os.path.exists(font_arg) else None,
+                        font=font_arg if not os.path.exists(font_arg) else None,
+                        fontsize=font_settings.get('fontsize', 70),
+                        fontcolor=font_settings.get('color', 'yellow'),
+                        borderw=2,
+                        bordercolor='black',
+                        shadowcolor='black',
+                        shadowx=2,
+                        shadowy=2,
+                        x='(w-text_w)/2',
+                        y=font_settings.get('y_pos', '(h-text_h)/1.2'),
+                        enable=f'between(t,{w["start"]},{w["end"]})'
+                    )
+
+            else:
+                # FALLBACK: Even distribution
+                words = clean_text.split()
+                if words:
+                    word_duration = audio_duration / len(words)
+                    
+                    font_path = font_settings.get('font')
+                    font_arg = font_path if font_path and os.path.exists(font_path) else 'Arial'
+
+                    for i, word in enumerate(words):
+                        start_time = i * word_duration
+                        end_time = (i + 1) * word_duration
+                        
+                        if i == len(words) - 1:
+                            end_time = audio_duration
+
+                        safe_word = word.replace("'", "\\'").replace(":", "\\:")
+                        
+                        v = v.drawtext(
+                            text=safe_word,
+                            fontfile=font_arg if os.path.exists(font_arg) else None,
+                            font=font_arg if not os.path.exists(font_arg) else None,
+                            fontsize=font_settings.get('fontsize', 70),
+                            fontcolor=font_settings.get('color', 'yellow'),
+                            borderw=2,
+                            bordercolor='black',
+                            shadowcolor='black',
+                            shadowx=2,
+                            shadowy=2,
+                            x='(w-text_w)/2',
+                            y=font_settings.get('y_pos', '(h-text_h)/1.2'),
+                            enable=f'between(t,{start_time},{end_time})'
+                        )
 
         # Output temporary segment
         # IMPORTANT: We use a high bitrate here to preserve quality before final concatenation
@@ -105,7 +207,21 @@ def main():
     parser.add_argument("--output", required=True, help="Final output MP4 file path")
     parser.add_argument("--audio", help="Path to background music")
     parser.add_argument("--format", default="9:16", choices=["9:16", "16:9"], help="Target aspect ratio")
+    
+    # Text Styling Arguments
+    parser.add_argument("--font", default="Arial", help="Path to font file or font name")
+    parser.add_argument("--fontsize", type=int, default=80, help="Font size")
+    parser.add_argument("--color", default="white", help="Font color (ffmpeg name or hex)")
+    parser.add_argument("--y_pos", default="(h-text_h)/1.15", help="Y position expression for text") # Default: slightly up from bottom
+
     args = parser.parse_args()
+
+    font_settings = {
+        'font': args.font,
+        'fontsize': args.fontsize,
+        'color': args.color,
+        'y_pos': args.y_pos
+    }
 
     # 1. Parse JSON Input
     try:
@@ -121,6 +237,11 @@ def main():
 
     # 2. Determine Resolution (720p Default)
     if args.format == "16:9":
+        W, H = 1920, 1080 # Upgrade to 1080p for premium feel? Or stick to 720p? User said "premium reels". Let's stick to 720p for speed or 1080p?
+        # The prompt didn't strictly say 1080p, but "Video look like debug...". 
+        # Changing resolution might be risky if assets are small, but let's stick to the previous code's logic for W/H but maybe confirm resolution.
+        # Previous code: 16:9 -> 1280x720. 9:16 -> 720x1280.
+        # Let's keep it safe for now to avoid OOM or slow processing, improvement comes from fonts.
         W, H = 1280, 720
     else:
         W, H = 720, 1280
@@ -140,7 +261,7 @@ def main():
         
         for i, section in enumerate(segments):
             temp_path = os.path.abspath(f"temp_seg_{session_id}_{i}.mp4")
-            process_segment(section, i, temp_path, W, H)
+            process_segment(section, i, temp_path, W, H, font_settings)
             temp_files.append(temp_path)
 
         # 4. Generate Concat Demuxer Input File

@@ -227,6 +227,7 @@ model TimelineSegment {
   
   // Metadata
   duration      Float?
+  alignment     Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

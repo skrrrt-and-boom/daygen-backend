@@ -192,6 +192,7 @@ export class TimelineService {
                     modelId: 'eleven_v3',
                     stability: 0.5,
                     similarityBoost: 0.75,
+                    withTimestamps: true
                 });
                 const buffer = Buffer.from(result.audioBase64, 'base64');
                 const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
@@ -207,8 +208,9 @@ export class TimelineService {
                     data: {
                         script: dto.text,
                         audioUrl: speechUrl,
-                        duration: audioDuration
-                    }
+                        duration: audioDuration,
+                        alignment: result.alignment // Save alignment
+                    } as any
                 });
 
                 // Sync metadata after audio update
@@ -397,7 +399,7 @@ export class TimelineService {
             const segmentPromises = script.map(async (item, index) => {
                 try {
                     // Audio Generation
-                    let speechResult: { url: string; duration: number } | null = null;
+                    let speechResult: { url: string; duration: number; alignment?: any } | null = null;
                     if (dto.includeNarration !== false) {
                         const result = await this.audioService.generateSpeech({
                             text: item.text,
@@ -405,11 +407,13 @@ export class TimelineService {
                             modelId: 'eleven_v3',
                             stability: 0.5,
                             similarityBoost: 0.75,
+                            withTimestamps: true
                         });
                         const buffer = Buffer.from(result.audioBase64, 'base64');
                         const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
+                        // Use duration from buffer or result? mp3-duration is fine.
                         const duration = await this.getAudioDuration(buffer);
-                        speechResult = { url, duration };
+                        speechResult = { url, duration, alignment: result.alignment };
                     }
 
                     // Visual Generation (Image)
@@ -438,6 +442,7 @@ export class TimelineService {
                         index,
                         voiceUrl: speechResult?.url,
                         audioDuration: speechResult?.duration,
+                        alignment: speechResult?.alignment,
                         imageUrl,
                         status: 'ready_for_video'
                     };
@@ -461,10 +466,12 @@ export class TimelineService {
                     audioUrl: (seg as any).voiceUrl,
                     imageUrl: (seg as any).imageUrl,
                     duration: (seg as any).audioDuration,
+                    alignment: (seg as any).alignment, // Save alignment
                     status: seg.status === 'failed' ? 'failed' : 'pending',
                     error: (seg as any).error ? String((seg as any).error) : undefined
                 }))
-            });
+            }); // Cast to avoid TS error if types are stale
+
 
             // 4. Start Video Generation (Sequentially with Smart Retry to survive Rate Limits)
             const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
@@ -576,7 +583,7 @@ export class TimelineService {
 
         try {
             // 1. Prepare Assets & Manifest
-            const manifest: Array<{ video: string; audio: string; text: string }> = [];
+            const manifest: Array<{ video: string; audio: string; text: string; alignment?: any }> = [];
 
             for (const seg of validSegments) {
                 // Video
@@ -600,7 +607,8 @@ export class TimelineService {
                 manifest.push({
                     video: localVideoPath,
                     audio: localAudioPath,
-                    text: seg.script || ''
+                    text: seg.script || '',
+                    alignment: (seg as any).alignment // Pass alignment to python script
                 });
             }
             this.logger.log(`Created manifest with ${manifest.length} segments.`);

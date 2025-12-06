@@ -61,10 +61,54 @@ async function main() {
             await execAsync(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t 1 -c:a libmp3lame -q:a 4 "${localAudioPath}"`);
         }
 
+
+        // Re-generate audio to get TIMESTAMPS (Alignment)
+        // We do this here locally to emulate the new backend logic for existing jobs
+        console.log(`Fetching alignment/audio for segment ${seg.index} from ElevenLabs...`);
+        let alignment = undefined;
+
+        try {
+            // Need API Key
+            const apiKey = process.env.ELEVENLABS_API_KEY;
+            if (!apiKey) throw new Error("ELEVENLABS_API_KEY not set");
+
+            // Clean text for generation
+            const cleanText = (seg.script || '').replace(/\[.*?\]/g, '').trim();
+
+            // Fetch
+            const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb/with-timestamps`, {
+                method: 'POST',
+                headers: {
+                    'xi-api-key': apiKey,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    text: cleanText,
+                    model_id: "eleven_multilingual_v2", // or eleven_v3
+                    voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+                })
+            });
+
+            if (!resp.ok) {
+                console.error("ElevenLabs Error:", await resp.text());
+            } else {
+                const data = await resp.json();
+                alignment = data.alignment;
+                const audioBase64 = data.audio_base64;
+
+                // Overwrite local audio file with this new one (so they match perfectly)
+                fs.writeFileSync(localAudioPath, Buffer.from(audioBase64, 'base64'));
+                console.log(`  -> Got alignment (characters: ${alignment?.characters?.length})`);
+            }
+        } catch (e) {
+            console.error("  -> Failed to fetch alignment:", e);
+        }
+
         manifest.push({
             video: localVideoPath,
             audio: localAudioPath,
-            text: seg.script || ''
+            text: seg.script || '',
+            alignment: alignment
         });
     }
 
@@ -82,7 +126,7 @@ async function main() {
     const outputPath = path.join(tempDir, 'final.mp4');
     const scriptPath = path.resolve('scripts/stitch_clips.py');
 
-    const cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16"${localMusicPath ? ` --audio "${localMusicPath}"` : ''}`;
+    const cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16"${localMusicPath ? ` --audio "${localMusicPath}"` : ''} --fontsize 90 --color yellow --y_pos "(h-text_h)/1.15"`;
     console.log(`Running: ${cmd}`);
 
     try {
