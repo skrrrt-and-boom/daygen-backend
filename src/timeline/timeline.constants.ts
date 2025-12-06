@@ -16,18 +16,19 @@ Your goal is to accept a raw Topic and Style, analyze the "Vibe," and output a J
 
 3. **MOTION (Kling v2.5 Turbo - IMAGE-TO-VIDEO):**
    - This model animates the static image.
+   - **CRITICAL:** MOVEMENT MUST BE EXTREMELY FAST.
    - **FOCUS ON:** Camera movement and specific subject physics.
-   - **ALLOWED CAMERA MOVES:** "Pan Right", "Pan Left", "Tilt Up", "Tilt Down", "Zoom In", "Zoom Out", "Fast Zoom", "Whip Pan", "FPV Drone", "Rack Focus", "Orbit".
+   - **ALLOWED CAMERA MOVES:** "Pan Right", "Pan Left", "Tilt Up", "Tilt Down", "Zoom In", "Zoom Out", "Fast Zoom", "Whip Pan", "FPV Drone", "Rack Focus", "Rapid Orbit".
    - **CONSTRAINT:** Duration is strictly 5 or 10 seconds.
-   - **STRICT REQUIREMENT:** Videos must be DYNAMIC. Avoid "Static Camera" unless the vibe is horror/mystery. Prefer "Fast Zoom", "Whip Pan", or "Orbit" for high energy.
+   - **STRICT REQUIREMENT:** Videos must be DYNAMIC and FAST. Avoid "Static Camera". ALWAYS use "Fast Zoom", "Whip Pan", "Rapid Orbit", or "High Speed Tracking".
 
 ### VIBE & PACING LOGIC (DYNAMIC ADAPTATION)
 
-Do not stick to one tempo. Adapt to the content:
-- **IF "Brainrot/Meme/High Energy":** High saturation visuals, chaotic composition, enthusiastic/sarcastic voice, rapid camera zooms.
-- **IF "Atmospheric/Horror/Mystery":** Low key lighting, [whispers] tags, slow "Zoom In" or "Static" camera, minimalist composition.
-- **IF "Educational/Facts":** Bright lighting, clear subject focus, [curious] or [excited] voice, steady "Pan" or "Static" camera.
-- **IF "Luxury/Cinematic":** Golden hour lighting, slow motion prompts, "Tilt" or "Pan" reveals, elegant voice.
+Do not stick to one tempo. Adapt to the content but KEEP IT FAST:
+- **IF "Brainrot/Meme/High Energy":** High saturation visuals, chaotic composition, enthusiastic/sarcastic voice, rapid camera zooms, whip pans.
+- **IF "Atmospheric/Horror/Mystery":** Low key lighting, [whispers] tags, unnerving rapid tracking camera, minimalist composition.
+- **IF "Educational/Facts":** Bright lighting, clear subject focus, [curious] or [excited] voice, dynamic active camera movements.
+- **IF "Luxury/Cinematic":** Golden hour lighting, fluid sweeping fast motion, "Tilt" or "Pan" reveals, elegant voice.
 
 ### OUTPUT FORMAT
 
@@ -45,7 +46,7 @@ Return ONLY a raw JSON object with this structure (no markdown, no backticks):
       "segment_duration": 5, // MUST be 5 or 10
       "text": "Script... (MAX 12 words for 5s, MAX 25 words for 10s)",
       "visual_prompt": "SUBJECT: [Detailed description]. ENVIRONMENT: [Background]. LIGHTING: [Style]. LENS: [Specs]. STYLE: 8k, photorealistic, [Vibe keywords]. --ar 9:16",
-      "motion_prompt": "CAMERA: [Specific Move]. ACTION: [Specific subject movement]. PHYSICS: [Speed/Weight].",
+      "motion_prompt": "CAMERA: [Specific Fast Move]. ACTION: [Specific subject movement]. PHYSICS: [High Speed].",
       "negative_prompt": "text, watermark, distorted hands, morphing, blurring, cartoon, illustration"
     }
   ]

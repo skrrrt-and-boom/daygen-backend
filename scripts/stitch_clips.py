@@ -213,6 +213,8 @@ def main():
     parser.add_argument("--fontsize", type=int, default=80, help="Font size")
     parser.add_argument("--color", default="white", help="Font color (ffmpeg name or hex)")
     parser.add_argument("--y_pos", default="(h-text_h)/1.15", help="Y position expression for text") # Default: slightly up from bottom
+    parser.add_argument("--volume", type=float, default=0.3, help="Background music volume (0.0 to 1.0)")
+
 
     args = parser.parse_args()
 
@@ -282,8 +284,8 @@ def main():
         if args.audio and os.path.exists(args.audio):
             print(f"Mixing background music: {args.audio}", file=sys.stderr)
             bg_music = ffmpeg.input(args.audio)
-            # Volume 0.3
-            bg_music = bg_music.filter('volume', 0.3)
+            # Volume from args
+            bg_music = bg_music.filter('volume', args.volume)
             
             # We must decode audio to mix it
             # input audio stream from concat

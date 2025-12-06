@@ -634,7 +634,10 @@ export class TimelineService {
             const outputPath = path.join(tempDir, 'final.mp4');
             const scriptPath = path.resolve(process.cwd(), 'scripts/stitch_clips.py');
 
-            const cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16"${localMusicPath ? ` --audio "${localMusicPath}"` : ''}`;
+            // Get volume from original DTO (default to 0.3 if not set)
+            const volume = metadata.dto?.musicVolume ?? 0.3;
+
+            const cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16"${localMusicPath ? ` --audio "${localMusicPath}" --volume ${volume}` : ''}`;
             this.logger.log(`Spawning stitch_clips.py: ${cmd}`);
             await exec(cmd);
 
