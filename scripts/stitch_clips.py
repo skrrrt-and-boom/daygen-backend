@@ -88,14 +88,39 @@ def process_segment(segment, index, output_path, width, height, font_settings):
                 words_with_timing = []
                 
                 for i, char in enumerate(chars):
+                    # Skip characters inside brackets []
+                    if char == '[':
+                        continue
+                    if char == ']':
+                        continue
+                        
+                    # Also we should probably track open/close brackets to be safe, 
+                    # but typically alignment chars are just flattened text.
+                    # If the alignment chars include the brackets, we just skip them.
+                    # HOWEVER, if the alignment characters are literally the characters of the text passed to ElevenLabs,
+                    # and that text had [instructions], then we need to ignore everything between [ and ].
+                    
+                    # Let's check if we are inside a bracket block
+                    # But `chars` is a list of characters. We need state.
+                    pass 
+
+                # Re-do the loop with state
+                in_bracket = False
+                
+                for i, char in enumerate(chars):
+                    if char == '[':
+                        in_bracket = True
+                        continue
+                    if char == ']':
+                        in_bracket = False
+                        continue
+                    
+                    if in_bracket:
+                        continue
+
                     if char == ' ':
                         if current_word:
                             # Finish word
-                            # Filter unwanted chars from word if needed, but we want to match timing
-                            # Just cleaning display text might mismatch alignment mapping if we are not careful
-                            # But here we build words from the ALIGNMENT characters, so they are ground truth for timing.
-                            
-                            # Clean the word for display
                             display_word = current_word.replace('--', '').replace('-', '')
                             if display_word.strip():
                                 words_with_timing.append({
