@@ -23,8 +23,9 @@ def process_segment(segment, index, output_path, width, height):
     1. Get Video and Audio (Voiceover)
     2. Loop Video to be at least as long as Audio
     3. Trim Video to match Audio duration
-    4. Burn Subtitles (drawtext)
-    5. Output temporary segment
+    4. Force Standards (Scale, Pad, FPS, SAR, Pixel Format)
+    5. Burn Subtitles (drawtext)
+    6. Output temporary segment
     """
     video_path = segment.get('video')
     audio_path = segment.get('audio')
@@ -40,32 +41,30 @@ def process_segment(segment, index, output_path, width, height):
         audio_duration = get_audio_duration(audio_path)
 
         # Inputs
+        print(f"Segment {index}: Processing Video={video_path}, Audio={audio_path}", file=sys.stderr)
+        
         # stream_loop=-1 makes the video input infinite (looping)
         in_video = ffmpeg.input(video_path, stream_loop=-1)
         in_audio = ffmpeg.input(audio_path)
 
         # Video Operations
         # 1. Trim video to exactly match audio duration
-        # Note: We loop first, then trim.
+        # setpts='PTS-STARTPTS' resets timestamps to 0 after trimming
         v = in_video.trim(duration=audio_duration).setpts('PTS-STARTPTS')
 
-        # 2. Scale and Pad to target resolution (Contain mode / Black bars)
-        # force_original_aspect_ratio='decrease' ensures it fits inside output box
+        # 2. Standardization (CRITICAL FOR STITCHING)
+        # Scale and Pad to target resolution
         v = v.filter('scale', width, height, force_original_aspect_ratio='decrease')
-        # pad to fill the rest with black
         v = v.filter('pad', width, height, '(ow-iw)/2', '(oh-ih)/2')
-        # set sar to 1 to avoid aspect ratio issues during concat
-        v = v.filter('setsar', '1')
+        
+        # Enforce properties to ensure concat works:
+        v = v.filter('setsar', '1')       # Square pixels
+        v = v.filter('fps', fps=30)       # Force 30 FPS to prevent freezing
+        v = v.filter('format', 'yuv420p') # Force pixel format
 
         # 3. Subtitles
-        # Settings: Bottom center, white text, black border (fontsize 48, Arial or similar)
-        # Position: x centered, y at bottom with some margin (100px)
         if text:
-            # We assume 'Arial' is available. 
-            # If text contains special chars, we rely on python string passing to ffmpeg-python 
-            # and ffmpeg-python to handle simple escaping. 
-            # Ideally, proper escaping for the complex filter string is needed, 
-            # but basic text usually works.
+            # Basic subtitle burn-in. Ensure fonts are installed in Docker container.
             v = v.drawtext(
                 text=text,
                 font='Arial',
@@ -78,15 +77,18 @@ def process_segment(segment, index, output_path, width, height):
             )
 
         # Output temporary segment
-        # Ensure compatible codecs for concatenation later
+        # IMPORTANT: We use a high bitrate here to preserve quality before final concatenation
         out = ffmpeg.output(
             v, 
             in_audio, 
             output_path, 
             vcodec='libx264', 
             acodec='aac', 
+            audio_bitrate='192k',
+            video_bitrate='4000k', 
+            preset='fast',
             pix_fmt='yuv420p', 
-            t=audio_duration, # Explicit duration for safety
+            t=audio_duration, # Explicit output duration constraint
             loglevel='error'
         )
         out.run(overwrite_output=True)
@@ -117,39 +119,44 @@ def main():
         print("No segments provided.", file=sys.stderr)
         sys.exit(1)
 
-    # 2. Determine Resolution
+    # 2. Determine Resolution (720p Default)
     if args.format == "16:9":
-        W, H = 1920, 1080
+        W, H = 1280, 720
     else:
-        W, H = 1080, 1920
+        W, H = 720, 1280
 
     # 3. Process Each Segment
     temp_files = []
+    
+    # We will write an inputs.txt file for the concat demuxer
+    # Use absolute paths because the demuxer can be picky
+    inputs_txt_path = f"inputs_{os.getpid()}.txt"
+    
     try:
         import uuid
-        session_id = str(uuid.uuid4())[:8] # unique ID for temp files to avoid collisions if running concurrently
+        session_id = str(uuid.uuid4())[:8]
         
-        print(f"Starting processing of {len(segments)} segments...", file=sys.stderr)
+        print(f"Starting processing of {len(segments)} segments at {W}x{H}...", file=sys.stderr)
         
         for i, section in enumerate(segments):
-            temp_path = f"temp_seg_{session_id}_{i}.mp4"
-            # print(f"Processing segment {i+1} -> {temp_path}", file=sys.stderr)
+            temp_path = os.path.abspath(f"temp_seg_{session_id}_{i}.mp4")
             process_segment(section, i, temp_path, W, H)
             temp_files.append(temp_path)
 
-        # 4. Concatenate Segments
-        print("Concatenating segments...", file=sys.stderr)
-        if len(temp_files) == 1:
-            # If only one file, avoiding concat filter might be safer/faster but concat is fine
-            joined_v = ffmpeg.input(temp_files[0]).video
-            joined_a = ffmpeg.input(temp_files[0]).audio
-        else:
-            inputs = [ffmpeg.input(f) for f in temp_files]
-            # concat(v=1, a=1)
-            joined = ffmpeg.concat(*inputs, v=1, a=1).node
-            joined_v = joined[0]
-            joined_a = joined[1]
+        # 4. Generate Concat Demuxer Input File
+        with open(inputs_txt_path, 'w') as f:
+            for tf in temp_files:
+                # Escape path for ffmpeg concat demuxer format
+                # file '/path/to/file.mp4'
+                f.write(f"file '{tf}'\n")
 
+        print("Concatenating segments using demuxer...", file=sys.stderr)
+        
+        # Open the concat demuxer as an input
+        # safe=0 is required for absolute paths
+        input_args = {'f': 'concat', 'safe': 0}
+        concat_input = ffmpeg.input(inputs_txt_path, **input_args)
+        
         # 5. Mix Background Music
         if args.audio and os.path.exists(args.audio):
             print(f"Mixing background music: {args.audio}", file=sys.stderr)
@@ -157,23 +164,28 @@ def main():
             # Volume 0.3
             bg_music = bg_music.filter('volume', 0.3)
             
-            # Use amix to mix voiceover (joined_a) and background (bg_music)
-            # duration='first' ensures the output length matches the video/voiceover track
-            # weights not strictly supported in basic amix without complex filter, but volume filter processes it before.
-            mixed_audio = ffmpeg.filter([joined_a, bg_music], 'amix', duration='first', dropout_transition=2)
+            # We must decode audio to mix it
+            # input audio stream from concat
+            main_audio = concat_input.audio
+            
+            # amix: duration='first' cuts music to match video length
+            mixed_audio = ffmpeg.filter([main_audio, bg_music], 'amix', duration='first', dropout_transition=2)
             final_audio = mixed_audio
         else:
-            final_audio = joined_a
+            final_audio = concat_input.audio
 
         # 6. Final Output
+        # We can COPY the video stream because all segments are chemically identical 
+        # (same resolution, fps, sar, pixel format, codec)
         print(f"Rendering final video to {args.output}...", file=sys.stderr)
+        
         out = ffmpeg.output(
-            joined_v, 
+            concat_input.video, 
             final_audio, 
             args.output, 
-            vcodec='libx264', 
+            vcodec='copy', # Stream copy video for speed and no re-encoding!
             acodec='aac', 
-            pix_fmt='yuv420p',
+            audio_bitrate='192k',
             loglevel='error'
         )
         out.run(overwrite_output=True)
@@ -186,6 +198,9 @@ def main():
         sys.exit(1)
     finally:
         # Cleanup temp files
+        if os.path.exists(inputs_txt_path):
+            os.remove(inputs_txt_path)
+            
         for f in temp_files:
             if os.path.exists(f):
                 try:

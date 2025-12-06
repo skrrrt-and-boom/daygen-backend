@@ -559,8 +559,10 @@ export class TimelineService {
 
         // Filter valid segments for stitching
         const validSegments = dbSegments.filter(s => s.status === 'completed' && s.videoUrl);
+        this.logger.log(`Found ${validSegments.length} valid segments out of ${dbSegments.length} total.`);
 
         if (validSegments.length === 0) {
+
             this.logger.warn(`No valid video segments found for job ${jobId}. Marking as failed.`);
             await this.prisma.job.update({
                 where: { id: jobId },
@@ -601,6 +603,8 @@ export class TimelineService {
                     text: seg.script || ''
                 });
             }
+            this.logger.log(`Created manifest with ${manifest.length} segments.`);
+
 
             // 2. Download Background Music (if exists)
             let localMusicPath: string | undefined = undefined;
