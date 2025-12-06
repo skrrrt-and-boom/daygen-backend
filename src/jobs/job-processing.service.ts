@@ -939,12 +939,14 @@ export class JobProcessingService {
     const normalizedReferences = this.normalizeReferences(references);
     const referenceImages = normalizedReferences.map((entry) => ({
       image: {
-        imageBytes: entry.data,
+        bytesBase64Encoded: entry.data,
         mimeType: entry.mimeType || 'image/png',
       },
       referenceType: 'ASSET',
     }));
-    const supportsReferenceImages = requestedModel === 'veo-3.1-generate-preview';
+    const supportsReferenceImages =
+      requestedModel === 'veo-3.1-generate-preview' ||
+      requestedModel === 'veo-3.1-fast-generate-preview';
     const wantsReferenceImages = referenceImages.length > 0;
 
     // Reference images are only supported on the standard Veo 3.1 model.
@@ -965,7 +967,7 @@ export class JobProcessingService {
     const instance: Record<string, unknown> = { prompt };
     if (imageBase64) {
       instance.image = {
-        imageBytes: imageBase64,
+        bytesBase64Encoded: imageBase64,
         mimeType: imageMimeType || 'image/png',
       };
     }
@@ -992,7 +994,6 @@ export class JobProcessingService {
     if (resolution) parameters.resolution = resolution;
     if (effectivePersonGeneration) parameters.personGeneration = effectivePersonGeneration;
     if (appliedReferences.length > 0) {
-      parameters.referenceImages = appliedReferences;
       instance.referenceImages = appliedReferences;
     }
 
@@ -1114,13 +1115,13 @@ export class JobProcessingService {
           videoUrl,
           model: veoModel,
           operationName,
-      aspectRatio: effectiveAspectRatio,
-      durationSeconds: effectiveDurationSeconds,
-      resolution,
-      providerOptions: options,
-      referenceCount: appliedReferences.length,
-    };
-  }
+          aspectRatio: effectiveAspectRatio,
+          durationSeconds: effectiveDurationSeconds,
+          resolution,
+          providerOptions: options,
+          referenceCount: appliedReferences.length,
+        };
+      }
     }
 
     throw new Error('Timed out waiting for Veo video generation to complete');
