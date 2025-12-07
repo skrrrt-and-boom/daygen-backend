@@ -21,5 +21,11 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/scripts ./scripts
+
+# Install Python and dependencies
+RUN apk add --no-cache python3 py3-pip ffmpeg py3-numpy
+# Install only essential python packages for stitching (avoiding heavy librosa build)
+RUN pip3 install ffmpeg-python --break-system-packages
 EXPOSE 3000
 CMD ["sh", "-c", "npx prisma migrate deploy || echo 'Migration failed, continuing...' && node dist/src/main.js"]
