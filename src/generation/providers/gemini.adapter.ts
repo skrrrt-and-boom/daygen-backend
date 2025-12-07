@@ -269,6 +269,25 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
       dto.mimeType || 'image/png',
     );
 
+    // Parse inpainting mask if provided (white = edit, black = keep for Gemini)
+    const maskImage = normalizeImageInput(
+      typeof dto.mask === 'string' ? dto.mask : undefined,
+      'image/png',
+    );
+
+    if (maskImage) {
+      console.log('Gemini Adapter: Mask image detected for inpainting, size:', maskImage.data.length);
+    }
+
+    // Auto-enhance prompt for mask operations to improve accuracy
+    // This helps Gemini understand that edits should happen ONLY in the masked area
+    const hasStyleReferences = references.length > 1 || (references.length > 0 && (baseImage || dto.imageUrl));
+    const enhancedPrompt = maskImage
+      ? (hasStyleReferences
+          ? `IMPORTANT: Edit ONLY the white masked area of the source image. Use the reference image(s) as guidance for what to place in the masked area. Keep all non-masked areas exactly as they are. User request: ${prompt}`
+          : `IMPORTANT: Edit ONLY the white masked area of the source image. Keep all non-masked areas exactly as they are. User request: ${prompt}`)
+      : prompt;
+
     // Build Imagen/Gemini image parameters from DTO
     const providerOptions = dto.providerOptions || {};
     const parameters: Record<string, unknown> = {
@@ -365,36 +384,99 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     };
 
     const tryGenerateContent = async (modelName: string, overrideReferences?: NormalizedImageInput[]) => {
-      const parts: Array<Record<string, unknown>> = [{ text: prompt }];
-
-      if (baseImage && !overrideReferences) {
-        parts.push({
-          inline_data: {
-            mime_type: baseImage.mimeType,
-            data: baseImage.data,
-          },
-        });
-      } else if (dto.imageUrl && !overrideReferences) {
-        // Download image if only URL is provided
-        const downloaded = await this.fetchImageAsBase64(dto.imageUrl);
-        parts.push({
-          inline_data: {
-            mime_type: dto.mimeType || downloaded.mimeType || 'image/png', // Prefer explicit mimeType, then response header
-            data: downloaded.base64,
-          },
-        });
-      }
+      const parts: Array<Record<string, unknown>> = [{ text: enhancedPrompt }];
 
       const refsToUse = overrideReferences !== undefined ? overrideReferences : references;
 
-      if (refsToUse) {
-        for (const reference of refsToUse) {
+      // For reference-guided inpainting with mask, the order matters:
+      // 1. Text prompt (already added above)
+      // 2. Source image (the image being edited - first reference)
+      // 3. Mask (defines the edit area)
+      // 4. Style references (content to place in masked area - remaining references)
+      
+      if (maskImage && !overrideReferences) {
+        console.log('Gemini Adapter: Reference-guided inpainting mode');
+        
+        // Add source image first (from baseImage, imageUrl, or first reference)
+        if (baseImage) {
           parts.push({
             inline_data: {
-              mime_type: reference.mimeType,
-              data: reference.data,
+              mime_type: baseImage.mimeType,
+              data: baseImage.data,
             },
           });
+        } else if (dto.imageUrl) {
+          const downloaded = await this.fetchImageAsBase64(dto.imageUrl);
+          parts.push({
+            inline_data: {
+              mime_type: dto.mimeType || downloaded.mimeType || 'image/png',
+              data: downloaded.base64,
+            },
+          });
+        } else if (refsToUse && refsToUse.length > 0) {
+          // First reference is the source image being edited
+          parts.push({
+            inline_data: {
+              mime_type: refsToUse[0].mimeType,
+              data: refsToUse[0].data,
+            },
+          });
+        }
+
+        // Add mask after source image
+        console.log('Gemini Adapter: Adding inpainting mask to request');
+        parts.push({
+          inline_data: {
+            mime_type: maskImage.mimeType,
+            data: maskImage.data,
+          },
+        });
+
+        // Add remaining references as style guides (skip first if it was used as source)
+        if (refsToUse && refsToUse.length > 0) {
+          // If baseImage or imageUrl was used as source, all references are style guides
+          // Otherwise, first reference was source, so use remaining refs as style guides
+          const styleRefs = (baseImage || dto.imageUrl) ? refsToUse : refsToUse.slice(1);
+          if (styleRefs.length > 0) {
+            console.log(`Gemini Adapter: Adding ${styleRefs.length} style reference(s) for inpainting`);
+            for (const reference of styleRefs) {
+              parts.push({
+                inline_data: {
+                  mime_type: reference.mimeType,
+                  data: reference.data,
+                },
+              });
+            }
+          }
+        }
+      } else {
+        // Standard mode (no mask): original ordering
+        if (baseImage && !overrideReferences) {
+          parts.push({
+            inline_data: {
+              mime_type: baseImage.mimeType,
+              data: baseImage.data,
+            },
+          });
+        } else if (dto.imageUrl && !overrideReferences) {
+          const downloaded = await this.fetchImageAsBase64(dto.imageUrl);
+          parts.push({
+            inline_data: {
+              mime_type: dto.mimeType || downloaded.mimeType || 'image/png',
+              data: downloaded.base64,
+            },
+          });
+        }
+
+        if (refsToUse) {
+          for (const reference of refsToUse) {
+            parts.push({
+              inline_data: {
+                mime_type: reference.mimeType,
+                data: reference.data,
+              },
+            });
+          }
         }
       }
 

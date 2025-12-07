@@ -71,7 +71,14 @@ function hostMatchesAllowlist(hostname: string, allowedHosts: Set<string>, allow
   if (allowedSuffixes) {
     for (const suffix of allowedSuffixes) {
       if (hostname === suffix) return true;
-      if (hostname.endsWith(suffix) && hostname[hostname.length - suffix.length - 1] === '.') return true;
+      if (hostname.endsWith(suffix)) {
+        // If suffix starts with a dot (e.g., '.r2.dev'), endsWith check is sufficient
+        // The dot in the suffix already acts as a domain separator
+        if (suffix.startsWith('.')) return true;
+        // If suffix doesn't start with dot, ensure there's a dot separator before it
+        // This prevents 'evilr2.dev' from matching suffix 'r2.dev'
+        if (hostname[hostname.length - suffix.length - 1] === '.') return true;
+      }
     }
   }
   return false;

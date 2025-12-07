@@ -155,6 +155,45 @@ export class IdeogramImageAdapter implements ImageProviderAdapter {
         throw Object.assign(new Error(`Failed to process mask image: ${error}`), { status: 400 });
       }
 
+      // Process Character Reference Images (references[1+] are character/style references)
+      // These guide what content to place in the masked area (e.g., a specific face)
+      if (dto.references && dto.references.length > 1) {
+        console.log(`[Ideogram] Processing ${dto.references.length - 1} character reference image(s)`);
+        for (let i = 1; i < dto.references.length; i++) {
+          const refUrl = dto.references[i];
+          try {
+            let buffer: Buffer;
+            if (refUrl.startsWith('data:')) {
+              const dataMatches = refUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+              if (!dataMatches || dataMatches.length !== 3) throw new Error('Invalid data URL for character reference');
+              buffer = Buffer.from(dataMatches[2], 'base64');
+            } else {
+              const dl = await safeDownload(refUrl, {
+                allowedHosts: IDEOGRAM_ALLOWED_HOSTS,
+                allowedHostSuffixes: COMMON_ALLOWED_SUFFIXES,
+              });
+              buffer = Buffer.from(dl.arrayBuffer);
+            }
+
+            // Detect MIME type from magic bytes
+            const detection = this.detectMimeType(buffer);
+            if (!detection) {
+              console.warn(`[Ideogram] Character reference ${i} is not a supported format, skipping`);
+              continue;
+            }
+            const { mimeType: mime, extension: ext } = detection;
+
+            console.log(`[Ideogram] Character reference ${i} detected as ${mime}`);
+            const blob = new Blob([new Uint8Array(buffer)], { type: mime });
+            // Use form.append to allow multiple character reference images
+            form.append('character_reference_images', blob, `character_ref_${i}.${ext}`);
+          } catch (error) {
+            console.warn(`[Ideogram] Failed to process character reference ${i}: ${error}`);
+            // Continue with other references instead of failing entirely
+          }
+        }
+      }
+
     } else {
       // Normal Generate Flow (Remix / Image-to-Image)
       // Handle reference image (first one only)
