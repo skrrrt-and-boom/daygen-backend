@@ -942,7 +942,7 @@ export class JobProcessingService {
         bytesBase64Encoded: entry.data,
         mimeType: entry.mimeType || 'image/png',
       },
-      referenceType: 'ASSET',
+      referenceType: 'asset',
     }));
     const supportsReferenceImages =
       requestedModel === 'veo-3.1-generate-preview' ||
@@ -962,6 +962,16 @@ export class JobProcessingService {
       veoModel = 'veo-3.1-generate-preview';
       appliedReferences = referenceImages;
     }
+
+    // Sanity check: Veo 3.1 currently prevents using both Image-to-Video (intro image) AND reference images (style/character refs)
+    // If we have an input image (imageBase64), we must drop the reference images to avoid INVALID_ARGUMENT error.
+    if (imageBase64 && appliedReferences.length > 0) {
+      this.logger.warn(
+        `Veo 3.1: Image-to-Video does not support additional reference images. Ignoring ${appliedReferences.length} references to prefer input image.`,
+      );
+      appliedReferences = [];
+    }
+
     const hasReferenceImages = appliedReferences.length > 0;
 
     const instance: Record<string, unknown> = { prompt };
@@ -973,9 +983,7 @@ export class JobProcessingService {
     }
 
     const parameters: Record<string, unknown> = {};
-    const effectiveAspectRatio = hasReferenceImages
-      ? '16:9'
-      : aspectRatio ?? undefined;
+    const effectiveAspectRatio = aspectRatio ?? (hasReferenceImages ? '16:9' : undefined);
     const effectiveDurationSeconds = hasReferenceImages
       ? 8
       : typeof durationSeconds === 'number'
@@ -1007,7 +1015,7 @@ export class JobProcessingService {
       aspectRatio: effectiveAspectRatio,
       durationSeconds: effectiveDurationSeconds,
       hasReferenceImages,
-      referenceCount: referenceImages.length,
+      referenceCount: appliedReferences.length,
       personGeneration: effectivePersonGeneration,
       resolution,
       hasInputImage: Boolean(instance.image),
