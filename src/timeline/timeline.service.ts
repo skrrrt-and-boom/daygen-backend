@@ -413,51 +413,71 @@ export class TimelineService {
                 }
             }
 
-            // 3. Concurrent Generation (Audio & Image)
-            this.logger.log('Starting concurrent generation (Audio & Image)...');
+            // 3. Sequential Generation (Audio & Image) - Sequential required for continuity
+            this.logger.log('Starting sequential generation (Audio & Image)...');
 
-            const segmentPromises = script.map(async (item, index) => {
+            const preparedSegments: any[] = [];
+
+            for (let index = 0; index < script.length; index++) {
+                const item = script[index];
+
                 try {
-                    // Audio Generation
+                    // Audio Generation (Always needed if narration is on)
                     let speechResult: { url: string; duration: number; alignment?: any } | null = null;
                     if (dto.includeNarration !== false) {
-                        const result = await this.audioService.generateSpeech({
-                            text: item.text,
-                            voiceId: dto.voiceId,
-                            modelId: 'eleven_v3',
-                            stability: 0.5,
-                            similarityBoost: 0.75,
-                            withTimestamps: true
-                        });
-                        const buffer = Buffer.from(result.audioBase64, 'base64');
-                        const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
-                        // Use duration from buffer or result? mp3-duration is fine.
-                        const duration = await this.getAudioDuration(buffer);
-                        speechResult = { url, duration, alignment: result.alignment };
+                        try {
+                            const result = await this.audioService.generateSpeech({
+                                text: item.text,
+                                voiceId: dto.voiceId,
+                                modelId: 'eleven_v3',
+                                stability: 0.5,
+                                similarityBoost: 0.75,
+                                withTimestamps: true
+                            });
+                            const buffer = Buffer.from(result.audioBase64, 'base64');
+                            const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
+                            const duration = await this.getAudioDuration(buffer);
+                            speechResult = { url, duration, alignment: result.alignment };
+                        } catch (audioErr) {
+                            this.logger.error(`Audio generation failed for segment ${index}`, audioErr);
+                            // We might want to continue even if audio fails? Or fail the segment?
+                            // Let's rely on standard error handling (fail segment) for now.
+                            throw audioErr;
+                        }
                     }
 
                     // Visual Generation (Image)
-                    const imgRes = await this.generationOrchestrator.generate(user, {
-                        model: 'nano-banana-pro',
-                        prompt: item.visualPrompt,
-                        providerOptions: { aspectRatio: '9:16' }
-                    }, {
-                        cost: 1,
-                        isJob: true,
-                        persistenceOptions: {
-                            bucket: 'cyran-roll-images',
-                            skipR2FileRecord: true
-                        }
-                    }).catch(err => {
-                        this.logger.error(`Visual generation failed for segment ${index}`, err);
-                        return null;
-                    });
+                    let imageUrl: string | null = null;
 
-                    const imageUrl = imgRes?.assets?.[0]?.r2FileUrl
-                        ?? imgRes?.assets?.[0]?.remoteUrl
-                        ?? imgRes?.assets?.[0]?.dataUrl;
+                    // Continuity Check
+                    if (item.fromPreviousScene && index > 0 && preparedSegments[index - 1]?.imageUrl) {
+                        this.logger.log(`Segment ${index} reusing image from Segment ${index - 1} (Continuity)`);
+                        imageUrl = preparedSegments[index - 1].imageUrl;
+                    } else {
+                        // Regular Generation
+                        const imgRes = await this.generationOrchestrator.generate(user, {
+                            model: 'nano-banana-pro',
+                            prompt: item.visualPrompt,
+                            providerOptions: { aspectRatio: '9:16' }
+                        }, {
+                            cost: 1,
+                            isJob: true,
+                            persistenceOptions: {
+                                bucket: 'cyran-roll-images',
+                                skipR2FileRecord: true
+                            }
+                        }).catch(err => {
+                            this.logger.error(`Visual generation failed for segment ${index}`, err);
+                            return null;
+                        });
 
-                    return {
+                        imageUrl = imgRes?.assets?.[0]?.r2FileUrl
+                            ?? imgRes?.assets?.[0]?.remoteUrl
+                            ?? imgRes?.assets?.[0]?.dataUrl
+                            ?? null;
+                    }
+
+                    preparedSegments.push({
                         item,
                         index,
                         voiceUrl: speechResult?.url,
@@ -465,14 +485,13 @@ export class TimelineService {
                         alignment: speechResult?.alignment,
                         imageUrl,
                         status: 'ready_for_video'
-                    };
+                    });
+
                 } catch (err) {
                     this.logger.error(`Segment ${index} preparation failed`, err);
-                    return { item, index, error: String(err), status: 'failed' };
+                    preparedSegments.push({ item, index, error: String(err), status: 'failed' });
                 }
-            });
-
-            const preparedSegments = await Promise.all(segmentPromises);
+            }
 
             // 3.5. Save Segments to DB (Create Phase)
             // We must create them before we try to update them in the next step.
@@ -834,8 +853,10 @@ export class TimelineService {
                 return {
                     script: parsed.scenes.map((s: any) => ({
                         ...s,
-                        visualPrompt: s.visual_prompt, // Map for compatibility
-                        motionPrompt: s.motion_prompt
+                        text: s.text || s.script,
+                        visualPrompt: s.visual_prompt || s.visualPrompt,
+                        motionPrompt: s.motion_prompt || s.motionPrompt,
+                        fromPreviousScene: !!s.from_previous_scene
                     })),
                     title: parsed.meta?.title || parsed.title
                 };
