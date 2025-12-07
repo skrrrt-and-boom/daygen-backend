@@ -239,12 +239,26 @@ def main():
     parser.add_argument("--color", default="white", help="Font color (ffmpeg name or hex)")
     parser.add_argument("--y_pos", default="(h-text_h)/1.15", help="Y position expression for text") # Default: slightly up from bottom
     parser.add_argument("--volume", type=float, default=0.3, help="Background music volume (0.0 to 1.0)")
+    parser.add_argument("--temp_dir", required=False, help="Directory for temporary files")
 
 
     args = parser.parse_args()
 
+    # Bundle font path resolution
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    bundled_font = os.path.join(base_dir, '..', 'assets', 'fonts', 'Roboto-Regular.ttf')
+    
+    default_font = "Arial"
+    if os.path.exists(bundled_font):
+        default_font = bundled_font
+        
+    font_arg = args.font
+    if font_arg == "Arial" and os.path.exists(bundled_font):
+         # If user didn't override default (or explicitly said Arial), prefer bundled
+         font_arg = bundled_font
+
     font_settings = {
-        'font': args.font,
+        'font': font_arg,
         'fontsize': args.fontsize,
         'color': args.color,
         'y_pos': args.y_pos
@@ -276,9 +290,14 @@ def main():
     # 3. Process Each Segment
     temp_files = []
     
+    # Use provided temp_dir or current directory
+    work_dir = args.temp_dir if args.temp_dir else os.getcwd()
+    if not os.path.exists(work_dir):
+        os.makedirs(work_dir, exist_ok=True)
+
     # We will write an inputs.txt file for the concat demuxer
     # Use absolute paths because the demuxer can be picky
-    inputs_txt_path = f"inputs_{os.getpid()}.txt"
+    inputs_txt_path = os.path.join(work_dir, f"inputs_{os.getpid()}.txt")
     
     try:
         import uuid
@@ -287,7 +306,7 @@ def main():
         print(f"Starting processing of {len(segments)} segments at {W}x{H}...", file=sys.stderr)
         
         for i, section in enumerate(segments):
-            temp_path = os.path.abspath(f"temp_seg_{session_id}_{i}.mp4")
+            temp_path = os.path.join(work_dir, f"temp_seg_{session_id}_{i}.mp4")
             process_segment(section, i, temp_path, W, H, font_settings)
             temp_files.append(temp_path)
 

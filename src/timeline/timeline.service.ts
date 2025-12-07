@@ -1,5 +1,6 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma, JobStatus } from '@prisma/client';
 import { GenerationOrchestrator } from '../generation/generation.orchestrator';
 import { UsersService } from '../users/users.service';
 
@@ -114,50 +115,69 @@ export class TimelineService {
         }
 
         try {
-            // Step B1: Update the specific TimelineSegment row
-            await this.prisma.timelineSegment.update({
-                where: {
-                    jobId_index: {
-                        jobId,
-                        index
+            const result = await this.prisma.$transaction(async (tx) => {
+                // Step 1: Lock the Job row
+                await tx.$executeRaw`SELECT * FROM "Job" WHERE id = ${jobId} FOR UPDATE`;
+
+                // Step 2: Update the specific TimelineSegment row
+                await tx.timelineSegment.update({
+                    where: {
+                        jobId_index: {
+                            jobId,
+                            index
+                        }
+                    },
+                    data: {
+                        status,
+                        videoUrl,
+                        error
                     }
-                },
-                data: {
-                    status,
-                    videoUrl,
-                    error
+                });
+
+                // Step 3: Check for pending segments
+                const pendingCount = await tx.timelineSegment.count({
+                    where: {
+                        jobId,
+                        status: 'generating'
+                    }
+                });
+
+                // Step 4: Determine Action
+                let action: 'FINALIZE' | 'SYNC' | 'NONE' = 'NONE';
+
+                if (pendingCount === 0) {
+                    const job = await tx.job.findUnique({ where: { id: jobId } });
+
+                    if (job && job.status !== 'COMPLETED') {
+                        action = 'FINALIZE';
+                    } else {
+                        action = 'SYNC';
+                    }
+                } else {
+                    action = 'SYNC';
                 }
+
+                // Step 5: Sync metadata inside transaction
+                await this._syncJobMetadata(jobId, tx);
+
+                return action;
+            }, {
+                timeout: 10000 // 10s timeout for the transaction
             });
-        } catch (err) {
-            this.logger.error(`Failed to update segment ${index} for job ${jobId}`, err);
-            // If segment not found, maybe job deleted?
-            return;
-        }
 
-        // Step B2: Check for pending segments
-        const pendingCount = await this.prisma.timelineSegment.count({
-            where: {
-                jobId,
-                status: 'generating'
-            }
-        });
-
-        // Step B3: If count is 0, call finalizeJob
-        if (pendingCount === 0) {
-            const job = await this.prisma.job.findUnique({ where: { id: jobId } });
-
-            // If job status is COMPLETED, assume it's a regeneration and DO NOT stitch.
-            // If job status is PROCESSING, it's the initial run, so DO stitch.
-            if (job && job.status !== 'COMPLETED') {
-                this.logger.log(`All segments for job ${jobId} finished. Finalizing...`);
-                await this.finalizeJob(jobId);
+            // Post-Transaction Logic
+            if (result === 'FINALIZE') {
+                this.logger.log(`All segments for job ${jobId} finished. Finalizing (Stitching)...`);
+                // Run finalization outside transaction to avoid long blocking
+                this.finalizeJob(jobId).catch(err => {
+                    this.logger.error(`Finalization failed for job ${jobId}`, err);
+                });
             } else {
-                this.logger.log(`Segment ${index} finished for completed job ${jobId}. Skipping auto-stitch (regeneration flow).`);
-
-                // IMPORTANT: For regeneration, we must sync the new video URL to the Job metadata
-                // so the frontend sees the update on next load.
-                await this._syncJobMetadata(jobId);
+                this.logger.log(`Segment ${index} processed for job ${jobId}. Action: ${result}`);
             }
+
+        } catch (err) {
+            this.logger.error(`Failed to handle webhook update for segment ${index} of job ${jobId}`, err);
         }
     }
 
@@ -564,22 +584,35 @@ export class TimelineService {
             orderBy: { index: 'asc' }
         });
 
+
         // Filter valid segments for stitching
         const validSegments = dbSegments.filter(s => s.status === 'completed' && s.videoUrl);
         this.logger.log(`Found ${validSegments.length} valid segments out of ${dbSegments.length} total.`);
 
-        if (validSegments.length === 0) {
-
-            this.logger.warn(`No valid video segments found for job ${jobId}. Marking as failed.`);
+        // Tighten Reliability: All segments must be valid to proceed.
+        if (validSegments.length !== dbSegments.length) {
+            this.logger.warn(`Job ${jobId} incomplete. ${validSegments.length}/${dbSegments.length} segments valid. Marking as failed.`);
             await this.prisma.job.update({
                 where: { id: jobId },
-                data: { status: 'FAILED', error: 'No video segments generated' }
+                data: {
+                    status: 'FAILED',
+                    error: `Job incomplete: Only ${validSegments.length} of ${dbSegments.length} segments generated successfully.`
+                }
             });
             return;
         }
 
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `job-${jobId}-`));
         this.logger.log(`Created temp dir for stitching: ${tempDir}`);
+
+        // Update status to STITCHING
+        await this.prisma.job.update({
+            where: { id: jobId },
+            data: {
+                status: 'STITCHING' as any,
+                progress: 90
+            }
+        });
 
         try {
             // 1. Prepare Assets & Manifest
@@ -637,7 +670,7 @@ export class TimelineService {
             // Get volume from original DTO (default to 0.3 if not set)
             const volume = metadata.dto?.musicVolume ?? 0.3;
 
-            const cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16"${localMusicPath ? ` --audio "${localMusicPath}" --volume ${volume}` : ''}`;
+            const cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16" --temp_dir "${tempDir}"${localMusicPath ? ` --audio "${localMusicPath}" --volume ${volume}` : ''}`;
             this.logger.log(`Spawning stitch_clips.py: ${cmd}`);
             await exec(cmd);
 
@@ -901,12 +934,13 @@ export class TimelineService {
      * This ensures that any individual segment updates (regeneration, webhooks) are reflected
      * when the frontend loads the job again.
      */
-    private async _syncJobMetadata(jobId: string) {
+    private async _syncJobMetadata(jobId: string, tx?: Prisma.TransactionClient) {
+        const client = tx || this.prisma;
         try {
-            const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+            const job = await client.job.findUnique({ where: { id: jobId } });
             if (!job || !job.metadata) return;
 
-            const segments = await this.prisma.timelineSegment.findMany({
+            const segments = await client.timelineSegment.findMany({
                 where: { jobId },
                 orderBy: { index: 'asc' }
             });
@@ -914,7 +948,7 @@ export class TimelineService {
             const currentResponse = (job.metadata as any).response || {};
 
             // Map segments to the response format
-            const responseSegments = segments.map(s => ({
+            const responseSegments = segments.map((s: any) => ({
                 id: s.id,
                 index: s.index,
                 script: s.script,
@@ -942,7 +976,7 @@ export class TimelineService {
                 totalDuration: currentTime
             };
 
-            await this.prisma.job.update({
+            await client.job.update({
                 where: { id: jobId },
                 data: {
                     metadata: {

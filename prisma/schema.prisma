@@ -160,6 +160,7 @@ enum JobType {
 enum JobStatus {
   PENDING
   PROCESSING
+  STITCHING
   COMPLETED
   FAILED
   CANCELLED

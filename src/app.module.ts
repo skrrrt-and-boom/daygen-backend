@@ -16,6 +16,8 @@ import { PaymentsModule } from './payments/payments.module';
 import { AudioModule } from './audio/audio.module';
 import { ScenesModule } from './scenes/scenes.module';
 import { TimelineModule } from './timeline/timeline.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { CleanupService } from './cleanup/cleanup.service';
 
 @Module({
   imports: [
@@ -60,6 +62,7 @@ import { TimelineModule } from './timeline/timeline.module';
         }),
       },
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -74,6 +77,6 @@ import { TimelineModule } from './timeline/timeline.module';
     TimelineModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, CleanupService],
 })
 export class AppModule { }
