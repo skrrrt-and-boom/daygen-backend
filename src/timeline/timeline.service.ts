@@ -502,12 +502,12 @@ export class TimelineService {
                     script: seg.item.text,
                     visualPrompt: seg.item.visualPrompt,
                     motionPrompt: seg.item.motionPrompt,
-                    audioUrl: (seg as any).voiceUrl,
-                    imageUrl: (seg as any).imageUrl,
-                    duration: (seg as any).audioDuration,
-                    alignment: (seg as any).alignment, // Save alignment
+                    audioUrl: seg.voiceUrl,
+                    imageUrl: seg.imageUrl,
+                    duration: seg.audioDuration,
+                    alignment: seg.alignment, // Save alignment
                     status: seg.status === 'failed' ? 'failed' : 'pending',
-                    error: (seg as any).error ? String((seg as any).error) : undefined
+                    error: seg.error ? String(seg.error) : undefined
                 }))
             }); // Cast to avoid TS error if types are stale
 
@@ -534,7 +534,7 @@ export class TimelineService {
 
                     const prediction = await this.runWithSmartRetry(
                         () => this.pixverseProvider.generateVideoFromImageAsync(
-                            segment.imageUrl!,
+                            segment.imageUrl,
                             segment.item.visualPrompt,
                             webhookUrl
                         ),
