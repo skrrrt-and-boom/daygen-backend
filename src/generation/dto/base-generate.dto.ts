@@ -14,6 +14,7 @@ const KNOWN_KEYS = new Set([
   'imageBase64',
   'mimeType',
   'references',
+  'mask',
   'temperature',
   'outputLength',
   'topP',
@@ -70,6 +71,14 @@ export abstract class BaseGenerateDto {
   @IsArray()
   @IsString({ each: true })
   references?: string[];
+
+  /**
+   * Inpainting mask as a data URL (base64 PNG).
+   * For Gemini: white = edit area, black = keep area.
+   */
+  @IsOptional()
+  @IsString()
+  mask?: string;
 
   @IsOptional()
   @IsNumber()

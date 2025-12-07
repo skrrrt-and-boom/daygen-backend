@@ -97,5 +97,6 @@ export const COMMON_ALLOWED_SUFFIXES = new Set<string>([
   '.s3.amazonaws.com',
   '.amazonaws.com',
   '.cloudfront.net',
+  '.r2.dev', // Cloudflare R2 public bucket domain
 ]);
 
