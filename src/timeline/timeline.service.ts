@@ -10,7 +10,7 @@ import { R2Service } from '../upload/r2.service';
 import { GenerateTimelineDto } from './dto/generate-timeline.dto';
 import { RegenerateSegmentDto } from './dto/regenerate-segment.dto';
 import { TimelineResponse, TimelineSegment as TimelineSegmentDto } from './dto/timeline-response.dto';
-import { KlingProvider } from '../generation/providers/kling.provider';
+import { PixVerseProvider } from '../generation/providers/pixverse.provider';
 import { REEL_GENERATOR_SYSTEM_PROMPT } from './timeline.constants';
 import Replicate from 'replicate';
 import * as util from 'util';
@@ -36,7 +36,7 @@ export class TimelineService {
         private readonly prisma: PrismaService,
         private readonly generationOrchestrator: GenerationOrchestrator,
         private readonly usersService: UsersService,
-        private readonly klingProvider: KlingProvider,
+        private readonly pixverseProvider: PixVerseProvider,
     ) {
         const replicateToken = this.configService.get<string>('REPLICATE_API_TOKEN');
         if (!replicateToken) {
@@ -330,11 +330,11 @@ export class TimelineService {
 
             try {
                 const prediction = await this.runWithSmartRetry(
-                    () => this.klingProvider.generateVideoFromImageAsync(
+                    () => this.pixverseProvider.generateVideoFromImageAsync(
                         imageUrl,
                         visualPrompt,
                         webhookUrl,
-                        (motionPrompt ? `${motionPrompt}. High speed action, dynamic motion, blur, 30fps.` : 'Dynamic motion, high speed, 30fps.')
+                        (motionPrompt ? `${motionPrompt}` : 'Dynamic camera movement, cinematic lighting')
                     ),
                     index
                 );
@@ -494,7 +494,7 @@ export class TimelineService {
                     const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${job.id}&segmentIndex=${segment.index}`;
 
                     const prediction = await this.runWithSmartRetry(
-                        () => this.klingProvider.generateVideoFromImageAsync(
+                        () => this.pixverseProvider.generateVideoFromImageAsync(
                             segment.imageUrl!,
                             segment.item.visualPrompt,
                             webhookUrl

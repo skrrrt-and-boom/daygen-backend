@@ -12,12 +12,12 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { GenerationModule } from '../generation/generation.module';
 import { UsersModule } from '../users/users.module';
 
-import { KlingProvider } from '../generation/providers/kling.provider';
+import { PixVerseProvider } from '../generation/providers/pixverse.provider';
 
 @Module({
     imports: [ConfigModule, AudioModule, UploadModule, PrismaModule, forwardRef(() => GenerationModule), UsersModule],
     controllers: [TimelineController, WebhookController],
-    providers: [TimelineService, KlingProvider],
+    providers: [TimelineService, PixVerseProvider],
     exports: [TimelineService],
 })
 export class TimelineModule { }

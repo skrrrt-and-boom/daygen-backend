@@ -3,11 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import Replicate from 'replicate';
 
 @Injectable()
-export class KlingProvider {
-    private readonly logger = new Logger(KlingProvider.name);
+export class PixVerseProvider {
+    private readonly logger = new Logger(PixVerseProvider.name);
     private readonly replicate: Replicate;
-    // Exact model ID provided by architect
-    private readonly modelId = "kwaivgi/kling-v2.5-turbo-pro";
+    // PixVerse v5 Model ID
+    private readonly modelId = "pixverse/pixverse-v5";
 
     constructor(private readonly configService: ConfigService) {
         this.replicate = new Replicate({
@@ -16,52 +16,49 @@ export class KlingProvider {
     }
 
     async generateVideoFromImage(imageUrl: string, prompt: string): Promise<string> {
-        this.logger.log(`Animating image with Kling (${this.modelId})...`);
+        this.logger.log(`Animating image with PixVerse v5 (${this.modelId})...`);
 
-        // Input schema based on Kling v2.5 Turbo Pro
         const input = {
             prompt: prompt,
-            start_image: imageUrl,
-            duration: 5, // Default to 5s for consistency
-            cfg_scale: 0.5,
-            mode: "std",
-            negative_prompt: "static, frozen, slow motiob, motionless, text, watermark"
+            image: imageUrl,
+            duration: 5,
+            quality: "720p",
+            aspect_ratio: "9:16",
+            negative_prompt: "static, frozen, text, watermark, low quality, pixelated, blurry"
         };
 
         try {
             const output = await this.replicate.run(this.modelId as any, { input });
-            // Handle Replicate output (usually string URL or array of strings)
             const videoUrl = Array.isArray(output) ? output[0] : (output as unknown as string);
 
             if (!videoUrl || !videoUrl.startsWith('http')) {
-                throw new Error(`Invalid output from Kling: ${JSON.stringify(output)}`);
+                throw new Error(`Invalid output from PixVerse: ${JSON.stringify(output)}`);
             }
 
-            this.logger.log(`Kling generation successful: ${videoUrl}`);
+            this.logger.log(`PixVerse generation successful: ${videoUrl}`);
             return videoUrl;
         } catch (error) {
-            this.logger.error("Kling generation failed", error);
+            this.logger.error("PixVerse generation failed", error);
             throw error;
         }
     }
 
     async generateVideoFromImageAsync(imageUrl: string, prompt: string, webhookUrl?: string, motionPrompt?: string): Promise<any> {
-        this.logger.log(`Starting async animation with Kling (${this.modelId})...`);
+        this.logger.log(`Starting async animation with PixVerse v5 (${this.modelId})...`);
 
-        const fullPrompt = motionPrompt ? `${prompt} ${motionPrompt}` : prompt;
+        // Combine prompt with motion prompt if provided
+        const fullPrompt = motionPrompt ? `${prompt}. ${motionPrompt}` : prompt;
 
         const input = {
             prompt: fullPrompt,
-            start_image: imageUrl,
+            image: imageUrl,
             duration: 5,
-            cfg_scale: 0.6, // Increased slightly for better prompt adherence
-            mode: "std",
-            negative_prompt: "static, frozen, slow motion, motionless, text, watermark"
+            quality: "720p",
+            aspect_ratio: "9:16",
+            negative_prompt: "static, frozen, text, watermark, low quality, pixelated, blurry"
         };
 
         try {
-            // We need to resolve the model version first because predictions.create requires a version ID
-            // modelId is "kwaivgi/kling-v2.5-turbo-pro"
             const [owner, name] = this.modelId.split('/');
             const model = await this.replicate.models.get(owner, name);
             const version = model.latest_version?.id;
@@ -82,12 +79,12 @@ export class KlingProvider {
 
             const prediction = await this.replicate.predictions.create(options);
 
-            this.logger.log(`Kling async generation started. Prediction ID: ${prediction.id}`);
+            this.logger.log(`PixVerse async generation started. Prediction ID: ${prediction.id}`);
             return prediction;
         } catch (error) {
-            this.logger.error("Kling async generation failed", error);
+            this.logger.error("PixVerse async generation failed", error);
             if (error && typeof error === 'object' && 'response' in error) {
-                this.logger.error(`Replicate API Error: ${JSON.stringify((error).response?.data)}`);
+                this.logger.error(`Replicate API Error: ${JSON.stringify((error as any).response?.data)}`);
             }
             throw error;
         }
