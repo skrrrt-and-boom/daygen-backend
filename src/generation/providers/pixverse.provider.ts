@@ -84,7 +84,7 @@ export class PixVerseProvider {
         } catch (error) {
             this.logger.error("PixVerse async generation failed", error);
             if (error && typeof error === 'object' && 'response' in error) {
-                this.logger.error(`Replicate API Error: ${JSON.stringify((error as any).response?.data)}`);
+                this.logger.error(`Replicate API Error: ${JSON.stringify(error.response?.data)}`);
             }
             throw error;
         }

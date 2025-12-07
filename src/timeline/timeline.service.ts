@@ -1,6 +1,6 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, JobStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { GenerationOrchestrator } from '../generation/generation.orchestrator';
 import { UsersService } from '../users/users.service';
 
