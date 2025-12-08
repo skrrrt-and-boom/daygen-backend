@@ -790,9 +790,9 @@ export class JobProcessingService {
     return this.pickString(value);
   }
 
-  private normalizeReferences(
+  private async normalizeReferences(
     references?: string[],
-  ): Array<{ data: string; mimeType?: string }> {
+  ): Promise<Array<{ data: string; mimeType?: string }>> {
     if (!Array.isArray(references)) return [];
 
     const normalized: Array<{ data: string; mimeType?: string }> = [];
@@ -801,11 +801,40 @@ export class JobProcessingService {
       const text = this.pickString(entry);
       if (!text) continue;
 
+      // Handle base64 data URLs
       const mimeMatch = /^data:([^;]+);base64,/i.exec(text);
-      const mimeType = mimeMatch?.[1];
+      if (mimeMatch) {
+        const mimeType = mimeMatch[1];
+        const data = this.normalizeBase64(text);
+        if (data) {
+          normalized.push({ data, mimeType });
+        }
+        continue;
+      }
+
+      // Handle HTTP/HTTPS URLs - download and convert to base64
+      if (text.startsWith('http://') || text.startsWith('https://')) {
+        try {
+          const response = await fetch(text);
+          if (!response.ok) {
+            this.logger.warn(`Failed to download reference image: ${response.status} ${response.statusText}`);
+            continue;
+          }
+          const arrayBuffer = await response.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const base64Data = buffer.toString('base64');
+          const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png';
+          normalized.push({ data: base64Data, mimeType: contentType });
+        } catch (e) {
+          this.logger.warn(`Failed to fetch reference image from URL: ${text}`, e);
+        }
+        continue;
+      }
+
+      // Fallback: try as raw base64
       const data = this.normalizeBase64(text);
       if (data) {
-        normalized.push({ data, mimeType });
+        normalized.push({ data, mimeType: undefined });
       }
     }
 
@@ -936,7 +965,7 @@ export class JobProcessingService {
       options?.image_mime_type ?? options?.imageMimeType,
     );
 
-    const normalizedReferences = this.normalizeReferences(references);
+    const normalizedReferences = await this.normalizeReferences(references);
     const referenceImages = normalizedReferences.map((entry) => ({
       image: {
         bytesBase64Encoded: entry.data,
