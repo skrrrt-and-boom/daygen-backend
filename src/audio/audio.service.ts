@@ -468,4 +468,55 @@ export class AudioService {
       message: payload.message || 'Verification submitted successfully',
     };
   }
+
+  /**
+   * Upload a recorded audio file to R2 storage.
+   * @param file - The uploaded file from the frontend
+   * @param folder - The R2 folder to store in (e.g., 'recorded-voices' or 'generated-audio')
+   * @param userId - The user's ID for path namespacing
+   * @returns The public URL of the uploaded file
+   */
+  async uploadRecordingToR2(
+    file: Express.Multer.File,
+    folder: string,
+    userId: string,
+  ): Promise<{ success: boolean; url: string }> {
+    if (!file) {
+      throw new BadRequestException('Audio file is required');
+    }
+
+    let mimeType = file.mimetype;
+    if (mimeType === 'application/octet-stream' || !mimeType) {
+      // Default to webm for recordings or mp3/mpeg for other audio
+      if (file.originalname?.endsWith('.webm')) {
+        mimeType = 'audio/webm';
+      } else if (
+        file.originalname?.endsWith('.mp3') ||
+        file.originalname?.endsWith('.MP3')
+      ) {
+        mimeType = 'audio/mpeg';
+      } else {
+        mimeType = 'audio/webm';
+      }
+    }
+
+    const r2Path = `${folder}/${userId}`;
+    const filename = file.originalname || `recording-${Date.now()}.webm`;
+
+    this.logger.log(
+      `Uploading recording: ${filename} to ${r2Path}, Size: ${file.size}, Mime: ${mimeType}`,
+    );
+
+    const url = await this.r2Service.uploadBuffer(
+      file.buffer,
+      mimeType,
+      r2Path,
+      filename,
+    );
+
+    return {
+      success: true,
+      url,
+    };
+  }
 }

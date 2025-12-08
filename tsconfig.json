@@ -22,5 +22,10 @@
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false
   },
-  "exclude": ["daygen0", "node_modules", "dist"]
+  "exclude": [
+    "daygen0",
+    "node_modules",
+    "dist",
+    "scripts"
+  ]
 }

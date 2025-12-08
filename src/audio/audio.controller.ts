@@ -144,6 +144,27 @@ export class AudioController {
     }
     return this.audioService.verifyPVCVoice(voiceId, file, req.user.id);
   }
+
+  @Post('upload-recording')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB for 30-min recordings
+    }),
+  )
+  async uploadRecording(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('folder') folder: string,
+    @Req() req: Request & { user: { id: string } },
+  ) {
+    if (!file) {
+      throw new BadRequestException('Audio file is required');
+    }
+    return this.audioService.uploadRecordingToR2(
+      file,
+      folder || 'recorded-voices',
+      req.user.id,
+    );
+  }
 }
 
 

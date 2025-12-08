@@ -331,6 +331,7 @@ export class R2Service {
       'audio/mpeg': '.mp3',
       'audio/mp3': '.mp3',
       'audio/wav': '.wav',
+      'audio/webm': '.webm',
     };
     return mimeToExt[mimeType] || '.png';
   }
