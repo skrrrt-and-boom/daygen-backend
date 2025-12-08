@@ -22,6 +22,8 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/assets ./assets
+
 
 # Install Python and dependencies
 RUN apk add --no-cache python3 py3-pip ffmpeg py3-numpy
