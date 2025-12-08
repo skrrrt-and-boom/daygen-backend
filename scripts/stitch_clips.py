@@ -153,21 +153,28 @@ def process_segment(segment, index, output_path, width, height, font_settings):
 
                 for w in words_with_timing:
                     safe_word = w['text'].replace("'", "\\'").replace(":", "\\:")
-                    v = v.drawtext(
-                        text=safe_word,
-                        fontfile=font_arg if os.path.exists(font_arg) else None,
-                        font=font_arg if not os.path.exists(font_arg) else None,
-                        fontsize=font_settings.get('fontsize', 70),
-                        fontcolor=font_settings.get('color', 'yellow'),
-                        borderw=2,
-                        bordercolor='black',
-                        shadowcolor='black',
-                        shadowx=2,
-                        shadowy=2,
-                        x='(w-text_w)/2',
-                        y=font_settings.get('y_pos', '(h-text_h)/1.2'),
-                        enable=f'between(t,{w["start"]},{w["end"]})'
-                    )
+                    
+                    drawtext_args = {
+                        'text': safe_word,
+                        'fontsize': font_settings.get('fontsize', 70),
+                        'fontcolor': font_settings.get('color', 'yellow'),
+                        'borderw': 2,
+                        'bordercolor': 'black',
+                        'shadowcolor': 'black',
+                        'shadowx': 2,
+                        'shadowy': 2,
+                        'x': '(w-text_w)/2',
+                        'y': font_settings.get('y_pos', '(h-text_h)/1.2'),
+                        'enable': f'between(t,{w["start"]},{w["end"]})'
+                    }
+
+                    if os.path.exists(font_arg):
+                        drawtext_args['fontfile'] = font_arg
+                    else:
+                        drawtext_args['font'] = font_arg
+
+                    v = v.drawtext(**drawtext_args)
+
 
             else:
                 # FALLBACK: Even distribution
@@ -187,21 +194,27 @@ def process_segment(segment, index, output_path, width, height, font_settings):
 
                         safe_word = word.replace("'", "\\'").replace(":", "\\:")
                         
-                        v = v.drawtext(
-                            text=safe_word,
-                            fontfile=font_arg if os.path.exists(font_arg) else None,
-                            font=font_arg if not os.path.exists(font_arg) else None,
-                            fontsize=font_settings.get('fontsize', 70),
-                            fontcolor=font_settings.get('color', 'yellow'),
-                            borderw=2,
-                            bordercolor='black',
-                            shadowcolor='black',
-                            shadowx=2,
-                            shadowy=2,
-                            x='(w-text_w)/2',
-                            y=font_settings.get('y_pos', '(h-text_h)/1.2'),
-                            enable=f'between(t,{start_time},{end_time})'
-                        )
+                        drawtext_args = {
+                            'text': safe_word,
+                            'fontsize': font_settings.get('fontsize', 70),
+                            'fontcolor': font_settings.get('color', 'yellow'),
+                            'borderw': 2,
+                            'bordercolor': 'black',
+                            'shadowcolor': 'black',
+                            'shadowx': 2,
+                            'shadowy': 2,
+                            'x': '(w-text_w)/2',
+                            'y': font_settings.get('y_pos', '(h-text_h)/1.2'),
+                            'enable': f'between(t,{start_time},{end_time})'
+                        }
+
+                        if os.path.exists(font_arg):
+                            drawtext_args['fontfile'] = font_arg
+                        else:
+                            drawtext_args['font'] = font_arg
+
+                        v = v.drawtext(**drawtext_args)
+
 
         # Output temporary segment
         # IMPORTANT: We use a high bitrate here to preserve quality before final concatenation
