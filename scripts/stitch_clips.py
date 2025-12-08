@@ -277,6 +277,23 @@ def main():
         'y_pos': args.y_pos
     }
 
+    # Debug Font Resolution
+    print(f"DEBUG: Font Argument: {font_arg}", file=sys.stderr)
+    if os.path.exists(font_arg):
+         print(f"DEBUG: Font file FOUND at {font_arg}", file=sys.stderr)
+    else:
+         print(f"DEBUG: Font file NOT FOUND at {font_arg}. FFmpeg might fail if this is not a system font name.", file=sys.stderr)
+         # Attempt to list system fonts if fallback needed (optional, but helpful for debug)
+         if font_arg == "Arial":
+             print("DEBUG: Check /usr/share/fonts for available fonts:", file=sys.stderr)
+             try:
+                 for root, dirs, files in os.walk("/usr/share/fonts"):
+                     for file in files:
+                         if file.endswith(".ttf"):
+                             print(os.path.join(root, file), file=sys.stderr)
+             except Exception:
+                 pass
+
     # 1. Parse JSON Input
     try:
         with open(args.clips, 'r') as f:

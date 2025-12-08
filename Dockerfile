@@ -26,7 +26,7 @@ COPY --from=builder /app/assets ./assets
 
 
 # Install Python and dependencies
-RUN apk add --no-cache python3 py3-pip ffmpeg py3-numpy
+RUN apk add --no-cache python3 py3-pip ffmpeg py3-numpy font-terminus font-inconsolata font-dejavu font-noto font-rubik fontconfig
 # Install only essential python packages for stitching (avoiding heavy librosa build)
 RUN pip3 install ffmpeg-python --break-system-packages
 EXPOSE 3000
