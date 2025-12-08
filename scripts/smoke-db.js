@@ -11,10 +11,12 @@ async function testDatabaseConnection() {
     console.log('✅ Database connection successful');
     
     // Test user creation
+    const timestamp = Date.now();
     const testUser = await prisma.user.create({
       data: {
-        email: `test-${Date.now()}@example.com`,
-        authUserId: `test-auth-${Date.now()}`,
+        id: `test-user-${timestamp}`,
+        email: `test-${timestamp}@example.com`,
+        authUserId: `test-auth-${timestamp}`,
         displayName: 'Test User',
       },
     });
