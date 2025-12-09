@@ -413,17 +413,43 @@ export class TimelineService {
                 }
             }
 
-            // 3. Sequential Generation (Audio & Image) - Sequential required for continuity
-            this.logger.log('Starting sequential generation (Audio & Image)...');
+            // 2.5 Create Initial "Pending" Segments in DB (Streaming UX)
+            // This ensures the frontend sees all empty slots immediately.
+            await this.prisma.timelineSegment.createMany({
+                data: script.map((item, index) => ({
+                    jobId: job.id,
+                    index: index,
+                    script: item.text,
+                    visualPrompt: item.visualPrompt,
+                    motionPrompt: item.motionPrompt,
+                    status: 'pending',
+                }))
+            });
+            await this._syncJobMetadata(job.id); // Sync immediately so frontend sees the script
 
-            const preparedSegments: any[] = [];
+            // 3. Sequential Generation Loop (Audio -> Image -> Video)
+            this.logger.log('Starting sequential generation (Streaming Mode)...');
+
+            const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
+            if (!webhookHost) {
+                this.logger.warn('WEBHOOK_HOST not set. Video generation might fail.');
+            }
+
+            // We track the previous image URL for continuity
+            let previousImageUrl: string | null = null;
 
             for (let index = 0; index < script.length; index++) {
                 const item = script[index];
 
+                // Initialize failure tracking for this segment
+                let segmentError: string | null = null;
+                let audioUrl: string | null = null;
+                let audioDuration: number | null = null;
+                let alignment: any = null;
+                let imageUrl: string | null = null;
+
                 try {
-                    // Audio Generation (Always needed if narration is on)
-                    let speechResult: { url: string; duration: number; alignment?: any } | null = null;
+                    // 3.1 Audio Generation
                     if (dto.includeNarration !== false) {
                         try {
                             const result = await this.audioService.generateSpeech({
@@ -435,128 +461,114 @@ export class TimelineService {
                                 withTimestamps: true
                             });
                             const buffer = Buffer.from(result.audioBase64, 'base64');
-                            const url = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
-                            const duration = await this.getAudioDuration(buffer);
-                            speechResult = { url, duration, alignment: result.alignment };
+                            audioUrl = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
+                            audioDuration = await this.getAudioDuration(buffer);
+                            alignment = result.alignment;
                         } catch (audioErr) {
                             this.logger.error(`Audio generation failed for segment ${index}`, audioErr);
-                            // We might want to continue even if audio fails? Or fail the segment?
-                            // Let's rely on standard error handling (fail segment) for now.
-                            throw audioErr;
+                            // We log but continue, effectively making a silent segment if strictly needed,
+                            // or we can fail the segment. Let's record error but try to proceed with visuals?
+                            // Actually, if audio fails, the video timing might be off. let's mark error.
+                            segmentError = `Audio failed: ${audioErr}`;
                         }
                     }
 
-                    // Visual Generation (Image)
-                    let imageUrl: string | null = null;
+                    // 3.2 Visual Generation (Image) if no error yet
+                    if (!segmentError) {
+                        if (item.fromPreviousScene && index > 0 && previousImageUrl) {
+                            this.logger.log(`Segment ${index} reusing image from previous (Continuity)`);
+                            imageUrl = previousImageUrl;
+                        } else {
+                            const imgRes = await this.generationOrchestrator.generate(user, {
+                                model: 'nano-banana-pro',
+                                prompt: item.visualPrompt,
+                                providerOptions: { aspectRatio: '9:16' }
+                            }, {
+                                cost: 1,
+                                isJob: true,
+                                persistenceOptions: {
+                                    bucket: 'cyran-roll-images',
+                                    skipR2FileRecord: true
+                                }
+                            }).catch(err => {
+                                this.logger.error(`Visual generation failed for segment ${index}`, err);
+                                return null;
+                            });
 
-                    // Continuity Check
-                    if (item.fromPreviousScene && index > 0 && preparedSegments[index - 1]?.imageUrl) {
-                        this.logger.log(`Segment ${index} reusing image from Segment ${index - 1} (Continuity)`);
-                        imageUrl = preparedSegments[index - 1].imageUrl;
-                    } else {
-                        // Regular Generation
-                        const imgRes = await this.generationOrchestrator.generate(user, {
-                            model: 'nano-banana-pro',
-                            prompt: item.visualPrompt,
-                            providerOptions: { aspectRatio: '9:16' }
-                        }, {
-                            cost: 1,
-                            isJob: true,
-                            persistenceOptions: {
-                                bucket: 'cyran-roll-images',
-                                skipR2FileRecord: true
-                            }
-                        }).catch(err => {
-                            this.logger.error(`Visual generation failed for segment ${index}`, err);
-                            return null;
-                        });
-
-                        imageUrl = imgRes?.assets?.[0]?.r2FileUrl
-                            ?? imgRes?.assets?.[0]?.remoteUrl
-                            ?? imgRes?.assets?.[0]?.dataUrl
-                            ?? null;
+                            imageUrl = imgRes?.assets?.[0]?.r2FileUrl
+                                ?? imgRes?.assets?.[0]?.remoteUrl
+                                ?? imgRes?.assets?.[0]?.dataUrl
+                                ?? null;
+                        }
                     }
 
-                    preparedSegments.push({
-                        item,
-                        index,
-                        voiceUrl: speechResult?.url,
-                        audioDuration: speechResult?.duration,
-                        alignment: speechResult?.alignment,
-                        imageUrl,
-                        status: 'ready_for_video'
+                    if (imageUrl) {
+                        previousImageUrl = imageUrl;
+                    } else if (!segmentError) {
+                        segmentError = 'Failed to generate image';
+                    }
+
+                    // 3.3 UPDATE DB: Audio + Image Done. Status -> 'generating' (Video starting)
+                    // If error, Status -> 'failed'
+                    await this.prisma.timelineSegment.update({
+                        where: { jobId_index: { jobId: job.id, index } },
+                        data: {
+                            audioUrl,
+                            duration: audioDuration ?? undefined, // Only update if we have it
+                            alignment,
+                            imageUrl,
+                            status: segmentError ? 'failed' : 'generating',
+                            error: segmentError ?? undefined
+                        }
                     });
 
-                } catch (err) {
-                    this.logger.error(`Segment ${index} preparation failed`, err);
-                    preparedSegments.push({ item, index, error: String(err), status: 'failed' });
-                }
-            }
+                    // Sync after Image/Audio generation so user sees them immediately
+                    await this._syncJobMetadata(job.id);
 
-            // 3.5. Save Segments to DB (Create Phase)
-            // We must create them before we try to update them in the next step.
-            await this.prisma.timelineSegment.createMany({
-                data: preparedSegments.map(seg => ({
-                    jobId: job.id,
-                    index: seg.index,
-                    script: seg.item.text,
-                    visualPrompt: seg.item.visualPrompt,
-                    motionPrompt: seg.item.motionPrompt,
-                    audioUrl: seg.voiceUrl,
-                    imageUrl: seg.imageUrl,
-                    duration: seg.audioDuration,
-                    alignment: seg.alignment, // Save alignment
-                    status: seg.status === 'failed' ? 'failed' : 'pending',
-                    error: seg.error ? String(seg.error) : undefined
-                }))
-            }); // Cast to avoid TS error if types are stale
+                    // 3.4 Video Generation (if success so far)
+                    if (!segmentError && imageUrl) {
+                        const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${job.id}&segmentIndex=${index}`;
 
+                        try {
+                            const prediction = await this.runWithSmartRetry(
+                                () => this.pixverseProvider.generateVideoFromImageAsync(
+                                    imageUrl!,
+                                    item.visualPrompt,
+                                    webhookUrl,
+                                    (item.motionPrompt ? `${item.motionPrompt}` : 'Dynamic camera movement, cinematic lighting')
+                                ),
+                                index
+                            );
 
-            // 4. Start Video Generation (Sequentially with Smart Retry to survive Rate Limits)
-            const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
-            if (!webhookHost) {
-                this.logger.warn('WEBHOOK_HOST not set. Video generation might fail or not report back if using async.');
-            }
-            this.logger.log('Starting video generation queue...');
+                            // Update prediction ID
+                            await this.prisma.timelineSegment.update({
+                                where: { jobId_index: { jobId: job.id, index } },
+                                data: { predictionId: prediction.id }
+                            });
+                            // No need to sync here necessarily unless we want to show prediction ID, 
+                            // but status was already set to 'generating' in previous step.
 
-            for (const segment of preparedSegments) {
-                if (segment.status === 'failed' || !segment.imageUrl) continue;
-
-                // Save "generating" status to DB (using your new TimelineSegment logic)
-                await this.prisma.timelineSegment.update({
-                    where: { jobId_index: { jobId: job.id, index: segment.index } },
-                    data: { status: 'generating' }
-                });
-
-                // Run with retry
-                try {
-                    const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${job.id}&segmentIndex=${segment.index}`;
-
-                    const prediction = await this.runWithSmartRetry(
-                        () => this.pixverseProvider.generateVideoFromImageAsync(
-                            segment.imageUrl,
-                            segment.item.visualPrompt,
-                            webhookUrl
-                        ),
-                        segment.index
-                    );
-
-                    // Update DB with prediction ID
-                    await this.prisma.timelineSegment.update({
-                        where: { jobId_index: { jobId: job.id, index: segment.index } },
-                        data: { predictionId: prediction.id }
-                    });
+                        } catch (videoErr) {
+                            this.logger.error(`Segment ${index} failed to start video:`, videoErr);
+                            await this.prisma.timelineSegment.update({
+                                where: { jobId_index: { jobId: job.id, index } },
+                                data: { status: 'failed', error: String(videoErr) }
+                            });
+                        }
+                    }
 
                 } catch (err) {
-                    this.logger.error(`Segment ${segment.index} failed to start video:`, err);
+                    this.logger.error(`Segment ${index} critical failure`, err);
                     await this.prisma.timelineSegment.update({
-                        where: { jobId_index: { jobId: job.id, index: segment.index } },
+                        where: { jobId_index: { jobId: job.id, index } },
                         data: { status: 'failed', error: String(err) }
                     });
                 }
             }
 
-            // Save initial state (musicUrl, beatTimes, dto) but NOT segments in metadata
+
+            // Save initial state (musicUrl, beatTimes, dto)
+            // We want to make sure the "response" metadata is reasonably initialized here for the frontend to pick up if it polls Job
             await this.prisma.job.update({
                 where: { id: job.id },
                 data: {
@@ -569,7 +581,7 @@ export class TimelineService {
                 }
             });
 
-            // If no videos are generating (e.g. all failed or no webhook host), finalize immediately
+            // If no videos are generating (e.g. all failed), finalize immediately
             const generatingCount = await this.prisma.timelineSegment.count({
                 where: { jobId: job.id, status: 'generating' }
             });
@@ -812,8 +824,25 @@ export class TimelineService {
     private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<{ script: any[]; title?: string }> {
         const modelId = this.configService.get<string>('REPLICATE_MODEL_ID') || 'openai/gpt-5';
 
-        const durationText = duration === 'short' ? 'Short (2 scenes)' : duration;
-        const prompt = `Topic: ${topic}\nStyle: ${style}\nTarget Total Duration: ${durationText}`;
+        let sceneCount = 6;
+        let durationText = '';
+
+        switch (duration) {
+            case 'short':
+                sceneCount = 3;
+                durationText = 'Short (Exactly 3 scenes)';
+                break;
+            case 'medium':
+                sceneCount = 6;
+                durationText = 'Medium (Exactly 6 scenes)';
+                break;
+            case 'long':
+                sceneCount = 12;
+                durationText = 'Long (Exactly 12 scenes)';
+                break;
+        }
+
+        const prompt = `Topic: ${topic}\nStyle: ${style}\nTarget: ${durationText}\nInstruction: Strictly generate EXACTLY ${sceneCount} scenes. No more, no less.`;
 
         try {
             const output = await this.replicate.run(modelId as any, {
@@ -978,6 +1007,8 @@ export class TimelineService {
                 voiceUrl: s.audioUrl,
                 imageUrl: s.imageUrl,
                 videoUrl: s.videoUrl,
+                status: s.status,
+                error: s.error,
                 duration: s.duration || 3.0,
                 startTime: 0,
                 endTime: 0
