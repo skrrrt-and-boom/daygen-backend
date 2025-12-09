@@ -746,6 +746,7 @@ export class TimelineService {
                     index: seg.index,
                     script: seg.script,
                     visualPrompt: seg.visualPrompt,
+                    motionPrompt: seg.motionPrompt || undefined,
                     voiceUrl: seg.audioUrl || undefined,
                     imageUrl: seg.imageUrl || undefined,
                     videoUrl: seg.videoUrl || undefined,
