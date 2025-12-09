@@ -15,6 +15,7 @@ import { ScenesService, SceneGenerationJobPayload } from '../scenes/scenes.servi
 import { R2Service } from '../upload/r2.service';
 import { R2FilesService } from '../r2files/r2files.service';
 import { GEMINI_API_KEY_CANDIDATES } from '../generation/constants';
+import sharp from 'sharp';
 
 export interface ProcessJobPayload {
   jobId: string;
@@ -841,6 +842,81 @@ export class JobProcessingService {
     return normalized;
   }
 
+  /**
+   * Center-crops an image to match the target aspect ratio.
+   * This prevents letterboxing/pillarboxing when the input image has a different
+   * aspect ratio than the target video output (e.g., 1:1 image to 16:9 video).
+   */
+  private async centerCropToAspectRatio(
+    base64Data: string,
+    mimeType: string,
+    targetAspectRatio: string,
+  ): Promise<{ data: string; mimeType: string }> {
+    // Parse target aspect ratio (e.g., "16:9" -> 16/9)
+    const [targetW, targetH] = targetAspectRatio.split(':').map(Number);
+    if (!targetW || !targetH) {
+      return { data: base64Data, mimeType };
+    }
+    const targetRatio = targetW / targetH;
+
+    try {
+      const inputBuffer = Buffer.from(base64Data, 'base64');
+      const image = sharp(inputBuffer);
+      const metadata = await image.metadata();
+
+      if (!metadata.width || !metadata.height) {
+        this.logger.warn('Could not get image dimensions, skipping crop');
+        return { data: base64Data, mimeType };
+      }
+
+      const currentRatio = metadata.width / metadata.height;
+
+      // If aspect ratios are close enough (within 5%), skip cropping
+      if (Math.abs(currentRatio - targetRatio) / targetRatio < 0.05) {
+        this.logger.log('Image aspect ratio matches target, no crop needed');
+        return { data: base64Data, mimeType };
+      }
+
+      let cropWidth: number;
+      let cropHeight: number;
+      let left: number;
+      let top: number;
+
+      if (currentRatio > targetRatio) {
+        // Image is wider than target, crop the sides
+        cropHeight = metadata.height;
+        cropWidth = Math.round(metadata.height * targetRatio);
+        left = Math.round((metadata.width - cropWidth) / 2);
+        top = 0;
+      } else {
+        // Image is taller than target, crop top/bottom
+        cropWidth = metadata.width;
+        cropHeight = Math.round(metadata.width / targetRatio);
+        left = 0;
+        top = Math.round((metadata.height - cropHeight) / 2);
+      }
+
+      this.logger.log('Center-cropping image to match target aspect ratio', {
+        originalDimensions: `${metadata.width}x${metadata.height}`,
+        originalRatio: currentRatio.toFixed(2),
+        targetAspectRatio,
+        targetRatio: targetRatio.toFixed(2),
+        cropDimensions: `${cropWidth}x${cropHeight}`,
+        cropOffset: `left=${left}, top=${top}`,
+      });
+
+      const croppedBuffer = await image
+        .extract({ left, top, width: cropWidth, height: cropHeight })
+        .toBuffer();
+
+      const croppedBase64 = croppedBuffer.toString('base64');
+      return { data: croppedBase64, mimeType };
+    } catch (error) {
+      this.logger.error('Failed to center-crop image, using original', error);
+      return { data: base64Data, mimeType };
+    }
+  }
+
   private parseVeoProgress(payload: Record<string, unknown>): number | undefined {
     const metadata = this.asRecord(payload.metadata);
     if (!metadata) return undefined;
@@ -980,7 +1056,6 @@ export class JobProcessingService {
 
     // Reference images are only supported on the standard Veo 3.1 model.
     let veoModel = requestedModel;
-    let appliedReferences = [] as typeof referenceImages;
 
     if (wantsReferenceImages) {
       if (!supportsReferenceImages) {
@@ -989,30 +1064,71 @@ export class JobProcessingService {
         );
       }
       veoModel = 'veo-3.1-generate-preview';
-      appliedReferences = referenceImages;
     }
 
     // Sanity check: Veo 3.1 currently prevents using both Image-to-Video (intro image) AND reference images (style/character refs)
     // If we have an input image (imageBase64), we must drop the reference images to avoid INVALID_ARGUMENT error.
-    if (imageBase64 && appliedReferences.length > 0) {
+    if (imageBase64 && referenceImages.length > 0) {
       this.logger.warn(
-        `Veo 3.1: Image-to-Video does not support additional reference images. Ignoring ${appliedReferences.length} references to prefer input image.`,
+        `Veo 3.1: Image-to-Video does not support additional reference images. Ignoring ${referenceImages.length} references to prefer input image.`,
       );
-      appliedReferences = [];
     }
 
-    const hasReferenceImages = appliedReferences.length > 0;
+    // Decide which mode we're in: image-to-video vs text-to-video with references
+    const useImageToVideo = Boolean(imageBase64);
+    const hasReferenceImages = !useImageToVideo && referenceImages.length > 0;
+    let appliedReferences = hasReferenceImages ? referenceImages : [] as typeof referenceImages;
+
+    // Determine effective aspect ratio early so we can pre-crop images
+    const effectiveAspectRatio = aspectRatio ?? (hasReferenceImages ? '16:9' : undefined);
+
+    // Pre-crop the input image to match the target aspect ratio (for image-to-video mode)
+    // This prevents letterboxing/stretching when input has different aspect ratio (e.g., 1:1 to 16:9)
+    let processedImageBase64 = imageBase64;
+    let processedImageMimeType = imageMimeType || 'image/png';
+    if (imageBase64 && effectiveAspectRatio) {
+      const cropped = await this.centerCropToAspectRatio(
+        imageBase64,
+        processedImageMimeType,
+        effectiveAspectRatio,
+      );
+      processedImageBase64 = cropped.data;
+      processedImageMimeType = cropped.mimeType;
+    }
+
+    // Pre-crop reference images to match the target aspect ratio (for text-to-video with refs mode)
+    // This ensures reference images don't cause stretching/distortion in output video
+    if (hasReferenceImages && effectiveAspectRatio && appliedReferences.length > 0) {
+      const processedReferences: typeof appliedReferences = [];
+      for (const ref of appliedReferences) {
+        const currentMime = ref.image.mimeType || 'image/png';
+        const cropped = await this.centerCropToAspectRatio(
+          ref.image.bytesBase64Encoded,
+          currentMime,
+          effectiveAspectRatio,
+        );
+        processedReferences.push({
+          image: {
+            bytesBase64Encoded: cropped.data,
+            mimeType: cropped.mimeType,
+          },
+          referenceType: ref.referenceType,
+        });
+      }
+      appliedReferences = processedReferences;
+      this.logger.log(`Pre-cropped ${appliedReferences.length} reference image(s) to ${effectiveAspectRatio}`);
+    }
 
     const instance: Record<string, unknown> = { prompt };
-    if (imageBase64) {
+    if (processedImageBase64) {
       instance.image = {
-        bytesBase64Encoded: imageBase64,
-        mimeType: imageMimeType || 'image/png',
+        bytesBase64Encoded: processedImageBase64,
+        mimeType: processedImageMimeType,
       };
     }
 
     const parameters: Record<string, unknown> = {};
-    const effectiveAspectRatio = aspectRatio ?? (hasReferenceImages ? '16:9' : undefined);
+    // effectiveAspectRatio is already determined above for pre-cropping
     const effectiveDurationSeconds = hasReferenceImages
       ? 8
       : typeof durationSeconds === 'number'
@@ -1030,6 +1146,7 @@ export class JobProcessingService {
     if (typeof seed === 'number') parameters.seed = seed;
     if (resolution) parameters.resolution = resolution;
     if (effectivePersonGeneration) parameters.personGeneration = effectivePersonGeneration;
+    // Note: We pre-cropped the image above, so no need for resizeMode parameter
     if (appliedReferences.length > 0) {
       instance.referenceImages = appliedReferences;
     }
@@ -1047,6 +1164,7 @@ export class JobProcessingService {
       referenceCount: appliedReferences.length,
       personGeneration: effectivePersonGeneration,
       resolution,
+      preCropped: Boolean(imageBase64 && effectiveAspectRatio),
       hasInputImage: Boolean(instance.image),
     });
 
