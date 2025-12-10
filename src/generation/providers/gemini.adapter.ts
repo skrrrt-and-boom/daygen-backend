@@ -284,8 +284,8 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     const hasStyleReferences = references.length > 1 || (references.length > 0 && (baseImage || dto.imageUrl));
     const enhancedPrompt = maskImage
       ? (hasStyleReferences
-          ? `IMPORTANT: Edit ONLY the white masked area of the source image. Use the reference image(s) as guidance for what to place in the masked area. Keep all non-masked areas exactly as they are. User request: ${prompt}`
-          : `IMPORTANT: Edit ONLY the white masked area of the source image. Keep all non-masked areas exactly as they are. User request: ${prompt}`)
+        ? `IMPORTANT: Edit ONLY the white masked area of the source image. Use the reference image(s) as guidance for what to place in the masked area. Keep all non-masked areas exactly as they are. User request: ${prompt}`
+        : `IMPORTANT: Edit ONLY the white masked area of the source image. Keep all non-masked areas exactly as they are. User request: ${prompt}`)
       : prompt;
 
     // Build Imagen/Gemini image parameters from DTO
@@ -301,7 +301,7 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
     const aspectRatio = providerOptions.aspectRatio as string | undefined;
     if (aspectRatio && typeof aspectRatio === 'string') {
       // Gemini 3 Pro Image supports common aspect ratios like Imagen
-      const validRatios = ['1:1', '3:4', '4:3', '9:16', '16:9'];
+      const validRatios = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
       if (validRatios.includes(aspectRatio)) {
         parameters.aspectRatio = aspectRatio;
       }
@@ -393,10 +393,10 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
       // 2. Source image (the image being edited - first reference)
       // 3. Mask (defines the edit area)
       // 4. Style references (content to place in masked area - remaining references)
-      
+
       if (maskImage && !overrideReferences) {
         console.log('Gemini Adapter: Reference-guided inpainting mode');
-        
+
         // Add source image first (from baseImage, imageUrl, or first reference)
         if (baseImage) {
           parts.push({
@@ -495,7 +495,7 @@ export class GeminiImageAdapter implements ImageProviderAdapter {
         // Map aspectRatio from providerOptions
         if (aspectRatio && typeof aspectRatio === 'string') {
           // Gemini Image supports common aspect ratios
-          const validRatios = ['1:1', '3:4', '4:3', '9:16', '16:9'];
+          const validRatios = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
           if (validRatios.includes(aspectRatio)) {
             imageConfig.aspectRatio = aspectRatio;
           }
