@@ -93,7 +93,7 @@ Return ONLY a raw JSON object.
     "ad_archetype": "String (UGC Testimonial | Visual Satisfaction | Green Screen Explainer)",
     "hook_strategy": "String (e.g., 'Negative Engagement', 'Curiosity Gap')",
     "estimated_duration": "Number (MUST match Target Total Duration)",
-    "title": "String (Internal production title)"
+    "title": "String (Write something interesting as a title of the video, it will be displayed in the history of the user, MAXIMUM 10 WORDS)"
   },
   "scenes": [
     {

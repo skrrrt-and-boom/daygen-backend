@@ -38,7 +38,7 @@ export class R2FilesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
-  ) {}
+  ) { }
 
   async list(ownerAuthId: string, limit = 50, cursor?: string) {
     const take = Math.min(Math.max(limit, 1), 100);
@@ -63,10 +63,10 @@ export class R2FilesService {
           ...where,
           ...(pagingCursor
             ? {
-                createdAt: {
-                  lt: pagingCursor,
-                },
-              }
+              createdAt: {
+                lt: pagingCursor,
+              },
+            }
             : {}),
         },
         take: fetchBatchSize,

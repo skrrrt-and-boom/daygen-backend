@@ -3,41 +3,40 @@ generator client {
 }
 
 datasource db {
-  provider          = "postgresql"
-  url               = env("DATABASE_URL")
-  directUrl         = env("DIRECT_URL")
-  // shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id           String         @id
-  email        String         @unique
-  createdAt    DateTime       @default(now())
-  authUserId   String         @unique
-  stripeCustomerId String?    @unique
-  displayName  String?
-  credits      Int            @default(20)
-  profileImage String?
-  updatedAt    DateTime       @updatedAt
-  role         UserRole       @default(USER)
-  jobs         Job[]
-  payments     Payment[]
-  r2Files      R2File[]
-  subscription Subscription?
-  usageEvents  UsageEvent[]
-  voices       Voice[]
+  id               String        @id
+  email            String        @unique
+  createdAt        DateTime      @default(now())
+  authUserId       String        @unique
+  displayName      String?
+  credits          Int           @default(20)
+  profileImage     String?
+  updatedAt        DateTime      @updatedAt
+  role             UserRole      @default(USER)
+  stripeCustomerId String?       @unique
+  jobs             Job[]
+  payments         Payment[]
+  r2Files          R2File[]
+  subscription     Subscription?
+  usageEvents      UsageEvent[]
+  voices           Voice[]
 }
 
 model Voice {
-  id           String    @id @default(cuid())
+  id           String   @id @default(cuid())
   name         String
   description  String?
-  elevenLabsId String    @unique
+  elevenLabsId String   @unique
   previewUrl   String?
   ownerAuthId  String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  user         User      @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
 
   @@index([ownerAuthId])
 }
@@ -83,19 +82,19 @@ model R2File {
 }
 
 model Job {
-  id          String    @id @default(cuid())
-  userId      String
-  type        JobType
-  status      JobStatus @default(PENDING)
-  progress    Int       @default(0)
-  resultUrl   String?
-  error       String?
-  metadata    Json?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  completedAt DateTime?
-  user        User      @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
-  r2Files     R2File[]
+  id               String            @id @default(cuid())
+  userId           String
+  type             JobType
+  status           JobStatus         @default(PENDING)
+  progress         Int               @default(0)
+  resultUrl        String?
+  error            String?
+  metadata         Json?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  completedAt      DateTime?
+  user             User              @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
+  r2Files          R2File[]
   timelineSegments TimelineSegment[]
 
   @@index([userId, status])
@@ -122,25 +121,54 @@ model Payment {
 }
 
 model Subscription {
-  id                   String              @id @default(cuid())
-  userId               String              @unique
-  stripeSubscriptionId String              @unique
-  stripePriceId        String
-  stripeSubscriptionItemId String?         @unique
-  status               SubscriptionStatus  @default(ACTIVE)
-  currentPeriodStart   DateTime
-  currentPeriodEnd     DateTime
-  cancelAtPeriodEnd    Boolean             @default(false)
-  credits              Int
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
-  user                 User                @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
+  id                       String             @id @default(cuid())
+  userId                   String             @unique
+  stripeSubscriptionId     String             @unique
+  stripePriceId            String
+  status                   SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart       DateTime
+  currentPeriodEnd         DateTime
+  cancelAtPeriodEnd        Boolean            @default(false)
+  credits                  Int
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  stripeSubscriptionItemId String?            @unique
+  user                     User               @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
 
   @@index([userId])
   @@index([stripeSubscriptionId])
   @@index([stripePriceId])
 }
 
+model WebhookEvent {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  type      String
+  createdAt DateTime @default(now())
+}
+
+model TimelineSegment {
+  id           String   @id @default(cuid())
+  jobId        String
+  index        Int
+  script       String
+  visualPrompt String
+  audioUrl     String?
+  imageUrl     String?
+  videoUrl     String?
+  predictionId String?
+  status       String   @default("pending")
+  error        String?
+  duration     Float?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  motionPrompt String?
+  alignment    Json?
+  job          Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, index])
+  @@index([predictionId])
+}
 
 enum UserRole {
   USER
@@ -160,10 +188,10 @@ enum JobType {
 enum JobStatus {
   PENDING
   PROCESSING
-  STITCHING
   COMPLETED
   FAILED
   CANCELLED
+  STITCHING
 }
 
 enum UsageStatus {
@@ -198,46 +226,6 @@ enum SubscriptionStatus {
   PAUSED
 }
 
-model WebhookEvent {
-  id        String   @id @default(cuid())
-  eventId   String   @unique
-  type      String
-  createdAt DateTime @default(now())
-}
-
-model TimelineSegment {
-  id            String   @id @default(cuid())
-  jobId         String
-  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  index         Int
-  
-  // Content
-  script        String   @db.Text
-  visualPrompt  String   @db.Text
-  motionPrompt  String?  @db.Text
-  
-  // Assets
-  audioUrl      String?
-  imageUrl      String?
-  videoUrl      String?
-  
-  // State
-  predictionId  String?  // External ID from Replicate/Kling
-  status        String   @default("pending") // pending, generating, completed, failed
-  error         String?
-  
-  // Metadata
-  duration      Float?
-  alignment     Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@unique([jobId, index])
-  @@index([predictionId])
-}
-
-// Plan table removed – plans now live in code
-
 enum CreditReason {
   JOB
   PAYMENT
@@ -252,4 +240,3 @@ enum CreditSourceType {
   SUBSCRIPTION_CYCLE
   SYSTEM
 }
-

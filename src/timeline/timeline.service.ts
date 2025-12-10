@@ -19,6 +19,8 @@ import * as child_process from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { pipeline } from 'stream/promises';
+import { Readable } from 'stream';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mp3Duration = require('mp3-duration');
 
@@ -47,9 +49,7 @@ export class TimelineService {
     }
 
     async getJobStatus(jobId: string) {
-        return this.prisma.job.findUnique({
-            where: { id: jobId }
-        });
+        return this.getAggregatedJobStatus(jobId);
     }
 
     async createTimeline(dto: GenerateTimelineDto, userId: string): Promise<any> {
@@ -93,6 +93,12 @@ export class TimelineService {
                 try {
                     // Upload to R2 (cyran-roll-clips)
                     const buffer = await this.downloadToBuffer(rawVideoUrl);
+                    this.logger.log(`Downloaded Video Segment ${index} from provider. Size: ${buffer.length} bytes`);
+
+                    if (buffer.length === 0) {
+                        throw new Error('Downloaded video buffer is empty');
+                    }
+
                     videoUrl = await this.r2Service.uploadBuffer(buffer, 'video/mp4', 'cyran-roll-clips');
                     status = 'completed';
                     this.logger.log(`Segment ${index} video uploaded to R2: ${videoUrl}`);
@@ -134,11 +140,11 @@ export class TimelineService {
                     }
                 });
 
-                // Step 3: Check for pending segments
+                // Step 3: Check for pending segments (generating OR pending/waiting)
                 const pendingCount = await tx.timelineSegment.count({
                     where: {
                         jobId,
-                        status: 'generating'
+                        status: { in: ['generating', 'pending'] }
                     }
                 });
 
@@ -178,6 +184,135 @@ export class TimelineService {
 
         } catch (err) {
             this.logger.error(`Failed to handle webhook update for segment ${index} of job ${jobId}`, err);
+        }
+
+        // --- Continuity Check: Trigger Next Segment if it was waiting ---
+        if (status === 'completed' && videoUrl) {
+            await this.checkAndTriggerNextSegment(jobId, index, videoUrl);
+        }
+    }
+
+    private async checkAndTriggerNextSegment(jobId: string, currentIndex: number, currentVideoUrl: string) {
+        const nextIndex = currentIndex + 1;
+
+        // 1. Check if next segment exists and is pending/waiting
+        const nextSegment = await this.prisma.timelineSegment.findUnique({
+            where: { jobId_index: { jobId, index: nextIndex } }
+        });
+
+        if (!nextSegment) return;
+
+        // We need next segment script or prompt to know if it depends on us
+        // But simpler: if status is 'pending' and script has visual_source='last_frame'
+        // Or we can rely on `imageUrl` being null while status is pending? 
+        // Let's rely on script analysis or a specific flag. 
+        // The script is stored in DB, but parsing the 'visual_source' from it might be tricky if not stored separately.
+        // However, in our flow, we stored 'visual_source' inside the script TEXT? No, script is just text.
+        // Ah, `processTimelineGeneration` saved `visualPrompt` and `motionPrompt`.
+        // We did NOT save `visual_source` to DB column explicitly.
+        // BUT, we can infer it: if `imageUrl` is NULL and status is `pending`, it means it was skipped.
+        // And if we are strictly implementing "last_frame", we should check if we can proceed.
+
+        if (nextSegment.status === 'pending' && !nextSegment.imageUrl) {
+            // It is likely waiting for the image.
+            // Let's extracting the last frame NOW.
+
+            this.logger.log(`Segment ${nextIndex} appears to be waiting for continuity. Extracting last frame from Seg ${currentIndex}...`);
+
+            try {
+                const lastFrameUrl = await this.extractLastFrameFromVideo(currentVideoUrl, jobId, currentIndex);
+
+                // Update and Trigger Next
+                await this.prisma.timelineSegment.update({
+                    where: { jobId_index: { jobId, index: nextIndex } },
+                    data: {
+                        imageUrl: lastFrameUrl,
+                        status: 'generating' // Trigger state
+                    }
+                });
+
+                await this._syncJobMetadata(jobId);
+
+                // Trigger Video
+                await this._triggerVideoGeneration(jobId, nextIndex, nextSegment.visualPrompt, nextSegment.motionPrompt, lastFrameUrl);
+
+            } catch (e) {
+                this.logger.error(`Failed to handle continuity for segment ${nextIndex}`, e);
+                await this.prisma.timelineSegment.update({
+                    where: { jobId_index: { jobId, index: nextIndex } },
+                    data: { status: 'failed', error: `Continuity failure: ${e}` }
+                });
+            }
+        }
+    }
+
+    private async extractLastFrameFromVideo(videoUrl: string, jobId: string, index: number): Promise<string> {
+        const tempDir = os.tmpdir();
+        const videoPath = path.join(tempDir, `job-${jobId}-seg-${index}-source.mp4`);
+        const framePath = path.join(tempDir, `job-${jobId}-seg-${index}-last-frame.png`);
+
+        try {
+            this.logger.log(`Downloading video for frame extraction: ${videoUrl}`);
+            await this.downloadFile(videoUrl, videoPath);
+            this.logger.log(`Video downloaded to ${videoPath}. Size: ${fs.statSync(videoPath).size} bytes. Extracting frame...`);
+
+            // FFmpeg: -sseof -1 (seek to last 1s) ... -update 1 (overwrite) -q:v 1 (high quality)
+            // We want the very last frame.
+            // Command: ffmpeg -sseof -0.5 -i input -update 1 -q:v 2 output.png
+            // Note: -sseof -0.1 might be safer to ensure we get a frame.
+
+            const cmd = `ffmpeg -y -sseof -0.5 -i "${videoPath}" -vsync 0 -update 1 -q:v 1 "${framePath}"`;
+            this.logger.log(`Running FFmpeg: ${cmd}`);
+            await exec(cmd, { timeout: 30000, maxBuffer: 1024 * 1024 * 10 });
+
+            if (!fs.existsSync(framePath)) {
+                throw new Error('Frame extraction produced no file');
+            }
+
+            const buffer = fs.readFileSync(framePath);
+            const r2Url = await this.r2Service.uploadBuffer(buffer, 'image/png', 'cyran-roll-images');
+            this.logger.log(`Last frame extracted from Seg ${index}: ${r2Url}`);
+            return r2Url;
+
+        } finally {
+            // Cleanup
+            if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+            if (fs.existsSync(framePath)) fs.unlinkSync(framePath);
+        }
+    }
+
+    private async _triggerVideoGeneration(jobId: string, index: number, prompt: string, motionPrompt?: string | null, imageUrl?: string | null) {
+        if (!imageUrl) {
+            this.logger.warn(`Segment ${index} missing image for video generation. Skipping.`);
+            return;
+        }
+
+        const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
+        const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${jobId}&segmentIndex=${index}`;
+
+        try {
+            this.logger.log(`Triggering video generation for Segment ${index}`);
+            const prediction = await this.runWithSmartRetry(
+                () => this.pixverseProvider.generateVideoFromImageAsync(
+                    imageUrl,
+                    prompt,
+                    webhookUrl,
+                    (motionPrompt ? `${motionPrompt}` : 'Dynamic camera movement, cinematic lighting')
+                ),
+                index
+            );
+
+            await this.prisma.timelineSegment.update({
+                where: { jobId_index: { jobId, index } },
+                data: { predictionId: prediction.id, status: 'generating' }
+            });
+
+        } catch (videoErr) {
+            this.logger.error(`Segment ${index} failed to start video:`, videoErr);
+            await this.prisma.timelineSegment.update({
+                where: { jobId_index: { jobId, index } },
+                data: { status: 'failed', error: String(videoErr) }
+            });
         }
     }
 
@@ -385,20 +520,26 @@ export class TimelineService {
             const user = await this.usersService.findById(job.userId);
             if (!user) throw new Error('User not found');
 
+            // Initialize current metadata state to avoid overwriting updates with stale job.metadata
+            let currentMetadata = { ...job.metadata };
+
             // 1. Script Generation
             // 1. Script Generation
-            const { script, title } = await this.generateScript(dto.topic, dto.style, dto.duration, dto.referenceImageUrls);
+            const { script, title, rawOutput } = await this.generateScript(dto.topic, dto.style, dto.duration, dto.referenceImageUrls);
             this.logger.log(`Generated script with ${script.length} segments. Title: "${title}"`);
 
-            // 1.5 Update Job Title
-            if (title) {
+            // 1.5 Update Job Title & Persist Full Raw Script
+            if (title || rawOutput) {
+                currentMetadata = {
+                    ...currentMetadata,
+                    title: title,
+                    script: rawOutput // Save the exact raw JSON output from GPT
+                };
+
                 await this.prisma.job.update({
                     where: { id: job.id },
                     data: {
-                        metadata: {
-                            ...job.metadata,
-                            title: title
-                        }
+                        metadata: currentMetadata
                     }
                 });
             }
@@ -426,190 +567,82 @@ export class TimelineService {
                     status: 'pending',
                 }))
             });
-            await this._syncJobMetadata(job.id); // Sync immediately so frontend sees the script
 
-            // 3. Sequential Generation Loop (Audio -> Image -> Video)
-            this.logger.log('Starting sequential generation (Streaming Mode)...');
+            // 2.6 Initialize Job Metadata Response with FULL script details (including visual_source)
+            // We do this manually here to ensure 'visual_source' is captured, as it is not in the DB schema.
+            // 2.6 Initialize Job Metadata Response with FULL script details (including visual_source)
+            // We do this manually here to ensure 'visual_source' is captured, as it is not in the DB schema.
+            const initialResponse: TimelineResponse = {
+                segments: script.map((item, index) => ({
+                    ...item, // Spread ALL properties from the script item (includes visual_source, negative_prompt, etc.)
+                    id: `seg-${index}`, // Temporary ID until we sync real ones, or we just let sync handle IDs later
+                    index: index,
+                    // Ensure core fields are mapped correctly if names differ
+                    script: item.text,
+                    visualPrompt: item.visualPrompt,
+                    motionPrompt: item.motionPrompt,
+                    voiceUrl: undefined,
+                    imageUrl: undefined,
+                    videoUrl: undefined,
+                    status: 'pending',
+                    duration: 3.0,
+                    startTime: index * 3.0,
+                    endTime: (index + 1) * 3.0,
+                } as any)),
+                totalDuration: script.length * 3.0,
+                musicUrl
+            };
+
+            currentMetadata = {
+                ...currentMetadata,
+                response: initialResponse
+            };
+
+            await this.prisma.job.update({
+                where: { id: job.id },
+                data: {
+                    metadata: currentMetadata
+                }
+            });
+
+            // 3. Parallel Generation (Audio & Visuals)
+            this.logger.log('Starting parallel generation (Streaming Mode)...');
 
             const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
             if (!webhookHost) {
                 this.logger.warn('WEBHOOK_HOST not set. Video generation might fail.');
             }
 
-            // We track the previous image URL for continuity
-            let previousImageUrl: string | null = null;
+            // Shared cache for user image uploads to prevent duplicate work
+            const userImageUploadPromises = new Map<number, Promise<string>>();
 
-            for (let index = 0; index < script.length; index++) {
-                const item = script[index];
+            // Launch Audio and Visual generation in parallel
+            const audioPromises = script.map((item, index) =>
+                this.generateSegmentAudio(job.id, index, item, dto)
+            );
 
-                // Initialize failure tracking for this segment
-                let segmentError: string | null = null;
-                let audioUrl: string | null = null;
-                let audioDuration: number | null = null;
-                let alignment: any = null;
-                let imageUrl: string | null = null;
+            const visualPromises = script.map((item, index) =>
+                this.generateSegmentVisual(job.id, index, item, dto, user, userImageUploadPromises)
+            );
 
-                try {
-                    // 3.1 Audio Generation
-                    if (dto.includeNarration !== false) {
-                        try {
-                            const result = await this.audioService.generateSpeech({
-                                text: item.text,
-                                voiceId: dto.voiceId,
-                                modelId: 'eleven_v3',
-                                stability: 0.5,
-                                similarityBoost: 0.75,
-                                withTimestamps: true
-                            });
-                            const buffer = Buffer.from(result.audioBase64, 'base64');
-                            audioUrl = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
-                            audioDuration = await this.getAudioDuration(buffer);
-                            alignment = result.alignment;
-                        } catch (audioErr) {
-                            this.logger.error(`Audio generation failed for segment ${index}`, audioErr);
-                            // We log but continue, effectively making a silent segment if strictly needed,
-                            // or we can fail the segment. Let's record error but try to proceed with visuals?
-                            // Actually, if audio fails, the video timing might be off. let's mark error.
-                            segmentError = `Audio failed: ${audioErr}`;
-                        }
-                    }
+            // Wait for all generations to kick off / complete audio/image phase
+            await Promise.all([
+                ...audioPromises,
+                ...visualPromises
+            ]);
 
-                    // 3.2 Visual Generation (Image) if no error yet
-                    // 3.2 Visual Generation (Image) if no error yet
-                    if (!segmentError) {
-                        // Determine Source
-                        // The script might return 'visual_source', or we fallback to 'fromPreviousScene' logic
-                        const visualSource = item.visual_source || (item.fromPreviousScene ? 'last_frame' : 'generated');
+            // Save initial state (musicUrl, beatTimes, dto) - Updates metadata one last time in this block
+            currentMetadata = {
+                ...currentMetadata,
+                musicUrl,
+                beatTimes,
+                dto
+            };
 
-                        let sourceHandled = false;
-
-                        // Case 1: User Image preference
-                        if (visualSource.startsWith('user_image_')) {
-                            const parts = visualSource.split('_');
-                            const refIndex = parseInt(parts[parts.length - 1]); // Handle 'user_image_0'
-
-                            if (!isNaN(refIndex) && dto.referenceImageUrls && dto.referenceImageUrls[refIndex]) {
-                                this.logger.log(`Segment ${index} using user reference image index ${refIndex}`);
-                                imageUrl = dto.referenceImageUrls[refIndex];
-                                sourceHandled = true;
-                            } else {
-                                this.logger.warn(`Segment ${index} requested missing user ref ${refIndex}, falling back to generated.`);
-                                // Fallback to 'generated' implies doing nothing here and letting the next block handle it
-                            }
-                        }
-
-                        // Case 2: Last Frame functionality (Continuity)
-                        if (!sourceHandled && visualSource === 'last_frame') {
-                            if (index > 0 && previousImageUrl) {
-                                this.logger.log(`Segment ${index} reusing image from previous (Continuity)`);
-                                imageUrl = previousImageUrl;
-                                sourceHandled = true;
-                            } else {
-                                this.logger.warn(`Segment ${index} requested 'last_frame' but no previous image available. Falling back to generated.`);
-                            }
-                        }
-
-                        // Case 3: Generated (Default or Fallback)
-                        if (!sourceHandled) {
-                            const imgRes = await this.generationOrchestrator.generate(user, {
-                                model: 'nano-banana-pro',
-                                prompt: item.visualPrompt,
-                                providerOptions: { aspectRatio: '9:16' }
-                            }, {
-                                cost: 1,
-                                isJob: true,
-                                persistenceOptions: {
-                                    bucket: 'cyran-roll-images',
-                                    skipR2FileRecord: true
-                                }
-                            }).catch(err => {
-                                this.logger.error(`Visual generation failed for segment ${index}`, err);
-                                return null;
-                            });
-
-                            imageUrl = imgRes?.assets?.[0]?.r2FileUrl
-                                ?? imgRes?.assets?.[0]?.remoteUrl
-                                ?? imgRes?.assets?.[0]?.dataUrl
-                                ?? null;
-                        }
-                    }
-
-                    if (imageUrl) {
-                        previousImageUrl = imageUrl;
-                    } else if (!segmentError) {
-                        segmentError = 'Failed to generate image';
-                    }
-
-                    // 3.3 UPDATE DB: Audio + Image Done. Status -> 'generating' (Video starting)
-                    // If error, Status -> 'failed'
-                    await this.prisma.timelineSegment.update({
-                        where: { jobId_index: { jobId: job.id, index } },
-                        data: {
-                            audioUrl,
-                            duration: audioDuration ?? undefined, // Only update if we have it
-                            alignment,
-                            imageUrl,
-                            status: segmentError ? 'failed' : 'generating',
-                            error: segmentError ?? undefined
-                        }
-                    });
-
-                    // Sync after Image/Audio generation so user sees them immediately
-                    await this._syncJobMetadata(job.id);
-
-                    // 3.4 Video Generation (if success so far)
-                    if (!segmentError && imageUrl) {
-                        const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${job.id}&segmentIndex=${index}`;
-
-                        try {
-                            const prediction = await this.runWithSmartRetry(
-                                () => this.pixverseProvider.generateVideoFromImageAsync(
-                                    imageUrl!,
-                                    item.visualPrompt,
-                                    webhookUrl,
-                                    (item.motionPrompt ? `${item.motionPrompt}` : 'Dynamic camera movement, cinematic lighting')
-                                ),
-                                index
-                            );
-
-                            // Update prediction ID
-                            await this.prisma.timelineSegment.update({
-                                where: { jobId_index: { jobId: job.id, index } },
-                                data: { predictionId: prediction.id }
-                            });
-                            // No need to sync here necessarily unless we want to show prediction ID, 
-                            // but status was already set to 'generating' in previous step.
-
-                        } catch (videoErr) {
-                            this.logger.error(`Segment ${index} failed to start video:`, videoErr);
-                            await this.prisma.timelineSegment.update({
-                                where: { jobId_index: { jobId: job.id, index } },
-                                data: { status: 'failed', error: String(videoErr) }
-                            });
-                        }
-                    }
-
-                } catch (err) {
-                    this.logger.error(`Segment ${index} critical failure`, err);
-                    await this.prisma.timelineSegment.update({
-                        where: { jobId_index: { jobId: job.id, index } },
-                        data: { status: 'failed', error: String(err) }
-                    });
-                }
-            }
-
-
-            // Save initial state (musicUrl, beatTimes, dto)
-            // We want to make sure the "response" metadata is reasonably initialized here for the frontend to pick up if it polls Job
             await this.prisma.job.update({
                 where: { id: job.id },
                 data: {
-                    metadata: {
-                        ...job.metadata,
-                        musicUrl,
-                        beatTimes,
-                        dto
-                    }
+                    metadata: currentMetadata
                 }
             });
 
@@ -617,7 +650,15 @@ export class TimelineService {
             const generatingCount = await this.prisma.timelineSegment.count({
                 where: { jobId: job.id, status: 'generating' }
             });
-            if (generatingCount === 0) {
+
+            // Also check for 'pending' segments (waiting for continuity)
+            // If we have pending segments, we expect them to be triggered eventually by webhooks.
+            // Only if generating==0 AND pending==0 do we finalize now.
+            const pendingCount = await this.prisma.timelineSegment.count({
+                where: { jobId: job.id, status: 'pending' }
+            });
+
+            if (generatingCount === 0 && pendingCount === 0) {
                 await this.finalizeJob(job.id);
             }
 
@@ -629,6 +670,155 @@ export class TimelineService {
                     status: 'FAILED',
                     error: error instanceof Error ? error.message : String(error)
                 }
+            });
+        }
+    }
+
+    private async generateSegmentAudio(jobId: string, index: number, item: any, dto: GenerateTimelineDto) {
+        if (dto.includeNarration === false) return;
+
+        try {
+            const result = await this.audioService.generateSpeech({
+                text: item.text,
+                voiceId: dto.voiceId,
+                modelId: 'eleven_v3',
+                stability: 0.5,
+                similarityBoost: 0.75,
+                withTimestamps: true
+            });
+
+            const buffer = Buffer.from(result.audioBase64, 'base64');
+            const audioUrl = await this.r2Service.uploadBuffer(buffer, 'audio/mpeg', 'generated-audio');
+            const audioDuration = await this.getAudioDuration(buffer);
+
+            // Update DB
+            await this.prisma.timelineSegment.update({
+                where: { jobId_index: { jobId, index } },
+                data: {
+                    audioUrl,
+                    duration: audioDuration,
+                    alignment: result.alignment
+                } as any
+            });
+
+            await this._syncJobMetadata(jobId);
+
+        } catch (err) {
+            this.logger.error(`Audio generation failed for segment ${index}`, err);
+        }
+    }
+
+    private async generateSegmentVisual(
+        jobId: string,
+        index: number,
+        item: any,
+        dto: GenerateTimelineDto,
+        user: any,
+        userImageCache: Map<number, Promise<string>>
+    ) {
+        let imageUrl: string | null = null;
+        let segmentError: string | null = null;
+
+        // Determine Source
+        const visualSource = item.visual_source || (item.fromPreviousScene ? 'last_frame' : 'generated');
+
+        try {
+            // Case 1: User Reference Image
+            if (visualSource.startsWith('user_image_')) {
+                const parts = visualSource.split('_');
+                const refIndex = parseInt(parts[parts.length - 1]);
+
+                if (!isNaN(refIndex) && dto.referenceImageUrls && dto.referenceImageUrls[refIndex]) {
+                    const originalUrl = dto.referenceImageUrls[refIndex];
+
+                    // Check cache or start new upload
+                    if (!userImageCache.has(refIndex)) {
+                        userImageCache.set(refIndex, (async () => {
+                            try {
+                                this.logger.log(`Segment ${index} processing user image ${refIndex}: ${originalUrl}`);
+                                const { buffer, contentType } = await this.downloadImageFromUrl(originalUrl);
+                                const r2Url = await this.r2Service.uploadBuffer(buffer, contentType, 'cyran-roll-images');
+                                this.logger.log(`Segment ${index} uploaded user image to ${r2Url}`);
+                                return r2Url;
+                            } catch (e) {
+                                this.logger.warn(`Failed to re-upload user image ${refIndex}, using original: ${e}`);
+                                return originalUrl;
+                            }
+                        })());
+                    }
+
+
+                    // Await the shared promise
+                    imageUrl = (await userImageCache.get(refIndex)) || null;
+                } else {
+                    // Fallback to generated
+                    this.logger.warn(`Segment ${index} requested missing user ref ${refIndex}, falling back to generated.`);
+                }
+            }
+
+            // Case 2: Last Frame (Continuity)
+            if (!imageUrl && visualSource === 'last_frame') {
+                if (index === 0) {
+                    this.logger.warn(`Segment ${index} requested 'last_frame' but is first segment. Fallback to generated.`);
+                } else {
+                    this.logger.log(`Segment ${index} set to WAIT for Frame Extraction from Segment ${index - 1}`);
+                    // We intentionally leave imageUrl null.
+                    // The previous segment's webhook will trigger continuity.
+                    // Status remains 'pending' (from initialization).
+                    return;
+                }
+            }
+
+            // Case 3: Generated (Default or Fallback)
+            if (!imageUrl) {
+                const imgRes = await this.generationOrchestrator.generate(user, {
+                    model: 'nano-banana-pro',
+                    prompt: item.visualPrompt,
+                    providerOptions: { aspectRatio: '9:16' }
+                }, {
+                    cost: 1,
+                    isJob: true,
+                    persistenceOptions: {
+                        bucket: 'cyran-roll-images',
+                        skipR2FileRecord: true
+                    }
+                }).catch(err => {
+                    this.logger.error(`Visual generation failed for segment ${index}`, err);
+                    return null;
+                });
+
+                imageUrl = imgRes?.assets?.[0]?.r2FileUrl
+                    ?? imgRes?.assets?.[0]?.remoteUrl
+                    ?? imgRes?.assets?.[0]?.dataUrl
+                    ?? null;
+            }
+
+            if (!imageUrl) {
+                segmentError = 'Failed to generate image';
+            }
+
+            // Update DB
+            await this.prisma.timelineSegment.update({
+                where: { jobId_index: { jobId, index } },
+                data: {
+                    imageUrl,
+                    status: segmentError ? 'failed' : 'generating', // generating = Ready for Video
+                    error: segmentError ?? undefined
+                } as any
+            });
+
+            await this._syncJobMetadata(jobId);
+
+            // Trigger Video Generation Immediately
+            if (imageUrl && !segmentError) {
+                await this._triggerVideoGeneration(jobId, index, item.visualPrompt, item.motionPrompt, imageUrl);
+            }
+
+        } catch (err) {
+            this.logger.error(`Segment ${index} visual failure`, err);
+            await this.prisma.timelineSegment.update({
+                where: { jobId_index: { jobId, index } },
+                data: { status: 'failed', error: String(err) }
             });
         }
     }
@@ -679,34 +869,43 @@ export class TimelineService {
 
         try {
             // 1. Prepare Assets & Manifest
-            const manifest: Array<{ video: string; audio: string; text: string; alignment?: any }> = [];
-
-            for (const seg of validSegments) {
+            // 1. Prepare Assets & Manifest (Parallel Download)
+            const preparePromises = validSegments.map(async (seg) => {
                 // Video
                 const vExt = path.extname(seg.videoUrl!) || '.mp4';
                 const localVideoPath = path.join(tempDir, `seg-${seg.index}-video${vExt}`);
-                await this.downloadFile(seg.videoUrl!, localVideoPath);
 
                 // Audio
                 const localAudioPath = path.join(tempDir, `seg-${seg.index}-audio.mp3`);
-                if (seg.audioUrl) {
-                    await this.downloadFile(seg.audioUrl, localAudioPath);
-                } else {
-                    // Generate 1s silent audio
-                    try {
-                        await exec(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t 1 -c:a libmp3lame -q:a 4 "${localAudioPath}"`);
-                    } catch (e) {
-                        this.logger.warn(`Failed to generate silent audio for segment ${seg.index}: ${e}`);
-                    }
-                }
 
-                manifest.push({
+                // Run downloads in parallel for this segment
+                const videoTask = this.downloadFile(seg.videoUrl!, localVideoPath);
+
+                const audioTask = (async () => {
+                    if (seg.audioUrl) {
+                        await this.downloadFile(seg.audioUrl, localAudioPath);
+                    } else {
+                        // Generate 1s silent audio
+                        try {
+                            await exec(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t 1 -c:a libmp3lame -q:a 4 "${localAudioPath}"`);
+                        } catch (e) {
+                            this.logger.warn(`Failed to generate silent audio for segment ${seg.index}: ${e}`);
+                        }
+                    }
+                })();
+
+                await Promise.all([videoTask, audioTask]);
+
+                return {
                     video: localVideoPath,
                     audio: localAudioPath,
                     text: seg.script || '',
                     alignment: (seg as any).alignment // Pass alignment to python script
-                });
-            }
+                };
+            });
+
+            const manifest = await Promise.all(preparePromises);
+
             this.logger.log(`Created manifest with ${manifest.length} segments.`);
 
 
@@ -854,7 +1053,7 @@ export class TimelineService {
         throw new Error(`Segment ${segmentIndex} failed after ${maxRetries} rate-limit retries`);
     }
 
-    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium', referenceImageUrls: string[] = []): Promise<{ script: any[]; title?: string }> {
+    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium', referenceImageUrls: string[] = []): Promise<{ script: any[]; title?: string; rawOutput?: any }> {
         const modelId = this.configService.get<string>('REPLICATE_MODEL_ID') || 'openai/gpt-5';
 
         let sceneCount = 6;
@@ -931,14 +1130,15 @@ export class TimelineService {
                         fromPreviousScene: !!s.from_previous_scene,
                         visual_source: s.visual_source || (s.from_previous_scene ? 'last_frame' : 'generated')
                     })),
-                    title: parsed.meta?.title || parsed.title
+                    title: parsed.meta?.title || parsed.title,
+                    rawOutput: parsed // Return full object
                 };
             }
 
             // Fallbacks for older formats or unexpected structures
-            if (Array.isArray(parsed)) return { script: parsed };
-            if (parsed.script && Array.isArray(parsed.script)) return { script: parsed.script, title: parsed.title };
-            if (parsed.segments && Array.isArray(parsed.segments)) return { script: parsed.segments, title: parsed.title };
+            if (Array.isArray(parsed)) return { script: parsed, rawOutput: parsed };
+            if (parsed.script && Array.isArray(parsed.script)) return { script: parsed.script, title: parsed.title, rawOutput: parsed };
+            if (parsed.segments && Array.isArray(parsed.segments)) return { script: parsed.segments, title: parsed.title, rawOutput: parsed };
 
             const values = Object.values(parsed);
             const arrayVal = values.find(v => Array.isArray(v));
@@ -1012,8 +1212,19 @@ export class TimelineService {
     private async downloadFile(url: string, dest: string): Promise<void> {
         const response = await fetch(url);
         if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
+        if (!response.body) throw new Error(`Empty body for ${url}`);
+        // Use stream pipeline to avoid memory issues and handle backpressure
+        // @ts-ignore
+        await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(dest));
+    }
+
+    private async downloadImageFromUrl(url: string): Promise<{ buffer: Buffer; contentType: string }> {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
         const arrayBuffer = await response.arrayBuffer();
-        fs.writeFileSync(dest, Buffer.from(arrayBuffer));
+        const buffer = Buffer.from(arrayBuffer);
+        const contentType = response.headers.get('content-type') || 'image/png';
+        return { buffer, contentType };
     }
 
     private async downloadToBuffer(url: string): Promise<Buffer> {
@@ -1028,9 +1239,19 @@ export class TimelineService {
      * This ensures that any individual segment updates (regeneration, webhooks) are reflected
      * when the frontend loads the job again.
      */
+    /**
+     * Helper to sync the TimelineSegment table state back to the Job.metadata.response
+     * This ensures that any individual segment updates (regeneration, webhooks) are reflected
+     * when the frontend loads the job again.
+     * 
+     * Uses atomic locking to prevent race conditions when multiple segments finish simultaneously.
+     */
     private async _syncJobMetadata(jobId: string, tx?: Prisma.TransactionClient) {
-        const client = tx || this.prisma;
-        try {
+        const performSync = async (client: Prisma.TransactionClient) => {
+            // Lock the Job row to strictly serialize metadata updates
+            // This prevents "lost update" anomalies where parallel webhooks overwrite each other
+            await client.$executeRaw`SELECT * FROM "Job" WHERE id = ${jobId} FOR UPDATE`;
+
             const job = await client.job.findUnique({ where: { id: jobId } });
             if (!job || !job.metadata) return;
 
@@ -1042,21 +1263,30 @@ export class TimelineService {
             const currentResponse = (job.metadata as any).response || {};
 
             // Map segments to the response format
-            const responseSegments = segments.map((s: any) => ({
-                id: s.id,
-                index: s.index,
-                script: s.script,
-                visualPrompt: s.visualPrompt,
-                motionPrompt: s.motionPrompt,
-                voiceUrl: s.audioUrl,
-                imageUrl: s.imageUrl,
-                videoUrl: s.videoUrl,
-                status: s.status,
-                error: s.error,
-                duration: s.duration || 3.0,
-                startTime: 0,
-                endTime: 0
-            }));
+            // CRITICAL: Preserve existing metadata fields like 'visual_source' and 'fromPreviousScene'
+            // because they are NOT stored in the TimelineSegment table.
+            const responseSegments = segments.map((s: any) => {
+                const existingSeg = (currentResponse.segments || []).find((old: any) => old.index === s.index);
+
+                return {
+                    // Spread all existing properties first (preserves negative_prompt, etc.)
+                    ...existingSeg,
+
+                    // Explicitly override with fresh DB state
+                    id: s.id,
+                    index: s.index,
+                    script: s.script,
+                    visualPrompt: s.visualPrompt,
+                    motionPrompt: s.motionPrompt,
+                    voiceUrl: s.audioUrl,
+                    imageUrl: s.imageUrl,
+                    videoUrl: s.videoUrl,
+                    status: s.status,
+                    error: s.error,
+                    duration: s.duration || 3.0,
+                    // Re-calculate loop below handles start/end times
+                };
+            });
 
             // Recalculate timings
             let currentTime = 0;
@@ -1081,10 +1311,130 @@ export class TimelineService {
                     }
                 }
             });
-
             this.logger.log(`Synced job metadata for job ${jobId}`);
+        };
+
+        try {
+            if (tx) {
+                // Already in a transaction
+                await performSync(tx);
+            } else {
+                // Create new transaction
+                await this.prisma.$transaction(performSync, { timeout: 10000 });
+            }
         } catch (error) {
             this.logger.error(`Failed to sync job metadata for job ${jobId}`, error);
+        }
+    }
+
+    /**
+     * Source of Truth Accessor
+     * Fetches the job and dynamically repairs the 'metadata.response' from the TimelineSegment table.
+     * This ensures the frontend ALWAYS sees the actual state of segments, even if metadata sync failed previously.
+     */
+    async getAggregatedJobStatus(jobId: string) {
+        // 1. Fetch Job
+        const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+        if (!job) return null;
+
+        // Only do aggregation for Cyran Rolls
+        if (job.type !== 'CYRAN_ROLL') return job;
+
+        // 2. Fetch Segments (Source of Truth)
+        const segments = await this.prisma.timelineSegment.findMany({
+            where: { jobId },
+            orderBy: { index: 'asc' }
+        });
+
+        if (segments.length === 0) return job; // No segments yet?
+
+        // 3. Rebuild Response (Read-Repair)
+        const currentMetadata = (job.metadata as any) || {};
+        const currentResponse = currentMetadata.response || {};
+
+        const responseSegments = segments.map((s: any) => {
+            const existingSeg = (currentResponse.segments || []).find((old: any) => old.index === s.index);
+            return {
+                ...(existingSeg || {}), // Keep existing static props
+                id: s.id,
+                index: s.index,
+                script: s.script,
+                visualPrompt: s.visualPrompt,
+                motionPrompt: s.motionPrompt,
+                voiceUrl: s.audioUrl,
+                imageUrl: s.imageUrl,
+                videoUrl: s.videoUrl,
+                status: s.status,
+                error: s.error,
+                duration: s.duration || 3.0,
+            };
+        });
+
+        // Recalculate timings
+        let currentTime = 0;
+        for (const seg of responseSegments) {
+            seg.startTime = currentTime;
+            seg.endTime = currentTime + seg.duration;
+            currentTime += seg.duration;
+        }
+
+        const aggregatedResponse = {
+            ...currentResponse,
+            segments: responseSegments,
+            totalDuration: currentTime
+        };
+
+        // 4. Fire-and-forget Consistency Check
+        // We don't await this to keep read latency low, but it acts as a self-healing mechanism.
+        this.verifyAndHealContinuity(jobId, segments).catch(e =>
+            this.logger.error(`Continuity healing failed for ${jobId}`, e)
+        );
+
+        // Return transient object (do not save to DB here to avoid write-on-read perf penalty, unless needed)
+        return {
+            ...job,
+            metadata: {
+                ...currentMetadata,
+                response: aggregatedResponse
+            }
+        };
+    }
+
+    /**
+     * Detects if any segments are stuck waiting for continuity (e.g. server crash during webhook).
+     * If safe, triggers the next step.
+     */
+    private async verifyAndHealContinuity(jobId: string, segments?: any[]) {
+        if (!segments) {
+            segments = await this.prisma.timelineSegment.findMany({
+                where: { jobId },
+                orderBy: { index: 'asc' }
+            });
+        }
+
+        for (let i = 0; i < segments!.length - 1; i++) {
+            const current = segments![i];
+            const next = segments![i + 1];
+
+            // Condition: Current finished video, Next is pending and has no image (likely waiting for frame)
+            // And Next is NOT generating or processing.
+            if (current.status === 'completed' && current.videoUrl) {
+                if (next.status === 'pending' && !next.imageUrl && !next.videoUrl) {
+
+                    // Possible Stuck State.
+                    // How to know if it's INTENDED to wait for continuity?
+                    // We check `visual_source` from metadata if we had it, but here we can infer 
+                    // from the fact it's pending while previous is done.
+                    // To be safe, we check if we already tried to trigger it (predictionId?)
+
+                    if (next.predictionId) continue; // Already has a prediction, maybe just slow.
+
+                    this.logger.warn(`Healing Connectivity: Job ${jobId}, Segment ${next.index} logic appears stuck. Retrying...`);
+
+                    // Trigger continuity
+                    await this.checkAndTriggerNextSegment(jobId, current.index, current.videoUrl);
+                }
+            }
         }
     }
 }

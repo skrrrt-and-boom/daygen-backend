@@ -15,6 +15,7 @@ import { CreateImageUpscaleJobDto } from './dto/create-image-upscale-job.dto';
 import { CreateBatchGenerationJobDto } from './dto/create-batch-generation-job.dto';
 import { JobProcessingService } from './job-processing.service';
 import type { ProcessJobPayload } from './job-processing.service';
+import { TimelineService } from '../timeline/timeline.service';
 
 @Injectable()
 export class CloudTasksService {
@@ -40,6 +41,9 @@ export class CloudTasksService {
     @Optional()
     @Inject(forwardRef(() => JobProcessingService))
     private readonly jobProcessingService?: JobProcessingService,
+    @Optional()
+    @Inject(forwardRef(() => TimelineService))
+    private readonly timelineService?: TimelineService,
   ) {
     this.useCloudTasks = process.env.ENABLE_CLOUD_TASKS === 'true';
     this.client = this.useCloudTasks ? new CloudTasksClient() : null;
@@ -238,8 +242,25 @@ export class CloudTasksService {
   }
 
   async getJobStatus(jobId: string, userId: string) {
+    // Basic Fetch first to check ownership and type
     const job = await this.prisma.job.findFirst({
       where: { id: jobId, userId },
+      select: { type: true }
+    });
+
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+
+    if (job.type === 'CYRAN_ROLL' && this.timelineService) {
+      // Delegate to TimelineService for aggregated status (Read-Repair)
+      const aggregatedJob = await this.timelineService.getAggregatedJobStatus(jobId);
+      if (aggregatedJob) return aggregatedJob;
+    }
+
+    // Fallback for other job types or if service missing
+    const standardJob = await this.prisma.job.findFirst({
+      where: { id: jobId, userId }, // Re-fetch with full fields or use found one
       select: {
         id: true,
         status: true,
@@ -252,11 +273,11 @@ export class CloudTasksService {
       },
     });
 
-    if (!job) {
+    if (!standardJob) {
       throw new NotFoundException('Job not found');
     }
 
-    return job;
+    return standardJob;
   }
 
   async updateJobProgress(jobId: string, progress: number, status?: JobStatus) {

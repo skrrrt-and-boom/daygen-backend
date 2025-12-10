@@ -14,7 +14,7 @@ dotenv.config();
 const execAsync = util.promisify(exec);
 const prisma = new PrismaClient();
 
-const TARGET_JOB_ID = 'cmixmwn2j0001s601mnmz1ill'; // Hardcoded for this task
+const TARGET_JOB_ID = 'cmj06iegs0001it3s0w65p4sd'; // Updated for user request
 
 async function main() {
     console.log(`Fetching Job ID: ${TARGET_JOB_ID}...`);

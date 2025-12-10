@@ -14,6 +14,7 @@ import { LoggerService } from '../common/logger.service';
 import { MetricsService } from '../common/metrics.service';
 import { RequestContextService } from '../common/request-context.service';
 import { ScenesModule } from '../scenes/scenes.module';
+import { TimelineModule } from '../timeline/timeline.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ScenesModule } from '../scenes/scenes.module';
     UsageModule,
     PaymentsModule,
     forwardRef(() => ScenesModule),
+    forwardRef(() => TimelineModule),
   ],
   providers: [
     CloudTasksService,
@@ -43,4 +45,4 @@ import { ScenesModule } from '../scenes/scenes.module';
     RequestContextService,
   ],
 })
-export class JobsModule {}
+export class JobsModule { }

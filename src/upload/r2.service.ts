@@ -308,7 +308,31 @@ export class R2Service {
 
     await this.s3Client.send(command);
 
-    return `${this.publicUrl}/${fileName}`;
+    // Verify reachability (Wait a moment for consistency)
+    const url = `${this.publicUrl}/${fileName}`;
+
+    // Simple verification with retry
+    let verified = false;
+    for (let i = 0; i < 3; i++) {
+      try {
+        // Wait 500ms, 1000ms, 1500ms
+        await new Promise(r => setTimeout(r, (i + 1) * 500));
+        const check = await fetch(url, { method: 'HEAD' });
+        if (check.ok) {
+          verified = true;
+          break;
+        }
+      } catch (e) {
+        // ignore network errors during verification
+      }
+    }
+
+    if (!verified) {
+      this.logger.warn(`File uploaded to R2 but verification failed after retries: ${url}`);
+      // We don't throw, as it might just be slow propagation, but we warn.
+    }
+
+    return url;
   }
 
   private getFileExtension(filename: string): string {
