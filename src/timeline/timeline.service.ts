@@ -19,6 +19,7 @@ import * as child_process from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -215,7 +216,12 @@ export class TimelineService {
 
         if (nextSegment.status === 'pending' && !nextSegment.imageUrl) {
             // It is likely waiting for the image.
-            // Let's extracting the last frame NOW.
+
+            // FIX: Immediately lock the segment status to prevent race conditions during long running frame extraction
+            await this.prisma.timelineSegment.update({
+                where: { jobId_index: { jobId, index: nextIndex } },
+                data: { status: 'generating' }
+            });
 
             this.logger.log(`Segment ${nextIndex} appears to be waiting for continuity. Extracting last frame from Seg ${currentIndex}...`);
 
@@ -227,7 +233,7 @@ export class TimelineService {
                     where: { jobId_index: { jobId, index: nextIndex } },
                     data: {
                         imageUrl: lastFrameUrl,
-                        status: 'generating' // Trigger state
+                        status: 'generating' // Trigger state (confirming)
                     }
                 });
 
@@ -248,8 +254,10 @@ export class TimelineService {
 
     private async extractLastFrameFromVideo(videoUrl: string, jobId: string, index: number): Promise<string> {
         const tempDir = os.tmpdir();
-        const videoPath = path.join(tempDir, `job-${jobId}-seg-${index}-source.mp4`);
-        const framePath = path.join(tempDir, `job-${jobId}-seg-${index}-last-frame.png`);
+        // FIX: Use unique ID to prevent race conditions on file access
+        const uniqueId = crypto.randomUUID();
+        const videoPath = path.join(tempDir, `job-${jobId}-seg-${index}-${uniqueId}-source.mp4`);
+        const framePath = path.join(tempDir, `job-${jobId}-seg-${index}-${uniqueId}-last-frame.png`);
 
         try {
             this.logger.log(`Downloading video for frame extraction: ${videoUrl}`);
