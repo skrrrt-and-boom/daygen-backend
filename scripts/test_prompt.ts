@@ -34,25 +34,65 @@ async function main() {
     const style = process.argv[3] || 'High Energy';
     const inputDuration = process.argv[4] || 'medium'; // short, medium, long
 
-    // Logic to simulate TimelineService.generateScript duration string
-    let durationText = inputDuration;
-    if (inputDuration === 'short') durationText = 'Short (2 scenes)';
+    // Parse extra args as reference images
+    const extraArgs = process.argv.slice(5);
+    const referenceImageUrls = extraArgs.length > 0 ? extraArgs : [];
 
-    const prompt = `Topic: ${topic}\nStyle: ${style}\nTarget Total Duration: ${durationText}`;
+    // Logic to simulate TimelineService.generateScript duration string
+    // Must match TimelineService exactly to test properly
+    let sceneCount = 6;
+    let durationText = '';
+
+    switch (inputDuration) {
+        case 'short':
+            sceneCount = 3;
+            durationText = 'Short (Exactly 3 scenes)';
+            break;
+        case 'medium':
+            sceneCount = 6;
+            durationText = 'Medium (Exactly 6 scenes)';
+            break;
+        case 'long':
+            sceneCount = 12;
+            durationText = 'Long (Exactly 12 scenes)';
+            break;
+        default:
+            // Fallback if user types something random, though Service defaults to medium
+            sceneCount = 6;
+            durationText = 'Medium (Exactly 6 scenes)';
+    }
+
+    const referenceCount = referenceImageUrls.length;
+    const refInstruction = referenceCount > 0
+        ? `You have ${referenceCount} user-provided images (indices 0 to ${referenceCount - 1}).\n` +
+        `For each scene, strictly add a 'visual_source' field with one of these values:\n` +
+        ` - 'generated': Create a new image based on visual_prompt.\n` +
+        ` - 'last_frame': Use the image from the immediately preceding scene (for continuity).\n` +
+        ` - 'user_image_{index}': Use user reference image at index {index} (e.g., 'user_image_0'). Set this ONLY if the scene clearly refers to the subject in that provided image.`
+        : `For each scene, add a 'visual_source' field: set to 'last_frame' if the scene continues the previous shot, otherwise 'generated'.`;
+
+    const prompt = `Topic: ${topic}\nStyle: ${style}\nTarget: ${durationText}\n${refInstruction}\nInstruction: Strictly generate EXACTLY ${sceneCount} scenes. Output JSON only. No more, no less.`;
+
     const modelId = process.env.REPLICATE_MODEL_ID || 'openai/gpt-5';
 
     console.log('--- TEST PARAMETERS ---');
     console.log(`Topic: ${topic}`);
     console.log(`Style: ${style}`);
     console.log(`Duration: ${inputDuration} -> ${durationText}`);
+    console.log(`Scene Count Target: ${sceneCount}`);
+    console.log(`Reference Images: ${referenceCount}`);
+    if (referenceCount > 0) {
+        referenceImageUrls.forEach((url, i) => console.log(`  [${i}] ${url}`));
+    }
     console.log(`Model: ${modelId}`);
     console.log('--- SENDING PROMPT (Preview) ---');
-    console.log(REEL_GENERATOR_SYSTEM_PROMPT.substring(0, 100) + '...');
+    console.log(prompt);
 
     try {
         const output = await replicate.run(modelId as any, {
             input: {
                 prompt: prompt,
+                image_input: referenceCount > 0 ? referenceImageUrls : undefined,
                 max_tokens: 2048,
                 temperature: 0.7,
                 system_prompt: REEL_GENERATOR_SYSTEM_PROMPT

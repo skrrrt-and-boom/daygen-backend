@@ -386,7 +386,8 @@ export class TimelineService {
             if (!user) throw new Error('User not found');
 
             // 1. Script Generation
-            const { script, title } = await this.generateScript(dto.topic, dto.style, dto.duration);
+            // 1. Script Generation
+            const { script, title } = await this.generateScript(dto.topic, dto.style, dto.duration, dto.referenceImageUrls);
             this.logger.log(`Generated script with ${script.length} segments. Title: "${title}"`);
 
             // 1.5 Update Job Title
@@ -474,11 +475,42 @@ export class TimelineService {
                     }
 
                     // 3.2 Visual Generation (Image) if no error yet
+                    // 3.2 Visual Generation (Image) if no error yet
                     if (!segmentError) {
-                        if (item.fromPreviousScene && index > 0 && previousImageUrl) {
-                            this.logger.log(`Segment ${index} reusing image from previous (Continuity)`);
-                            imageUrl = previousImageUrl;
-                        } else {
+                        // Determine Source
+                        // The script might return 'visual_source', or we fallback to 'fromPreviousScene' logic
+                        const visualSource = item.visual_source || (item.fromPreviousScene ? 'last_frame' : 'generated');
+
+                        let sourceHandled = false;
+
+                        // Case 1: User Image preference
+                        if (visualSource.startsWith('user_image_')) {
+                            const parts = visualSource.split('_');
+                            const refIndex = parseInt(parts[parts.length - 1]); // Handle 'user_image_0'
+
+                            if (!isNaN(refIndex) && dto.referenceImageUrls && dto.referenceImageUrls[refIndex]) {
+                                this.logger.log(`Segment ${index} using user reference image index ${refIndex}`);
+                                imageUrl = dto.referenceImageUrls[refIndex];
+                                sourceHandled = true;
+                            } else {
+                                this.logger.warn(`Segment ${index} requested missing user ref ${refIndex}, falling back to generated.`);
+                                // Fallback to 'generated' implies doing nothing here and letting the next block handle it
+                            }
+                        }
+
+                        // Case 2: Last Frame functionality (Continuity)
+                        if (!sourceHandled && visualSource === 'last_frame') {
+                            if (index > 0 && previousImageUrl) {
+                                this.logger.log(`Segment ${index} reusing image from previous (Continuity)`);
+                                imageUrl = previousImageUrl;
+                                sourceHandled = true;
+                            } else {
+                                this.logger.warn(`Segment ${index} requested 'last_frame' but no previous image available. Falling back to generated.`);
+                            }
+                        }
+
+                        // Case 3: Generated (Default or Fallback)
+                        if (!sourceHandled) {
                             const imgRes = await this.generationOrchestrator.generate(user, {
                                 model: 'nano-banana-pro',
                                 prompt: item.visualPrompt,
@@ -822,7 +854,7 @@ export class TimelineService {
         throw new Error(`Segment ${segmentIndex} failed after ${maxRetries} rate-limit retries`);
     }
 
-    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium'): Promise<{ script: any[]; title?: string }> {
+    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium', referenceImageUrls: string[] = []): Promise<{ script: any[]; title?: string }> {
         const modelId = this.configService.get<string>('REPLICATE_MODEL_ID') || 'openai/gpt-5';
 
         let sceneCount = 6;
@@ -843,12 +875,22 @@ export class TimelineService {
                 break;
         }
 
-        const prompt = `Topic: ${topic}\nStyle: ${style}\nTarget: ${durationText}\nInstruction: Strictly generate EXACTLY ${sceneCount} scenes. No more, no less.`;
+        const referenceCount = referenceImageUrls.length;
+        const refInstruction = referenceCount > 0
+            ? `You have ${referenceCount} user-provided images (indices 0 to ${referenceCount - 1}).\n` +
+            `For each scene, strictly add a 'visual_source' field with one of these values:\n` +
+            ` - 'generated': Create a new image based on visual_prompt.\n` +
+            ` - 'last_frame': Use the image from the immediately preceding scene (for continuity).\n` +
+            ` - 'user_image_{index}': Use user reference image at index {index} (e.g., 'user_image_0'). Set this ONLY if the scene clearly refers to the subject in that provided image.`
+            : `For each scene, add a 'visual_source' field: set to 'last_frame' if the scene continues the previous shot, otherwise 'generated'.`;
+
+        const prompt = `Topic: ${topic}\nStyle: ${style}\nTarget: ${durationText}\n${refInstruction}\nInstruction: Strictly generate EXACTLY ${sceneCount} scenes. Output JSON only. No more, no less.`;
 
         try {
             const output = await this.replicate.run(modelId as any, {
                 input: {
                     prompt: prompt,
+                    image_input: referenceCount > 0 ? referenceImageUrls : undefined,
                     max_tokens: 2048,
                     temperature: 0.7,
                     system_prompt: REEL_GENERATOR_SYSTEM_PROMPT
@@ -886,7 +928,8 @@ export class TimelineService {
                         text: s.text || s.script,
                         visualPrompt: s.visual_prompt || s.visualPrompt,
                         motionPrompt: s.motion_prompt || s.motionPrompt,
-                        fromPreviousScene: !!s.from_previous_scene
+                        fromPreviousScene: !!s.from_previous_scene,
+                        visual_source: s.visual_source || (s.from_previous_scene ? 'last_frame' : 'generated')
                     })),
                     title: parsed.meta?.title || parsed.title
                 };

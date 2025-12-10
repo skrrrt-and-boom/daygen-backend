@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsNumber } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsNumber, IsArray } from 'class-validator';
 
 export class GenerateTimelineDto {
     @IsString()
@@ -26,6 +26,7 @@ export class GenerateTimelineDto {
     duration?: 'short' | 'medium' | 'long';
 
     @IsOptional()
-    @IsNumber()
-    musicVolume?: number;
+    @IsArray()
+    @IsString({ each: true })
+    referenceImageUrls?: string[];
 }
