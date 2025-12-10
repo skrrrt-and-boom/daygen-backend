@@ -93,8 +93,7 @@ async function main() {
             input: {
                 prompt: prompt,
                 image_input: referenceCount > 0 ? referenceImageUrls : undefined,
-                max_tokens: 2048,
-                temperature: 0.7,
+                max_completion_tokens: 2048,
                 system_prompt: REEL_GENERATOR_SYSTEM_PROMPT
             }
         });

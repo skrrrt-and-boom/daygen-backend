@@ -26,7 +26,7 @@ async function configureR2Cors() {
     const corsRules = [
         {
             AllowedHeaders: ['*'],
-            AllowedMethods: ['GET', 'HEAD'],
+            AllowedMethods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE'],
             AllowedOrigins: ['http://localhost:5173', 'http://localhost:3000', '*'], // Allow localhost and all for public assets
             ExposeHeaders: ['ETag'],
             MaxAgeSeconds: 3000,
