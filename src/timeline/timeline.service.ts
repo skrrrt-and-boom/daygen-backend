@@ -596,7 +596,7 @@ export class TimelineService {
                     duration: 3.0,
                     startTime: index * 3.0,
                     endTime: (index + 1) * 3.0,
-                } as any)),
+                })),
                 totalDuration: script.length * 3.0,
                 musicUrl
             };
@@ -1221,8 +1221,8 @@ export class TimelineService {
         if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
         if (!response.body) throw new Error(`Empty body for ${url}`);
         // Use stream pipeline to avoid memory issues and handle backpressure
-        // @ts-ignore
-        await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(dest));
+
+        await pipeline(Readable.fromWeb(response.body as any), fs.createWriteStream(dest));
     }
 
     private async downloadImageFromUrl(url: string): Promise<{ buffer: Buffer; contentType: string }> {
@@ -1419,9 +1419,9 @@ export class TimelineService {
             });
         }
 
-        for (let i = 0; i < segments!.length - 1; i++) {
-            const current = segments![i];
-            const next = segments![i + 1];
+        for (let i = 0; i < segments.length - 1; i++) {
+            const current = segments[i];
+            const next = segments[i + 1];
 
             // Condition: Current finished video, Next is pending and has no image (likely waiting for frame)
             // And Next is NOT generating or processing.

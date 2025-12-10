@@ -322,7 +322,7 @@ export class R2Service {
           verified = true;
           break;
         }
-      } catch (e) {
+      } catch {
         // ignore network errors during verification
       }
     }
