@@ -78,6 +78,7 @@
     "nestjs-pino": "^4.4.1",
     "node-fetch": "^2.7.0",
     "openai": "^6.9.1",
+    "p-limit": "^3.1.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-strategy": "^1.0.0",

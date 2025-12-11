@@ -1,6 +1,7 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import pLimit from 'p-limit';
 import { GenerationOrchestrator } from '../generation/generation.orchestrator';
 import { UsersService } from '../users/users.service';
 
@@ -335,19 +336,54 @@ export class TimelineService {
 
         // [NEW] 1.5 Archive Current Version (Source Control)
         if (segment.status === 'completed') {
-            await this.prisma.segmentVersion.create({
-                data: {
+            // Check for duplicates before archiving
+            const existingDuplicate = await this.prisma.segmentVersion.findFirst({
+                where: {
                     segmentId: segment.id,
                     script: segment.script,
                     visualPrompt: segment.visualPrompt,
-                    motionPrompt: segment.motionPrompt,
-                    voiceUrl: segment.audioUrl,
-                    imageUrl: segment.imageUrl,
-                    videoUrl: segment.videoUrl,
-                    duration: segment.duration || 0 // Handle possible null
+                    motionPrompt: segment.motionPrompt || null,
+                    imageUrl: segment.imageUrl || null,
+                    videoUrl: segment.videoUrl || null,
+                    voiceUrl: segment.audioUrl || null
                 }
             });
-            this.logger.log(`Archived version for segment ${segment.id}`);
+
+            if (!existingDuplicate) {
+                // Infer Change Type by comparing with the LAST version
+                const lastVersion = await this.prisma.segmentVersion.findFirst({
+                    where: { segmentId: segment.id },
+                    orderBy: { createdAt: 'desc' }
+                });
+
+                let changeType = 'INITIAL_GEN';
+                if (lastVersion) {
+                    // Granular Change Type Inference
+                    if (segment.script !== lastVersion.script) changeType = 'SCRIPT_EDIT';
+                    else if (segment.visualPrompt !== lastVersion.visualPrompt) changeType = 'VISUAL_EDIT';
+                    else if (segment.imageUrl !== lastVersion.imageUrl) changeType = 'VISUAL_REROLL';
+                    else if (segment.motionPrompt !== lastVersion.motionPrompt) changeType = 'MOTION_EDIT';
+                    else if (segment.videoUrl !== lastVersion.videoUrl) changeType = 'MOTION_REROLL';
+                    else if (segment.audioUrl !== lastVersion.voiceUrl) changeType = 'AUDIO_REROLL';
+                }
+
+                await this.prisma.segmentVersion.create({
+                    data: {
+                        segmentId: segment.id,
+                        script: segment.script,
+                        visualPrompt: segment.visualPrompt,
+                        motionPrompt: segment.motionPrompt,
+                        voiceUrl: segment.audioUrl,
+                        imageUrl: segment.imageUrl,
+                        videoUrl: segment.videoUrl,
+                        duration: segment.duration || 0,
+                        changeType
+                    }
+                });
+                this.logger.log(`Archived version for segment ${segment.id} (Type: ${changeType})`);
+            } else {
+                this.logger.log(`Skipped archiving duplicate version for segment ${segment.id}`);
+            }
         }
 
         const job = await this.prisma.job.findUnique({ where: { id: jobId } });
@@ -540,31 +576,95 @@ export class TimelineService {
     }
 
     async revertSegment(jobId: string, index: number, versionId: string) {
-        const version = await this.prisma.segmentVersion.findUnique({
-            where: { id: versionId }
-        });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (!version) throw new (InternalServerErrorException as any)('Version not found'); // Using InternalServerErrorException or NotFoundException where appropriate
+        return await this.prisma.$transaction(async (tx) => {
+            const version = await tx.segmentVersion.findUnique({
+                where: { id: versionId }
+            });
 
-        // Restore state
-        await this.prisma.timelineSegment.update({
-            where: { jobId_index: { jobId, index } },
-            data: {
-                script: version.script,
-                visualPrompt: version.visualPrompt,
-                motionPrompt: version.motionPrompt,
-                audioUrl: version.voiceUrl,
-                imageUrl: version.imageUrl,
-                videoUrl: version.videoUrl,
-                duration: version.duration,
-                status: 'completed' // Restored versions are always completed
+            if (!version) throw new (InternalServerErrorException as any)('Version not found');
+
+            // 1. Fetch current segment state
+            const currentSegment = await tx.timelineSegment.findUnique({
+                where: { jobId_index: { jobId, index } }
+            });
+
+            if (!currentSegment) throw new (InternalServerErrorException as any)('Segment not found');
+
+            // 2. Archive CURRENT state as a new version
+            // DEDUPLICATION: Check if the current state ALREADY exists in versions.
+            // If we are reverting a segment that was just restored (and untouched), it's already in history.
+            if (currentSegment.status === 'completed') {
+                const existingDuplicate = await tx.segmentVersion.findFirst({
+                    where: {
+                        segmentId: currentSegment.id,
+                        script: currentSegment.script,
+                        visualPrompt: currentSegment.visualPrompt,
+                        motionPrompt: currentSegment.motionPrompt || null, // Handle optional/null
+                        // For URLs, empty string vs null vs undefined can be tricky, assuming direct equality works for now or null
+                        imageUrl: currentSegment.imageUrl || null,
+                        videoUrl: currentSegment.videoUrl || null,
+                        voiceUrl: currentSegment.audioUrl || null
+                    }
+                });
+
+                if (!existingDuplicate) {
+                    // Infer Change Type
+                    const lastVersion = await tx.segmentVersion.findFirst({
+                        where: { segmentId: currentSegment.id },
+                        orderBy: { createdAt: 'desc' }
+                    });
+
+                    let changeType = 'INITIAL_GEN';
+                    if (lastVersion) {
+                        // Granular Change Type Inference
+                        if (currentSegment.script !== lastVersion.script) changeType = 'SCRIPT_EDIT';
+                        else if (currentSegment.visualPrompt !== lastVersion.visualPrompt) changeType = 'VISUAL_EDIT';
+                        else if (currentSegment.imageUrl !== lastVersion.imageUrl) changeType = 'VISUAL_REROLL';
+                        else if (currentSegment.motionPrompt !== lastVersion.motionPrompt) changeType = 'MOTION_EDIT';
+                        else if (currentSegment.videoUrl !== lastVersion.videoUrl) changeType = 'MOTION_REROLL';
+                        else if (currentSegment.audioUrl !== lastVersion.voiceUrl) changeType = 'AUDIO_REROLL';
+                    }
+
+                    await tx.segmentVersion.create({
+                        data: {
+                            segmentId: currentSegment.id,
+                            script: currentSegment.script,
+                            visualPrompt: currentSegment.visualPrompt,
+                            motionPrompt: currentSegment.motionPrompt,
+                            voiceUrl: currentSegment.audioUrl,
+                            imageUrl: currentSegment.imageUrl,
+                            videoUrl: currentSegment.videoUrl,
+                            duration: currentSegment.duration || 0,
+                            changeType
+                        }
+                    });
+                    this.logger.log(`Archived current state of segment ${index} before reverting (Type: ${changeType}).`);
+                } else {
+                    this.logger.log(`Skipped archiving segment ${index} - distinct version already exists.`);
+                }
             }
+
+            // 3. Restore state from selected version
+            await tx.timelineSegment.update({
+                where: { jobId_index: { jobId, index } },
+                data: {
+                    script: version.script,
+                    visualPrompt: version.visualPrompt,
+                    motionPrompt: version.motionPrompt,
+                    audioUrl: version.voiceUrl,
+                    imageUrl: version.imageUrl,
+                    videoUrl: version.videoUrl,
+                    duration: version.duration,
+                    status: 'completed' // Restored versions are always completed
+                }
+            });
+
+            return { status: 'restored' };
         });
 
-        // Sync metadata for frontend
+        // Sync metadata for frontend (outside transaction to avoid holding locks longer than needed, though sync is read-only mostly)
+        // Wait, sync might read what we just wrote. It should be fine.
         await this._syncJobMetadata(jobId);
-
-        return { status: 'restored' };
     }
 
     private async processTimelineGeneration(job: any, dto: GenerateTimelineDto) {
@@ -669,13 +769,16 @@ export class TimelineService {
             // Shared cache for user image uploads to prevent duplicate work
             const userImageUploadPromises = new Map<number, Promise<string>>();
 
+            // Limit concurrency to 3 to avoid rate limits
+            const limit = pLimit(3);
+
             // Launch Audio and Visual generation in parallel
             const audioPromises = script.map((item, index) =>
-                this.generateSegmentAudio(job.id, index, item, dto)
+                limit(() => this.generateSegmentAudio(job.id, index, item, dto))
             );
 
             const visualPromises = script.map((item, index) =>
-                this.generateSegmentVisual(job.id, index, item, dto, user, userImageUploadPromises)
+                limit(() => this.generateSegmentVisual(job.id, index, item, dto, user, userImageUploadPromises))
             );
 
             // Wait for all generations to kick off / complete audio/image phase
@@ -1307,7 +1410,16 @@ export class TimelineService {
      * 
      * Uses atomic locking to prevent race conditions when multiple segments finish simultaneously.
      */
-    private async _syncJobMetadata(jobId: string, tx?: Prisma.TransactionClient) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    private async _syncJobMetadata(_jobId: string, _tx?: Prisma.TransactionClient) {
+        // OPTIMIZATION: We no longer sync the full metadata to the Job table on every segment update.
+        // The frontend now listens to Supabase Realtime updates on the TimelineSegment table (Delta Sync).
+        // The `getJob` endpoint uses `getAggregatedJobStatus` which dynamically rebuilds the response
+        // from the TimelineSegment source of truth.
+        // This avoids massive JSON writes and race conditions.
+        return;
+
+        /*
         const performSync = async (client: Prisma.TransactionClient) => {
             // Lock the Job row to strictly serialize metadata updates
             // This prevents "lost update" anomalies where parallel webhooks overwrite each other
@@ -1386,6 +1498,7 @@ export class TimelineService {
         } catch (error) {
             this.logger.error(`Failed to sync job metadata for job ${jobId}`, error);
         }
+        */
     }
 
     /**

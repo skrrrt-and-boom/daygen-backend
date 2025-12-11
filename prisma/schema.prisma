@@ -185,6 +185,7 @@ model SegmentVersion {
   imageUrl      String?
   videoUrl      String?
   duration      Float
+  changeType    String?  @default("generic")
   createdAt     DateTime @default(now())
   
   @@index([segmentId])
