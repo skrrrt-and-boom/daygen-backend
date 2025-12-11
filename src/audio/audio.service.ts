@@ -209,6 +209,15 @@ export class AudioService {
       ? `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`
       : `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
+    // Log the request details for debugging
+    this.logger.log(`ElevenLabs TTS Request:`, {
+      endpoint,
+      voiceId,
+      modelId: requestBody.model_id,
+      textLength: dto.text?.length,
+      hasVoiceSettings: Object.keys(voiceSettings).length > 0,
+    });
+
     try {
       response = await fetch(
         endpoint,
@@ -233,10 +242,22 @@ export class AudioService {
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => ({}));
+      
+      // Log the full error response for debugging
+      this.logger.error(`ElevenLabs TTS Error Response:`, {
+        status: response.status,
+        statusText: response.statusText,
+        errorPayload: JSON.stringify(errorPayload),
+        voiceId,
+        modelId: requestBody.model_id,
+      });
+      
       const message =
+        errorPayload?.detail?.message ||
         errorPayload?.message ||
         errorPayload?.detail ||
         `ElevenLabs responded with status ${response.status}`;
+      
       throw new HttpException(message, response.status);
     }
 
