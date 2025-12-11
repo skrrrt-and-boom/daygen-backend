@@ -38,4 +38,13 @@ export class TimelineController {
     ) {
         return await this.timelineService.regenerateSegment(jobId, parseInt(index), dto);
     }
+
+    @Post(':jobId/segments/:index/revert')
+    async revertSegment(
+        @Param('jobId') jobId: string,
+        @Param('index') index: string,
+        @Body('versionId') versionId: string
+    ) {
+        return await this.timelineService.revertSegment(jobId, parseInt(index), versionId);
+    }
 }

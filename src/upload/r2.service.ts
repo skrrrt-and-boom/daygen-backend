@@ -3,6 +3,7 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  CopyObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
@@ -223,6 +224,49 @@ export class R2Service {
     } catch (error) {
       console.error('Failed to delete file from R2:', error);
       return false;
+    }
+  }
+
+  /**
+   * Copy a file within R2
+   */
+  async copyFile(
+    sourceUrl: string,
+    destinationFolder: string = 'cyran-roll-images',
+    customFilename?: string
+  ): Promise<string> {
+    try {
+      // Parse source key from URL
+      const sourceUrlObj = new URL(sourceUrl);
+      // Remove leading slash to get key, AND decode URI component to handle spaces/special chars
+      const sourceKey = decodeURIComponent(sourceUrlObj.pathname.substring(1));
+
+      // Determine new key
+      const extension = this.getFileExtension(sourceKey);
+      const fileName = customFilename
+        ? `${destinationFolder}/${customFilename}`
+        : `${destinationFolder}/${randomUUID()}${extension}`;
+
+      // CopyObjectCommand expects CopySource to be 'BucketName/Key' (without leading slash if bucket is in path style which R2 isn't exactly S3, but AWS SDK usually wants bucket/key for CopySource)
+      // Standard AWS S3 CopySource is "Bucket/Key".
+      // We encode it to handle special characters in the source key.
+      const copySource = `${this.bucketName}/${sourceKey}`;
+
+      const command = new CopyObjectCommand({
+        Bucket: this.bucketName,
+        CopySource: encodeURI(copySource), // Must be URL-encoded
+        Key: fileName,
+        ACL: 'public-read', // Ensure public access if needed
+      });
+
+      await this.s3Client.send(command);
+
+      const publicUrl = `${this.publicUrl}/${fileName}`;
+      this.logger.log(`Copied file from ${sourceKey} to ${fileName}`);
+      return publicUrl;
+    } catch (error) {
+      console.error('Failed to copy file in R2:', error);
+      throw new Error(`R2 copy failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

@@ -333,6 +333,23 @@ export class TimelineService {
         });
         if (!segment) throw new InternalServerErrorException('Segment not found');
 
+        // [NEW] 1.5 Archive Current Version (Source Control)
+        if (segment.status === 'completed') {
+            await this.prisma.segmentVersion.create({
+                data: {
+                    segmentId: segment.id,
+                    script: segment.script,
+                    visualPrompt: segment.visualPrompt,
+                    motionPrompt: segment.motionPrompt,
+                    voiceUrl: segment.audioUrl,
+                    imageUrl: segment.imageUrl,
+                    videoUrl: segment.videoUrl,
+                    duration: segment.duration || 0 // Handle possible null
+                }
+            });
+            this.logger.log(`Archived version for segment ${segment.id}`);
+        }
+
         const job = await this.prisma.job.findUnique({ where: { id: jobId } });
         if (!job) throw new InternalServerErrorException('Job not found');
 
@@ -520,6 +537,34 @@ export class TimelineService {
             // Image only regen
             return { status: 'completed', imageUrl };
         }
+    }
+
+    async revertSegment(jobId: string, index: number, versionId: string) {
+        const version = await this.prisma.segmentVersion.findUnique({
+            where: { id: versionId }
+        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (!version) throw new (InternalServerErrorException as any)('Version not found'); // Using InternalServerErrorException or NotFoundException where appropriate
+
+        // Restore state
+        await this.prisma.timelineSegment.update({
+            where: { jobId_index: { jobId, index } },
+            data: {
+                script: version.script,
+                visualPrompt: version.visualPrompt,
+                motionPrompt: version.motionPrompt,
+                audioUrl: version.voiceUrl,
+                imageUrl: version.imageUrl,
+                videoUrl: version.videoUrl,
+                duration: version.duration,
+                status: 'completed' // Restored versions are always completed
+            }
+        });
+
+        // Sync metadata for frontend
+        await this._syncJobMetadata(jobId);
+
+        return { status: 'restored' };
     }
 
     private async processTimelineGeneration(job: any, dto: GenerateTimelineDto) {
@@ -744,6 +789,15 @@ export class TimelineService {
                         userImageCache.set(refIndex, (async () => {
                             try {
                                 this.logger.log(`Segment ${index} processing user image ${refIndex}: ${originalUrl}`);
+
+                                // Optimization: If it's already an R2 URL (temp), just copy it internally
+                                if (this.r2Service.validateR2Url(originalUrl)) {
+                                    const r2Url = await this.r2Service.copyFile(originalUrl, 'cyran-roll-images');
+                                    this.logger.log(`Segment ${index} copied user image from temp to ${r2Url}`);
+                                    return r2Url;
+                                }
+
+                                // Fallback: Download and re-upload (for external URLs)
                                 const { buffer, contentType } = await this.downloadImageFromUrl(originalUrl);
                                 const r2Url = await this.r2Service.uploadBuffer(buffer, contentType, 'cyran-roll-images');
                                 this.logger.log(`Segment ${index} uploaded user image to ${r2Url}`);
@@ -1348,9 +1402,11 @@ export class TimelineService {
         if (job.type !== 'CYRAN_ROLL') return job;
 
         // 2. Fetch Segments (Source of Truth)
+        // 2. Fetch Segments (Source of Truth)
         const segments = await this.prisma.timelineSegment.findMany({
             where: { jobId },
-            orderBy: { index: 'asc' }
+            orderBy: { index: 'asc' },
+            include: { versions: { orderBy: { createdAt: 'desc' } } }
         });
 
         if (segments.length === 0) return job; // No segments yet?
@@ -1374,6 +1430,7 @@ export class TimelineService {
                 status: s.status,
                 error: s.error,
                 duration: s.duration || 3.0,
+                versions: s.versions // [NEW] Pass versions to frontend
             };
         });
 

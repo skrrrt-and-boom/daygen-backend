@@ -168,6 +168,26 @@ model TimelineSegment {
 
   @@unique([jobId, index])
   @@index([predictionId])
+
+  versions      SegmentVersion[]
+}
+
+model SegmentVersion {
+  id            String   @id @default(uuid())
+  segmentId     String
+  segment       TimelineSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  
+  // Snapshot of the segment state
+  script        String
+  visualPrompt  String
+  motionPrompt  String?
+  voiceUrl      String?
+  imageUrl      String?
+  videoUrl      String?
+  duration      Float
+  createdAt     DateTime @default(now())
+  
+  @@index([segmentId])
 }
 
 enum UserRole {
