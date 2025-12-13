@@ -99,6 +99,22 @@ model Job {
 
   @@index([userId, status])
   @@index([status, createdAt])
+
+  versions JobVersion[]
+}
+
+model JobVersion {
+  id            String   @id @default(cuid())
+  jobId         String
+  versionNumber Int
+  resultUrl     String
+  snapshot      Json?
+  createdAt     DateTime @default(now())
+  
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@unique([jobId, versionNumber]) 
 }
 
 model Payment {

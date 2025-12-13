@@ -47,4 +47,9 @@ export class TimelineController {
     ) {
         return await this.timelineService.revertSegment(jobId, parseInt(index), versionId);
     }
+
+    @Post(':jobId/stitch')
+    async stitchTimeline(@Param('jobId') jobId: string) {
+        return await this.timelineService.manualStitch(jobId);
+    }
 }

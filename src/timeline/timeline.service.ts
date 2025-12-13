@@ -1138,6 +1138,29 @@ export class TimelineService {
 
             this.logger.log(`Stitched video uploaded: ${resultUrl}`);
 
+            // [NEW] Version History Logic
+            try {
+                const versionCount = await this.prisma.jobVersion.count({ where: { jobId } });
+                const nextVersion = versionCount + 1;
+
+                await this.prisma.jobVersion.create({
+                    data: {
+                        jobId,
+                        versionNumber: nextVersion,
+                        resultUrl,
+                        snapshot: validSegments.map(s => ({
+                            segmentId: s.id,
+                            index: s.index,
+                            videoUrl: s.videoUrl
+                        })) as any
+                    }
+                });
+                this.logger.log(`Created JobVersion v${nextVersion} for job ${jobId}`);
+            } catch (verErr) {
+                this.logger.warn(`Failed to create version history for job ${jobId}`, verErr);
+                // Non-blocking: proceed to complete job
+            }
+
             // 6. Update Job Record
             // Calculate final metadata (scene timings based on actual file lengths?)
             // For now, we reuse the estimation logic or just save the final URL.
@@ -1183,6 +1206,7 @@ export class TimelineService {
                 totalDuration: currentTime,
                 musicUrl,
             };
+
 
 
             await this.prisma.job.update({
@@ -1423,6 +1447,26 @@ export class TimelineService {
         return Buffer.from(arrayBuffer);
     }
 
+    async manualStitch(jobId: string) {
+        this.logger.log(`Manual stitch requested for job ${jobId}`);
+
+        const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+        if (!job) throw new InternalServerErrorException('Job not found');
+
+        // Reset status to stitching to show progress on UI
+        await this.prisma.job.update({
+            where: { id: jobId },
+            data: { status: 'STITCHING' as any, error: null }
+        });
+
+        // Run async (fire and forget)
+        this.finalizeJob(jobId).catch(err =>
+            this.logger.error(`Manual stitching failed for job ${jobId}`, err)
+        );
+
+        return job;
+    }
+
     /**
      * Helper to sync the TimelineSegment table state back to the Job.metadata.response
      * This ensures that any individual segment updates (regeneration, webhooks) are reflected
@@ -1533,7 +1577,10 @@ export class TimelineService {
      */
     async getAggregatedJobStatus(jobId: string) {
         // 1. Fetch Job
-        const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+        const job = await this.prisma.job.findUnique({
+            where: { id: jobId },
+            include: { versions: { orderBy: { versionNumber: 'desc' } } }
+        });
         if (!job) return null;
 
         // Only do aggregation for Cyran Rolls
