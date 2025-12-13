@@ -34,6 +34,7 @@ export class CloudTasksService {
     [JobType.BATCH_GENERATION]: 'batch-generation-queue',
     [JobType.SCENE_GENERATION]: 'scene-generation-queue',
     [JobType.IMAGE_EDIT]: 'image-generation-queue', // Reuse image generation queue
+    [JobType.IMAGE_RESIZE]: 'image-generation-queue', // Reuse image generation queue
   };
 
   constructor(
@@ -209,10 +210,14 @@ export class CloudTasksService {
     userId: string,
     data: CreateImageGenerationJobDto & { jobType?: string },
   ) {
-    const type =
-      data.jobType === 'IMAGE_EDIT'
-        ? JobType.IMAGE_EDIT
-        : JobType.IMAGE_GENERATION;
+    let type: JobType;
+    if (data.jobType === 'IMAGE_EDIT') {
+      type = JobType.IMAGE_EDIT;
+    } else if (data.jobType === 'resize' || data.jobType === 'IMAGE_RESIZE') {
+      type = JobType.IMAGE_RESIZE;
+    } else {
+      type = JobType.IMAGE_GENERATION;
+    }
     return this.createJob(userId, type, data);
   }
 
