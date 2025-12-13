@@ -9,17 +9,17 @@ export class GenerateTimelineDto {
     @IsNotEmpty()
     style: string;
 
-    @IsString()
     @IsOptional()
+    @IsString()
     voiceId?: string;
-
-    @IsString()
-    @IsOptional()
-    musicId?: string;
 
     @IsOptional()
     @IsBoolean()
     includeNarration?: boolean = true;
+
+    @IsOptional()
+    @IsBoolean()
+    includeSubtitles?: boolean = true;
 
     @IsString()
     @IsOptional()

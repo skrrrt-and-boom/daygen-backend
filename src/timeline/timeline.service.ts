@@ -709,7 +709,17 @@ export class TimelineService {
             }
 
             // 2.5 Create Initial "Pending" Segments in DB (Streaming UX)
-            // This ensures the frontend sees all empty slots immediately.
+            // Helper for smart duration
+            const estimateDuration = (text: string) => {
+                if (dto.includeNarration === false) {
+                    return 5.0; // Default to 5s if strictly visual
+                }
+                const wordCount = text.split(/\s+/).length;
+                // Approx 2.5 words per second is a good average reading speed
+                const estimated = Math.max(5.0, wordCount / 2.5);
+                return Math.round(estimated * 10) / 10; // Round to 1 decimal
+            };
+
             await this.prisma.timelineSegment.createMany({
                 data: script.map((item, index) => ({
                     jobId: job.id,
@@ -718,19 +728,24 @@ export class TimelineService {
                     visualPrompt: item.visualPrompt,
                     motionPrompt: item.motionPrompt,
                     status: 'pending',
+                    duration: estimateDuration(item.text) // Save estimated duration
                 }))
             });
 
             // 2.6 Initialize Job Metadata Response with FULL script details (including visual_source)
             // We do this manually here to ensure 'visual_source' is captured, as it is not in the DB schema.
-            // 2.6 Initialize Job Metadata Response with FULL script details (including visual_source)
-            // We do this manually here to ensure 'visual_source' is captured, as it is not in the DB schema.
-            const initialResponse: TimelineResponse = {
-                segments: script.map((item, index) => ({
-                    ...item, // Spread ALL properties from the script item (includes visual_source, negative_prompt, etc.)
-                    id: `seg-${index}`, // Temporary ID until we sync real ones, or we just let sync handle IDs later
+
+            let currentStartTime = 0;
+            const segmentsWithTiming = script.map((item, index) => {
+                const duration = estimateDuration(item.text);
+                const startTime = currentStartTime;
+                const endTime = startTime + duration;
+                currentStartTime = endTime;
+
+                return {
+                    ...item,
+                    id: `seg-${index}`,
                     index: index,
-                    // Ensure core fields are mapped correctly if names differ
                     script: item.text,
                     visualPrompt: item.visualPrompt,
                     motionPrompt: item.motionPrompt,
@@ -738,11 +753,15 @@ export class TimelineService {
                     imageUrl: undefined,
                     videoUrl: undefined,
                     status: 'pending',
-                    duration: 3.0,
-                    startTime: index * 3.0,
-                    endTime: (index + 1) * 3.0,
-                })),
-                totalDuration: script.length * 3.0,
+                    duration: duration,
+                    startTime: startTime,
+                    endTime: endTime,
+                };
+            });
+
+            const initialResponse: TimelineResponse = {
+                segments: segmentsWithTiming,
+                totalDuration: currentStartTime,
                 musicUrl
             };
 
@@ -1050,9 +1069,10 @@ export class TimelineService {
                     if (seg.audioUrl) {
                         await this.downloadFile(seg.audioUrl, localAudioPath);
                     } else {
-                        // Generate 1s silent audio
+                        // Generate silent audio matched to segment duration (or default 5s)
+                        const targetDuration = seg.duration || 5;
                         try {
-                            await exec(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t 1 -c:a libmp3lame -q:a 4 "${localAudioPath}"`);
+                            await exec(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${targetDuration} -c:a libmp3lame -q:a 4 "${localAudioPath}"`);
                         } catch (e) {
                             this.logger.warn(`Failed to generate silent audio for segment ${seg.index}: ${e}`);
                         }
@@ -1096,8 +1116,13 @@ export class TimelineService {
 
             // Get volume from original DTO (default to 0.3 if not set)
             const volume = metadata.dto?.musicVolume ?? 0.3;
+            // Get subtitle preference (default to true)
+            const includeSubtitles = metadata.dto?.includeSubtitles ?? true;
 
-            const cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16" --temp_dir "${tempDir}"${localMusicPath ? ` --audio "${localMusicPath}" --volume ${volume}` : ''}`;
+            let cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16" --temp_dir "${tempDir}"`;
+            if (localMusicPath) cmd += ` --audio "${localMusicPath}" --volume ${volume}`;
+            if (!includeSubtitles) cmd += ` --no_subtitles`; // Pass flag to python
+
             this.logger.log(`Spawning stitch_clips.py: ${cmd}`);
             await exec(cmd);
 
@@ -1542,7 +1567,7 @@ export class TimelineService {
                 videoUrl: s.videoUrl,
                 status: s.status,
                 error: s.error,
-                duration: s.duration || 3.0,
+                duration: s.duration || 5.0,
                 versions: s.versions // [NEW] Pass versions to frontend
             };
         });

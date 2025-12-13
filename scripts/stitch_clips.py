@@ -18,7 +18,7 @@ def get_audio_duration(path):
         print(f"Error probing {path}: {e}", file=sys.stderr)
         raise
 
-def process_segment(segment, index, output_path, width, height, font_settings):
+def process_segment(segment, index, output_path, width, height, font_settings, include_subtitles=True):
     """
     Process a single segment:
     1. Get Video and Audio (Voiceover)
@@ -64,7 +64,7 @@ def process_segment(segment, index, output_path, width, height, font_settings):
         v = v.filter('format', 'yuv420p') # Force pixel format
 
         # 3. Subtitles (One Word at a Time)
-        if text:
+        if text and include_subtitles:
             # CLEANUP: Remove [instructions] and extra spaces
             # Also remove hyphens as requested "-" and "--"
             clean_text = re.sub(r'\[.*?\]', '', text)
@@ -253,6 +253,7 @@ def main():
     parser.add_argument("--y_pos", default="(h-text_h)/1.15", help="Y position expression for text") # Default: slightly up from bottom
     parser.add_argument("--volume", type=float, default=0.3, help="Background music volume (0.0 to 1.0)")
     parser.add_argument("--temp_dir", required=False, help="Directory for temporary files")
+    parser.add_argument("--no_subtitles", action="store_true", help="Disable subtitle generation")
 
 
     args = parser.parse_args()
@@ -337,7 +338,8 @@ def main():
         
         for i, section in enumerate(segments):
             temp_path = os.path.join(work_dir, f"temp_seg_{session_id}_{i}.mp4")
-            process_segment(section, i, temp_path, W, H, font_settings)
+            # Pass inverse of no_subtitles
+            process_segment(section, i, temp_path, W, H, font_settings, include_subtitles=not args.no_subtitles)
             temp_files.append(temp_path)
 
         # 4. Generate Concat Demuxer Input File
