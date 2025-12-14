@@ -65,6 +65,20 @@ export class R2FilesController {
     }
   }
 
+  // Public endpoint to list all public generations for the Explore gallery
+  // No auth required - serves public content
+  @Get('public')
+  listPublic(
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
+    return this.r2FilesService.listPublic(
+      parsedLimit,
+      cursor ?? undefined,
+    );
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get()
   list(

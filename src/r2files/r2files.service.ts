@@ -43,12 +43,143 @@ export interface UpdateR2FileDto {
   model?: string;
 }
 
+export interface PublicR2FileResponse extends R2FileResponse {
+  owner?: {
+    displayName?: string;
+    authUserId: string;
+  };
+}
+
 @Injectable()
 export class R2FilesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
   ) { }
+
+  /**
+   * List all public generations from all users for the Explore gallery
+   */
+  async listPublic(limit = 50, cursor?: string): Promise<{
+    items: PublicR2FileResponse[];
+    totalCount: number;
+    nextCursor: string | null;
+  }> {
+    const take = Math.min(Math.max(limit, 1), 100);
+
+    const where: Prisma.R2FileWhereInput = {
+      isPublic: true,
+      deletedAt: null,
+    };
+
+    const fetchBatchSize = Math.min(take * 2, 200);
+    const seenKeys = new Set<string>();
+    type R2FileWithOwner = Awaited<
+      ReturnType<typeof this.prisma.r2File.findMany<{
+        include: { owner: { select: { displayName: true; authUserId: true } } };
+      }>>
+    >[number];
+    const collected: R2FileWithOwner[] = [];
+    let pagingCursor = cursor ? new Date(cursor) : undefined;
+    let hasMore = true;
+
+    while (collected.length < take && hasMore) {
+      const batch = await this.prisma.r2File.findMany({
+        where: {
+          ...where,
+          ...(pagingCursor
+            ? {
+              createdAt: {
+                lt: pagingCursor,
+              },
+            }
+            : {}),
+        },
+        take: fetchBatchSize,
+        orderBy: [
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ],
+        include: {
+          owner: {
+            select: {
+              displayName: true,
+              authUserId: true,
+            },
+          },
+        },
+      });
+
+      if (batch.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      for (const item of batch) {
+        const dedupeKey = this.getDedupeKey(item);
+        if (!seenKeys.has(dedupeKey)) {
+          seenKeys.add(dedupeKey);
+          collected.push(item);
+        }
+      }
+
+      hasMore = batch.length === fetchBatchSize;
+      pagingCursor = batch[batch.length - 1]?.createdAt;
+    }
+
+    const paginatedItems = collected.slice(0, take);
+    const nextCursor =
+      (hasMore || collected.length > take) && paginatedItems.length > 0
+        ? paginatedItems[paginatedItems.length - 1].createdAt.toISOString()
+        : null;
+
+    const totalCountGroups = await this.prisma.r2File.groupBy({
+      where,
+      by: ['fileUrl'],
+      _count: {
+        _all: true,
+      },
+    });
+
+    return {
+      items: paginatedItems.map((item) => this.toPublicResponse(item)),
+      totalCount: totalCountGroups.length,
+      nextCursor,
+    };
+  }
+
+  private toPublicResponse(file: {
+    id: string;
+    fileName: string;
+    fileUrl: string;
+    fileSize?: number | null;
+    mimeType?: string | null;
+    prompt?: string | null;
+    model?: string | null;
+    aspectRatio?: string | null;
+    avatarId?: string | null;
+    avatarImageId?: string | null;
+    productId?: string | null;
+    jobId?: string | null;
+    isLiked?: boolean | null;
+    isPublic?: boolean | null;
+    createdAt: Date;
+    updatedAt: Date;
+    owner?: {
+      displayName?: string | null;
+      authUserId: string;
+    } | null;
+  }): PublicR2FileResponse {
+    return {
+      ...this.toResponse(file),
+      owner: file.owner
+        ? {
+          displayName: file.owner.displayName ?? undefined,
+          authUserId: file.owner.authUserId,
+        }
+        : undefined,
+    };
+  }
 
   async list(ownerAuthId: string, limit = 50, cursor?: string) {
     const take = Math.min(Math.max(limit, 1), 100);
