@@ -1,5 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsArray, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsOptional, IsBoolean } from 'class-validator';
 
 export class UpdateAvatarImageDto {
     @IsOptional()
