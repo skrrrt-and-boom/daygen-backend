@@ -25,6 +25,8 @@ model User {
   subscription     Subscription?
   usageEvents      UsageEvent[]
   voices           Voice[]
+  avatars          Avatar[]
+  products         Product[]
 }
 
 model Voice {
@@ -280,4 +282,73 @@ enum CreditSourceType {
   PAYMENT
   SUBSCRIPTION_CYCLE
   SYSTEM
+}
+
+// Avatar and Product models for user content
+model Avatar {
+  id            String        @id @default(cuid())
+  ownerAuthId   String
+  name          String
+  slug          String
+  imageUrl      String        // Primary image URL
+  source        String        // "upload" | "gallery"
+  sourceId      String?
+  published     Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+  
+  owner         User          @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  images        AvatarImage[]
+  
+  @@unique([ownerAuthId, slug])
+  @@index([ownerAuthId, deletedAt])
+}
+
+model AvatarImage {
+  id          String   @id @default(cuid())
+  avatarId    String
+  url         String
+  source      String
+  sourceId    String?
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  avatar      Avatar   @relation(fields: [avatarId], references: [id], onDelete: Cascade)
+  
+  @@index([avatarId])
+}
+
+model Product {
+  id            String         @id @default(cuid())
+  ownerAuthId   String
+  name          String
+  slug          String
+  imageUrl      String
+  source        String
+  sourceId      String?
+  published     Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+  
+  owner         User           @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
+  images        ProductImage[]
+  
+  @@unique([ownerAuthId, slug])
+  @@index([ownerAuthId, deletedAt])
+}
+
+model ProductImage {
+  id          String   @id @default(cuid())
+  productId   String
+  url         String
+  source      String
+  sourceId    String?
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  @@index([productId])
 }

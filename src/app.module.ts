@@ -18,6 +18,8 @@ import { ScenesModule } from './scenes/scenes.module';
 import { TimelineModule } from './timeline/timeline.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CleanupService } from './cleanup/cleanup.service';
+import { AvatarsModule } from './avatars/avatars.module';
+import { ProductsModule } from './products/products.module';
 
 @Module({
   imports: [
@@ -75,6 +77,8 @@ import { CleanupService } from './cleanup/cleanup.service';
     AudioModule,
     ScenesModule,
     TimelineModule,
+    AvatarsModule,
+    ProductsModule,
   ],
   controllers: [AppController],
   providers: [AppService, CleanupService],
