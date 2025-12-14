@@ -11,6 +11,7 @@ export interface CreateR2FileDto {
   mimeType?: string;
   prompt?: string;
   model?: string;
+  aspectRatio?: string;
   avatarId?: string;
   avatarImageId?: string;
   productId?: string;
@@ -25,6 +26,7 @@ export interface R2FileResponse {
   mimeType?: string;
   prompt?: string;
   model?: string;
+  aspectRatio?: string;
   avatarId?: string;
   avatarImageId?: string;
   productId?: string;
@@ -155,6 +157,7 @@ export class R2FilesService {
             mimeType: dto.mimeType,
             prompt: dto.prompt,
             model: dto.model,
+            aspectRatio: dto.aspectRatio,
             avatarId: dto.avatarId,
             avatarImageId: dto.avatarImageId,
             productId: dto.productId,
@@ -178,6 +181,7 @@ export class R2FilesService {
         mimeType: dto.mimeType,
         prompt: dto.prompt,
         model: dto.model,
+        aspectRatio: dto.aspectRatio,
         avatarId: dto.avatarId,
         avatarImageId: dto.avatarImageId,
         productId: dto.productId,
@@ -217,6 +221,33 @@ export class R2FilesService {
     });
 
     return this.toResponse(updated);
+  }
+
+  async updateByFileUrl(ownerAuthId: string, fileUrl: string, dto: UpdateR2FileDto) {
+    const normalized = fileUrl?.trim();
+    if (!normalized) {
+      throw new Error('fileUrl is required');
+    }
+
+    const result = await this.prisma.r2File.updateMany({
+      where: {
+        ownerAuthId,
+        deletedAt: null,
+        fileUrl: normalized,
+      },
+      data: {
+        ...(dto.isLiked !== undefined && { isLiked: dto.isLiked }),
+        ...(dto.isPublic !== undefined && { isPublic: dto.isPublic }),
+        ...(dto.model !== undefined && { model: dto.model }),
+        updatedAt: new Date(),
+      },
+    });
+
+    if (!result.count) {
+      throw new Error('File not found');
+    }
+
+    return { success: true, count: result.count };
   }
 
   async remove(ownerAuthId: string, id: string) {
@@ -259,6 +290,7 @@ export class R2FilesService {
     mimeType?: string | null;
     prompt?: string | null;
     model?: string | null;
+    aspectRatio?: string | null;
     avatarId?: string | null;
     avatarImageId?: string | null;
     productId?: string | null;
@@ -276,6 +308,7 @@ export class R2FilesService {
       mimeType: file.mimeType ?? undefined,
       prompt: file.prompt ?? undefined,
       model: file.model ?? undefined,
+      aspectRatio: file.aspectRatio ?? undefined,
       avatarId: file.avatarId ?? undefined,
       avatarImageId: file.avatarImageId ?? undefined,
       productId: file.productId ?? undefined,

@@ -87,6 +87,21 @@ export class R2FilesController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Patch('by-url')
+  updateByUrl(
+    @CurrentUser() user: SanitizedUser,
+    @Body() body: { fileUrl?: string } & UpdateR2FileDto,
+  ) {
+    const fileUrl = typeof body.fileUrl === 'string' ? body.fileUrl.trim() : '';
+    if (!fileUrl) {
+      throw new HttpException('fileUrl is required', HttpStatus.BAD_REQUEST);
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { fileUrl: _, ...dto } = body;
+    return this.r2FilesService.updateByFileUrl(user.authUserId, fileUrl, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Patch(':id')
   update(
     @CurrentUser() user: SanitizedUser,

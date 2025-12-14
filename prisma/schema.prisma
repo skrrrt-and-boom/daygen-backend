@@ -66,6 +66,7 @@ model R2File {
   mimeType      String?
   prompt        String?
   model         String?
+  aspectRatio   String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   avatarId      String?

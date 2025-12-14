@@ -1546,6 +1546,7 @@ export class GenerationService {
           mimeType,
           prompt: resolvedPrompt,
           model: resolvedModel,
+          aspectRatio: '1:1',
         });
 
         r2FileId = r2File.id;
@@ -1852,6 +1853,7 @@ export class GenerationService {
               mimeType,
               prompt,
               model: providerResult.model,
+              aspectRatio: this.extractAspectRatio(dto) ?? '1:1',
               avatarId: dto.avatarId,
               avatarImageId: dto.avatarImageId,
               productId: dto.productId,

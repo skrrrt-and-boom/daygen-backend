@@ -292,6 +292,18 @@ export class JobProcessingService {
     const model = data.model as string;
     const provider = (data.provider as string)?.trim().toLowerCase();
     const cost = 5; // Video generation cost
+    const avatarId = typeof data.avatarId === 'string' ? data.avatarId.trim() : undefined;
+    const avatarImageId = typeof data.avatarImageId === 'string' ? data.avatarImageId.trim() : undefined;
+    const productId = typeof data.productId === 'string' ? data.productId.trim() : undefined;
+
+    const options = (data.options && typeof data.options === 'object' && !Array.isArray(data.options))
+      ? (data.options as Record<string, unknown>)
+      : undefined;
+
+    const fallbackAspectRatio = (() => {
+      const raw = options?.aspect_ratio ?? options?.aspectRatio;
+      return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : '16:9';
+    })();
 
     const user = await this.cloudTasksService.getUserByAuthId(userId);
     if (!user) {
@@ -320,7 +332,7 @@ export class JobProcessingService {
           jobId,
           prompt,
           model,
-          data.options as Record<string, unknown> | undefined,
+          options,
           data.imageUrls as string[] | undefined,
           data.references as string[] | undefined,
         );
@@ -337,6 +349,10 @@ export class JobProcessingService {
           prompt,
           model: veoResult.model,
           jobId,
+          aspectRatio: veoResult.aspectRatio ?? fallbackAspectRatio,
+          avatarId,
+          avatarImageId,
+          productId,
         });
 
         await this.cloudTasksService.completeJob(jobId, veoResult.videoUrl, {
@@ -361,7 +377,7 @@ export class JobProcessingService {
           jobId,
           prompt,
           model,
-          data.options as Record<string, unknown> | undefined,
+          options,
         );
 
         await this.usageService.captureCredits(reservationId, {
@@ -376,6 +392,10 @@ export class JobProcessingService {
           prompt,
           model: soraResult.model,
           jobId,
+          aspectRatio: fallbackAspectRatio,
+          avatarId,
+          avatarImageId,
+          productId,
         });
 
         await this.cloudTasksService.completeJob(jobId, soraResult.videoUrl, {
@@ -403,11 +423,27 @@ export class JobProcessingService {
         assetCount: 1,
       });
 
+      // Best-effort persist in gallery so UI doesn't lose metadata on refresh.
+      const r2File = await this.r2FilesService.create(user.authUserId, {
+        fileName: `video-${Date.now()}.mp4`,
+        fileUrl: videoUrl,
+        mimeType: 'video/mp4',
+        prompt,
+        model,
+        jobId,
+        aspectRatio: fallbackAspectRatio,
+        avatarId,
+        avatarImageId,
+        productId,
+      });
+
       await this.cloudTasksService.completeJob(jobId, videoUrl, {
         videoUrl,
         prompt,
         model,
         provider,
+        r2FileId: r2File.id,
+        aspectRatio: fallbackAspectRatio,
       });
     } catch (error) {
       // 3. Release Credits on Failure

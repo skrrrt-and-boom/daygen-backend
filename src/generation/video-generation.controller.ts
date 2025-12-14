@@ -32,6 +32,9 @@ export class VideoGenerationController {
       prompt?: string;
       model?: string;
       providerOptions?: ProviderOptions;
+      avatarId?: string;
+      avatarImageId?: string;
+      productId?: string;
     },
   ) {
     const prompt = body.prompt?.trim();
@@ -53,6 +56,9 @@ export class VideoGenerationController {
         model: body.model?.trim() || 'sora-2',
         provider: 'sora',
         options: providerOptions,
+        avatarId: typeof body.avatarId === 'string' ? body.avatarId.trim() : undefined,
+        avatarImageId: typeof body.avatarImageId === 'string' ? body.avatarImageId.trim() : undefined,
+        productId: typeof body.productId === 'string' ? body.productId.trim() : undefined,
       },
     );
 
@@ -69,6 +75,9 @@ export class VideoGenerationController {
       providerOptions?: ProviderOptions;
       imageUrls?: string[];
       references?: string[];
+      avatarId?: string;
+      avatarImageId?: string;
+      productId?: string;
     },
   ) {
     const prompt = body.prompt?.trim();
@@ -104,6 +113,9 @@ export class VideoGenerationController {
         options: providerOptions,
         imageUrls,
         references,
+        avatarId: typeof body.avatarId === 'string' ? body.avatarId.trim() : undefined,
+        avatarImageId: typeof body.avatarImageId === 'string' ? body.avatarImageId.trim() : undefined,
+        productId: typeof body.productId === 'string' ? body.productId.trim() : undefined,
       },
     );
 

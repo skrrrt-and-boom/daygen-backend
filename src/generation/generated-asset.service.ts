@@ -101,10 +101,13 @@ export class GeneratedAssetService {
       return;
     }
 
+    const aspectRatio = this.extractAspectRatio(dto) ?? '1:1';
+
     for (const asset of assets) {
       await this.persistAsset(user, asset, {
         prompt,
         model: providerResult.model,
+        aspectRatio,
         avatarId: dto.avatarId,
         avatarImageId: dto.avatarImageId,
         productId: dto.productId,
@@ -144,6 +147,7 @@ export class GeneratedAssetService {
     metadata: {
       prompt: string;
       model: string;
+      aspectRatio?: string;
       avatarId?: string;
       avatarImageId?: string;
       productId?: string;
@@ -212,6 +216,7 @@ export class GeneratedAssetService {
           mimeType: asset.mimeType,
           prompt: metadata.prompt,
           model: metadata.model,
+          aspectRatio: metadata.aspectRatio,
           avatarId: metadata.avatarId,
           avatarImageId: metadata.avatarImageId,
           productId: metadata.productId,
@@ -299,6 +304,31 @@ export class GeneratedAssetService {
       return undefined;
     }
     return `https://storage.googleapis.com/${path}`;
+  }
+
+  private extractAspectRatio(dto: ProviderGenerateDto): string | undefined {
+    const dtoRecord = optionalJsonRecord(dto);
+    const configRecord = dtoRecord
+      ? optionalJsonRecord(dtoRecord['config'])
+      : undefined;
+    const imageConfigRecord = configRecord
+      ? optionalJsonRecord(configRecord['imageConfig'])
+      : undefined;
+
+    const configAspectRatio = asString(imageConfigRecord?.['aspectRatio']);
+    if (configAspectRatio) {
+      return configAspectRatio;
+    }
+
+    const providerOptions = optionalJsonRecord(dto.providerOptions);
+    const providerAspectRatio =
+      asString(providerOptions?.['aspectRatio']) ??
+      asString(providerOptions?.['aspect_ratio']);
+    if (providerAspectRatio) {
+      return providerAspectRatio;
+    }
+
+    return undefined;
   }
 
   private async downloadAsDataUrl(

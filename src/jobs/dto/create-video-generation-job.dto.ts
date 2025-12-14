@@ -15,6 +15,18 @@ export class CreateVideoGenerationJobDto {
   options?: Record<string, any>;
 
   @IsOptional()
+  @IsString()
+  avatarId?: string;
+
+  @IsOptional()
+  @IsString()
+  avatarImageId?: string;
+
+  @IsOptional()
+  @IsString()
+  productId?: string;
+
+  @IsOptional()
   @IsArray()
   @IsString({ each: true })
   imageUrls?: string[];
