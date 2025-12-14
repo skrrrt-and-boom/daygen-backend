@@ -29,8 +29,16 @@ export interface R2FileResponse {
   avatarImageId?: string;
   productId?: string;
   jobId?: string;
+  isLiked?: boolean;
+  isPublic?: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface UpdateR2FileDto {
+  isLiked?: boolean;
+  isPublic?: boolean;
+  model?: string;
 }
 
 @Injectable()
@@ -189,6 +197,28 @@ export class R2FilesService {
     return file ? this.toResponse(file) : null;
   }
 
+  async update(ownerAuthId: string, id: string, dto: UpdateR2FileDto) {
+    const file = await this.prisma.r2File.findFirst({
+      where: { id, ownerAuthId, deletedAt: null },
+    });
+
+    if (!file) {
+      throw new Error('File not found');
+    }
+
+    const updated = await this.prisma.r2File.update({
+      where: { id },
+      data: {
+        ...(dto.isLiked !== undefined && { isLiked: dto.isLiked }),
+        ...(dto.isPublic !== undefined && { isPublic: dto.isPublic }),
+        ...(dto.model !== undefined && { model: dto.model }),
+        updatedAt: new Date(),
+      },
+    });
+
+    return this.toResponse(updated);
+  }
+
   async remove(ownerAuthId: string, id: string) {
     const file = await this.prisma.r2File.findFirst({
       where: { id, ownerAuthId, deletedAt: null }, // Only find non-deleted files
@@ -233,6 +263,8 @@ export class R2FilesService {
     avatarImageId?: string | null;
     productId?: string | null;
     jobId?: string | null;
+    isLiked?: boolean | null;
+    isPublic?: boolean | null;
     createdAt: Date;
     updatedAt: Date;
   }): R2FileResponse {
@@ -248,6 +280,8 @@ export class R2FilesService {
       avatarImageId: file.avatarImageId ?? undefined,
       productId: file.productId ?? undefined,
       jobId: file.jobId ?? undefined,
+      isLiked: file.isLiked ?? undefined,
+      isPublic: file.isPublic ?? undefined,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt,
     };

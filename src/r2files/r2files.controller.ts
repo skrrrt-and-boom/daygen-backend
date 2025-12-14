@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -13,7 +14,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { R2FilesService } from './r2files.service';
-import type { CreateR2FileDto } from './r2files.service';
+import type { CreateR2FileDto, UpdateR2FileDto } from './r2files.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
@@ -83,6 +84,16 @@ export class R2FilesController {
   @Post()
   create(@CurrentUser() user: SanitizedUser, @Body() dto: CreateR2FileDto) {
     return this.r2FilesService.create(user.authUserId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id')
+  update(
+    @CurrentUser() user: SanitizedUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateR2FileDto,
+  ) {
+    return this.r2FilesService.update(user.authUserId, id, dto);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -73,6 +73,8 @@ model R2File {
   deletedAt     DateTime?
   jobId         String?
   productId     String?
+  isLiked       Boolean   @default(false)
+  isPublic      Boolean   @default(false)
   job           Job?      @relation(fields: [jobId], references: [id])
   owner         User      @relation(fields: [ownerAuthId], references: [authUserId], onDelete: Cascade)
 
