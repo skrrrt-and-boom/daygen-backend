@@ -158,15 +158,15 @@ def process_segment(segment, index, output_path, width, height, font_settings, i
 
             base_drawtext = {
                 'fontsize': font_settings.get('fontsize', 70),
-                'fontcolor': font_settings.get('color', 'yellow'),
-                'borderw': 2,
+                'fontcolor': 'white',
+                'borderw': 0,
                 'bordercolor': 'black',
                 'shadowcolor': 'black',
-                'shadowx': 2,
-                'shadowy': 2,
+                'shadowx': 0,
+                'shadowy': 0,
                 'box': 1,
-                'boxcolor': 'black@0.6',
-                'boxborderw': 10,
+                'boxcolor': 'black@1.0',
+                'boxborderw': 20,
                 'x': '(w-text_w)/2',
                 'y': font_settings.get('y_pos', '(h-text_h)/1.2'),
             }

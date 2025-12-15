@@ -401,18 +401,29 @@ export class TimelineService {
         // Current flow: Image -> Video. If we regenerate, we usually want a new Image too?
         // Task says: "Re-run generationOrchestrator.generate (Image) -> klingProvider (Video)"
 
-        // 2. Audio Regeneration (if text provided)
+        // 2. Audio Regeneration (if text provided OR regenerateAudio requested)
         let speechUrl = segment.audioUrl;
         let audioDuration = segment.duration;
         let script = segment.script;
 
-        if (dto.text && dto.text !== segment.script) {
+        // Check if we need to regenerate audio
+        const shouldRegenerateAudio = dto.regenerateAudio || (dto.text && dto.text !== segment.script);
+
+        if (shouldRegenerateAudio) {
+            const newText = dto.text || segment.script;
+
             this.logger.log(`Regenerating audio for segment ${index}`);
+
+            // Fetch voiceId from Job Metadata (preserved from initial generation)
+            const jobMetadata = job.metadata as any;
+            const originalDto = jobMetadata.dto as GenerateTimelineDto;
+            const voiceId = originalDto?.voiceId; // This ensures we use the same voice!
+
             // Generate Speech
             try {
                 const result = await this.audioService.generateSpeech({
-                    text: dto.text,
-                    voiceId: undefined, // Use default or fetch from job metadata if stored? For now default.
+                    text: newText,
+                    voiceId: voiceId, // Use the preserved voiceId
                     modelId: 'eleven_v3',
                     stability: 0.5,
                     similarityBoost: 0.75,
@@ -424,13 +435,13 @@ export class TimelineService {
 
                 speechUrl = url;
                 audioDuration = duration;
-                script = dto.text;
+                script = newText;
 
                 // Update DB immediately for audio
                 await this.prisma.timelineSegment.update({
                     where: { jobId_index: { jobId, index } },
                     data: {
-                        script: dto.text,
+                        script: newText,
                         audioUrl: speechUrl,
                         duration: audioDuration,
                         alignment: result.alignment // Save alignment
@@ -441,8 +452,6 @@ export class TimelineService {
                 await this._syncJobMetadata(jobId);
             } catch (err) {
                 this.logger.error(`Failed to regenerate audio for segment ${index}`, err);
-                // Don't block video regen if audio failed? Or throw?
-                // If the user explicitly asked for text change, we should probably throw.
                 throw new InternalServerErrorException(`Audio generation failed: ${err instanceof Error ? err.message : String(err)}`);
             }
         }

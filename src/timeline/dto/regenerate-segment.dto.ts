@@ -24,4 +24,8 @@ export class RegenerateSegmentDto {
     @IsOptional()
     @IsBoolean()
     regenerateVideo?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    regenerateAudio?: boolean;
 }
