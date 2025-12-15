@@ -138,10 +138,18 @@ def process_segment(segment, index, output_path, width, height, font_settings, i
         a = a.filter('apad').filter('atrim', duration=final_duration)
 
         # 3. SUBTITLES (Existing Logic Preserved)
+        # 3. SUBTITLES (Existing Logic Preserved)
         if text and include_subtitles:
             clean_text = re.sub(r'\[.*?\]', '', text).replace('--', ' ').replace('-', ' ')
             clean_text = re.sub(r'\s+', ' ', clean_text).strip()
             alignment = segment.get('alignment')
+
+            # Calculate Subtitle Scale Factor (match Audio Pipeline logic)
+            subtitle_scale = 1.0
+            if input_audio_duration > 0 and target_duration > 0:
+                 if abs(input_audio_duration - target_duration) > 0.1:
+                      subtitle_scale = target_duration / input_audio_duration
+                      print(f"Segment {index}: Scaling Subtitles by {subtitle_scale:.4f} (Input={input_audio_duration} -> Target={target_duration})", file=sys.stderr)
             
             font_path = font_settings.get('font')
             # Fallback if font missing
@@ -187,13 +195,15 @@ def process_segment(segment, index, output_path, width, height, font_settings, i
                             safe_word = current_word.strip().replace("'", "\\'").replace(":", "\\:")
                             dt = base_drawtext.copy()
                             dt['text'] = safe_word
+                            # Apply Scaling
                             dt['enable'] = f'between(t,{w_start},{w_end})'
                             v = v.drawtext(**dt)
                         current_word = ""
                         w_start = -1
                     else:
-                        if w_start == -1: w_start = starts[i]
-                        w_end = ends[i]
+                        if w_start == -1: 
+                            w_start = starts[i] * subtitle_scale
+                        w_end = ends[i] * subtitle_scale
                         current_word += char
                 
                 # Last word
@@ -275,10 +285,37 @@ def main():
 
     print(f"Stitching {len(segments)} segments...", file=sys.stderr)
 
-    for i, seg in enumerate(segments):
-        out_name = os.path.join(work_dir, f"seg_{session_id}_{i}.mp4")
-        process_segment(seg, i, out_name, W, H, font_settings, include_subtitles=not args.no_subtitles)
-        temp_files.append(out_name)
+    # Process Segments
+    # Pre-allocate list to maintain order
+    temp_files = [None] * len(segments) 
+    
+    import concurrent.futures
+    # Determine workers: use CPU count but cap at 4 to avoid OOM/Swap death on smaller instances
+    # Each worker spawns an ffmpeg process, so 4 workers = 4 ffmpeg processes.
+    max_workers = min(os.cpu_count() or 4, 4)
+    
+    print(f"Stitching {len(segments)} segments in parallel (Workers: {max_workers})...", file=sys.stderr)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_index = {}
+        for i, seg in enumerate(segments):
+            out_name = os.path.join(work_dir, f"seg_{session_id}_{i}.mp4")
+            future = executor.submit(process_segment, seg, i, out_name, W, H, font_settings, not args.no_subtitles)
+            future_to_index[future] = (i, out_name)
+
+        for future in concurrent.futures.as_completed(future_to_index):
+            i, out_name = future_to_index[future]
+            try:
+                future.result()
+                temp_files[i] = out_name
+                print(f"Segment {i} finished.", file=sys.stderr)
+            except Exception as exc:
+                print(f"Segment {i} generated an exception: {exc}", file=sys.stderr)
+                # Cancel remaining?
+                raise exc
+    
+    # Ensure no Nones (should be covered by exception raise above)
+    temp_files = [f for f in temp_files if f]
 
     # Concat
     list_path = os.path.join(work_dir, f"inputs_{session_id}.txt")

@@ -1706,8 +1706,10 @@ export class TimelineService {
         // 3. Rebuild Response (Read-Repair)
         const currentMetadata = (job.metadata as any) || {};
         const currentResponse = currentMetadata.response || {};
+        const beatTimes = currentMetadata.beatTimes || [];
 
-        const responseSegments = segments.map((s: any) => {
+        // Map DB segments to API response format (Raw Durations first)
+        let responseSegments = segments.map((s: any) => {
             const existingSeg = (currentResponse.segments || []).find((old: any) => old.index === s.index);
             return {
                 ...(existingSeg || {}), // Keep existing static props
@@ -1721,10 +1723,20 @@ export class TimelineService {
                 videoUrl: s.videoUrl,
                 status: s.status,
                 error: s.error,
-                duration: s.duration || 5.0,
-                versions: s.versions // [NEW] Pass versions to frontend
+                duration: s.duration || 5.0, // Start with Raw Audio Duration
+                versions: s.versions
             };
         });
+
+        // [FIX] Apply Beat Snapping to Preview
+        // This ensures the frontend sees the exact same durations that finalizeJob() will use.
+        if (beatTimes.length > 0) {
+            const aligned = this.calculateBeatAlignedSegments(responseSegments, beatTimes);
+            responseSegments = aligned.map(a => ({
+                ...a,
+                duration: a.targetDuration // Override with snapped duration
+            }));
+        }
 
         // Recalculate timings
         let currentTime = 0;

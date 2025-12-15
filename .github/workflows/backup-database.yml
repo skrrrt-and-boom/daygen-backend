@@ -32,6 +32,16 @@ jobs:
           timestamp=$(date +%Y%m%d_%H%M%S)
           backup_file="daygen_backup_${timestamp}.sql"
           
+          # 🛠️ FIX: Strip "pgbouncer=true" which causes "invalid URI query parameter" in psql/pg_dump
+          # This parameter is required for Prisma but causes standard libpq tools to fail.
+          # We remove it specifically for this backup script.
+          if [[ "$DATABASE_URL" == *"pgbouncer=true"* ]]; then
+             echo "⚠️ Removing 'pgbouncer=true' from connection string for psql/pg_dump compatibility..."
+             DATABASE_URL=${DATABASE_URL//\?pgbouncer=true/}
+             DATABASE_URL=${DATABASE_URL//&pgbouncer=true/}
+          fi
+
+          
           echo "🔄 Creating database backup..."
           echo "Backup file: ${backup_file}"
           
