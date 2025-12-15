@@ -32,13 +32,26 @@ jobs:
           timestamp=$(date +%Y%m%d_%H%M%S)
           backup_file="daygen_backup_${timestamp}.sql"
           
-          # 🛠️ FIX: Strip "pgbouncer=true" which causes "invalid URI query parameter" in psql/pg_dump
-          # This parameter is required for Prisma but causes standard libpq tools to fail.
-          # We remove it specifically for this backup script.
+          # 🛠️ FIX: Strip "pgbouncer=true" and "connection_limit" which cause "invalid URI query parameter" errors
+          # These parameters are for Prisma/Supavisor but cause standard libpq tools (psql, pg_dump) to fail.
+          # We remove them specifically for this backup script.
           if [[ "$DATABASE_URL" == *"pgbouncer=true"* ]]; then
-             echo "⚠️ Removing 'pgbouncer=true' from connection string for psql/pg_dump compatibility..."
+             echo "⚠️ Removing 'pgbouncer=true' from connection string..."
              DATABASE_URL=${DATABASE_URL//\?pgbouncer=true/}
              DATABASE_URL=${DATABASE_URL//&pgbouncer=true/}
+          fi
+          
+          if [[ "$DATABASE_URL" == *"connection_limit"* ]]; then
+             echo "⚠️ Removing 'connection_limit' from connection string..."
+             # Handle both ?connection_limit=X and &connection_limit=X
+             DATABASE_URL=$(echo "$DATABASE_URL" | sed -E 's/[\?&]connection_limit=[0-9]+//g')
+             # If the first param was removed, we might be left with a leading & which should be ? or removed if no other params
+             # A simple way ensuring valid URI is tricky with simple string replacement if we are strict, 
+             # but usually these are at the end.
+             
+             # Let's try a cleaner approach using sed to remove specific keys
+             # This removes parameter and value, handling ? or & prefix
+             DATABASE_URL=$(echo "$DATABASE_URL" | sed -E 's/[\?&]connection_limit=[^&]+//g')
           fi
 
           
