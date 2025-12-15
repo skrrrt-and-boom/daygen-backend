@@ -14,7 +14,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
-  ) {}
+  ) { }
 
   async createLocalUser(input: CreateLocalUserInput): Promise<PrismaUser> {
     const authUserId = randomUUID();
@@ -48,6 +48,7 @@ export class UsersService {
         displayName: true,
         credits: true,
         profileImage: true,
+        bio: true,
         role: true,
         createdAt: true,
         updatedAt: true,
@@ -98,13 +99,14 @@ export class UsersService {
 
   async updateProfile(
     authUserId: string,
-    patch: { displayName?: string | null; profileImage?: string | null },
+    patch: { displayName?: string | null; profileImage?: string | null; bio?: string | null },
   ): Promise<SanitizedUser> {
     const user = await this.prisma.user.update({
       where: { authUserId },
       data: {
         displayName: patch.displayName?.trim() || null,
         profileImage: patch.profileImage ?? null,
+        bio: patch.bio ?? null,
       },
     });
 
@@ -339,18 +341,19 @@ export class UsersService {
       displayName: user.displayName ?? null,
       credits: user.credits,
       profileImage: user.profileImage ?? null,
+      bio: (user as any).bio ?? null,
       role: user.role,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       subscription: user.subscription
         ? {
-            id: user.subscription.id,
-            status: user.subscription.status,
-            currentPeriodStart: user.subscription.currentPeriodStart,
-            currentPeriodEnd: user.subscription.currentPeriodEnd,
-            cancelAtPeriodEnd: user.subscription.cancelAtPeriodEnd,
-            createdAt: user.subscription.createdAt,
-          }
+          id: user.subscription.id,
+          status: user.subscription.status,
+          currentPeriodStart: user.subscription.currentPeriodStart,
+          currentPeriodEnd: user.subscription.currentPeriodEnd,
+          cancelAtPeriodEnd: user.subscription.cancelAtPeriodEnd,
+          createdAt: user.subscription.createdAt,
+        }
         : null,
     };
   }

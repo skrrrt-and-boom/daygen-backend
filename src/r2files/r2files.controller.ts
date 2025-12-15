@@ -16,6 +16,7 @@ import {
 import { R2FilesService } from './r2files.service';
 import type { CreateR2FileDto, UpdateR2FileDto } from './r2files.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
 
@@ -47,7 +48,7 @@ export class R2FilesController {
       const contentType = response.headers.get('content-type') || 'application/octet-stream';
       const buffer = Buffer.from(await response.arrayBuffer());
 
-      // Set CORS headers to allow clipboard access
+      // Set CORS headers to allow creating a blob from the response
       res.set({
         'Content-Type': contentType,
         'Access-Control-Allow-Origin': '*',
@@ -66,9 +67,11 @@ export class R2FilesController {
   }
 
   // Public endpoint to list all public generations for the Explore gallery
-  // No auth required - serves public content
+  // Optional auth to check for likes
+  @UseGuards(OptionalJwtAuthGuard)
   @Get('public')
   listPublic(
+    @CurrentUser() user: SanitizedUser | null,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
   ) {
@@ -76,7 +79,36 @@ export class R2FilesController {
     return this.r2FilesService.listPublic(
       parsedLimit,
       cursor ?? undefined,
+      user?.authUserId,
     );
+  }
+
+  // Public endpoint to list a specific user's public generations for creator profile modal
+  // Optional auth to check for likes
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('public/user/:userId')
+  listPublicByUser(
+    @CurrentUser() user: SanitizedUser | null,
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
+    return this.r2FilesService.listPublicByUser(
+      userId,
+      parsedLimit,
+      cursor ?? undefined,
+      user?.authUserId,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/toggle-like')
+  async toggleLike(
+    @CurrentUser() user: SanitizedUser,
+    @Param('id') id: string,
+  ) {
+    return this.r2FilesService.toggleLike(user.authUserId, id);
   }
 
   @UseGuards(JwtAuthGuard)

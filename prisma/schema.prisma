@@ -16,6 +16,7 @@ model User {
   displayName      String?
   credits          Int           @default(20)
   profileImage     String?
+  bio              String?
   updatedAt        DateTime      @updatedAt
   role             UserRole      @default(USER)
   stripeCustomerId String?       @unique
@@ -27,6 +28,7 @@ model User {
   voices           Voice[]
   avatars          Avatar[]
   products         Product[]
+  likes            Like[]
 }
 
 model Voice {
@@ -84,6 +86,21 @@ model R2File {
   @@index([ownerAuthId, createdAt(sort: Desc)])
   @@index([ownerAuthId, deletedAt])
   @@index([jobId])
+
+  likes Like[]
+}
+
+model Like {
+  id          String   @id @default(cuid())
+  r2FileId    String
+  userAuthId  String
+  createdAt   DateTime @default(now())
+
+  r2File      R2File   @relation(fields: [r2FileId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userAuthId], references: [authUserId], onDelete: Cascade)
+
+  @@unique([userAuthId, r2FileId])
+  @@index([r2FileId])
 }
 
 model Job {

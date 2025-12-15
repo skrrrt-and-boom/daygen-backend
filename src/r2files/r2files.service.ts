@@ -32,6 +32,7 @@ export interface R2FileResponse {
   productId?: string;
   jobId?: string;
   isLiked?: boolean;
+  likeCount?: number;
   isPublic?: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -47,6 +48,7 @@ export interface PublicR2FileResponse extends R2FileResponse {
   owner?: {
     displayName?: string;
     authUserId: string;
+    profileImage?: string;
   };
 }
 
@@ -58,9 +60,68 @@ export class R2FilesService {
   ) { }
 
   /**
+   * Toggle like status for a file
+   */
+  async toggleLike(userAuthId: string, fileId: string): Promise<{ isLiked: boolean; likeCount: number }> {
+    const existingLike = await this.prisma.like.findUnique({
+      where: {
+        userAuthId_r2FileId: {
+          userAuthId,
+          r2FileId: fileId,
+        },
+      },
+    });
+
+    if (existingLike) {
+      // Unlike
+      await this.prisma.like.delete({
+        where: { id: existingLike.id },
+      });
+      // Update the legacy isLiked flag on the file owner's record if the liker is the owner
+      const file = await this.prisma.r2File.findUnique({ where: { id: fileId } });
+      if (file && file.ownerAuthId === userAuthId) {
+        await this.prisma.r2File.update({
+          where: { id: fileId },
+          data: { isLiked: false },
+        });
+      }
+    } else {
+      // Like
+      await this.prisma.like.create({
+        data: {
+          userAuthId,
+          r2FileId: fileId,
+        },
+      });
+      // We do NOT update the R2File.isLiked field anymore, keeping private favorites separate from public likes.
+    }
+
+    const likeCount = await this.prisma.like.count({
+      where: { r2FileId: fileId },
+    });
+
+    return { isLiked: !existingLike, likeCount };
+  }
+
+  /**
+   * Check if a user has liked a file
+   */
+  async hasUserLiked(userAuthId: string, fileId: string): Promise<boolean> {
+    const like = await this.prisma.like.findUnique({
+      where: {
+        userAuthId_r2FileId: {
+          userAuthId,
+          r2FileId: fileId,
+        },
+      },
+    });
+    return !!like;
+  }
+
+  /**
    * List all public generations from all users for the Explore gallery
    */
-  async listPublic(limit = 50, cursor?: string): Promise<{
+  async listPublic(limit = 50, cursor?: string, viewerAuthId?: string): Promise<{
     items: PublicR2FileResponse[];
     totalCount: number;
     nextCursor: string | null;
@@ -74,12 +135,18 @@ export class R2FilesService {
 
     const fetchBatchSize = Math.min(take * 2, 200);
     const seenKeys = new Set<string>();
-    type R2FileWithOwner = Awaited<
+
+    // Type including likes for count
+    type R2FileWithRelations = Awaited<
       ReturnType<typeof this.prisma.r2File.findMany<{
-        include: { owner: { select: { displayName: true; authUserId: true } } };
+        include: {
+          owner: { select: { displayName: true; authUserId: true; profileImage: true } };
+          _count: { select: { likes: true } };
+        }
       }>>
     >[number];
-    const collected: R2FileWithOwner[] = [];
+
+    const collected: (R2FileWithRelations & { viewerHasLiked?: boolean })[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
 
@@ -105,6 +172,12 @@ export class R2FilesService {
             select: {
               displayName: true,
               authUserId: true,
+              profileImage: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
             },
           },
         },
@@ -119,7 +192,16 @@ export class R2FilesService {
         const dedupeKey = this.getDedupeKey(item);
         if (!seenKeys.has(dedupeKey)) {
           seenKeys.add(dedupeKey);
-          collected.push(item);
+
+          let viewerHasLiked = false;
+          if (viewerAuthId) {
+            const like = await this.prisma.like.findUnique({
+              where: { userAuthId_r2FileId: { userAuthId: viewerAuthId, r2FileId: item.id } }
+            });
+            viewerHasLiked = !!like;
+          }
+
+          collected.push({ ...item, viewerHasLiked });
         }
       }
 
@@ -142,9 +224,178 @@ export class R2FilesService {
     });
 
     return {
-      items: paginatedItems.map((item) => this.toPublicResponse(item)),
+      items: paginatedItems.map((item) => {
+        const likeCount = item._count.likes;
+        let isLiked = item.viewerHasLiked ?? false;
+
+        // Consistency check: A file cannot be liked by the viewer if total likes are 0
+        if (likeCount === 0 && isLiked) {
+          isLiked = false;
+        }
+
+        return {
+          ...this.toResponse(item),
+          likeCount,
+          isLiked, // Override isLiked with actual relationship status
+          owner: item.owner
+            ? {
+              displayName: item.owner.displayName ?? undefined,
+              authUserId: item.owner.authUserId,
+              profileImage: item.owner.profileImage ?? undefined,
+            }
+            : undefined,
+        };
+      }),
       totalCount: totalCountGroups.length,
       nextCursor,
+    };
+  }
+
+  /**
+   * List public generations for a specific user (for creator profile modal)
+   */
+  async listPublicByUser(userAuthId: string, limit = 50, cursor?: string, viewerAuthId?: string): Promise<{
+    items: PublicR2FileResponse[];
+    totalCount: number;
+    nextCursor: string | null;
+    user?: {
+      displayName?: string;
+      authUserId: string;
+      profileImage?: string;
+      bio?: string;
+    };
+  }> {
+    const take = Math.min(Math.max(limit, 1), 100);
+
+    // Get user info first
+    const user = await this.prisma.user.findUnique({
+      where: { authUserId: userAuthId },
+      select: {
+        displayName: true,
+        authUserId: true,
+        profileImage: true,
+        bio: true,
+      },
+    });
+
+    const where: Prisma.R2FileWhereInput = {
+      ownerAuthId: userAuthId,
+      isPublic: true,
+      deletedAt: null,
+    };
+
+    const fetchBatchSize = Math.min(take * 2, 200);
+    const seenKeys = new Set<string>();
+
+    type R2FileWithCount = Awaited<
+      ReturnType<typeof this.prisma.r2File.findMany<{
+        include: { _count: { select: { likes: true } } }
+      }>>
+    >[number];
+
+    const collected: (R2FileWithCount & { viewerHasLiked?: boolean })[] = [];
+    let pagingCursor = cursor ? new Date(cursor) : undefined;
+    let hasMore = true;
+
+    while (collected.length < take && hasMore) {
+      const batch = await this.prisma.r2File.findMany({
+        where: {
+          ...where,
+          ...(pagingCursor
+            ? {
+              createdAt: {
+                lt: pagingCursor,
+              },
+            }
+            : {}),
+        },
+        take: fetchBatchSize,
+        orderBy: [
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ],
+        include: {
+          _count: {
+            select: {
+              likes: true,
+            },
+          },
+        },
+      });
+
+      if (batch.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      for (const item of batch) {
+        const dedupeKey = this.getDedupeKey(item);
+        if (!seenKeys.has(dedupeKey)) {
+          seenKeys.add(dedupeKey);
+
+          let viewerHasLiked = false;
+          if (viewerAuthId) {
+            const like = await this.prisma.like.findUnique({
+              where: { userAuthId_r2FileId: { userAuthId: viewerAuthId, r2FileId: item.id } }
+            });
+            viewerHasLiked = !!like;
+          }
+
+          collected.push({ ...item, viewerHasLiked });
+        }
+      }
+
+      hasMore = batch.length === fetchBatchSize;
+      pagingCursor = batch[batch.length - 1]?.createdAt;
+    }
+
+    const paginatedItems = collected.slice(0, take);
+    const nextCursor =
+      (hasMore || collected.length > take) && paginatedItems.length > 0
+        ? paginatedItems[paginatedItems.length - 1].createdAt.toISOString()
+        : null;
+
+    const totalCountGroups = await this.prisma.r2File.groupBy({
+      where,
+      by: ['fileUrl'],
+      _count: {
+        _all: true,
+      },
+    });
+
+    return {
+      items: paginatedItems.map((item) => {
+        const likeCount = item._count.likes;
+        let isLiked = item.viewerHasLiked ?? false;
+
+        if (likeCount === 0 && isLiked) {
+          isLiked = false;
+        }
+
+        return {
+          ...this.toResponse(item),
+          likeCount,
+          isLiked,
+          owner: user
+            ? {
+              displayName: user.displayName ?? undefined,
+              authUserId: user.authUserId,
+              profileImage: user.profileImage ?? undefined,
+              bio: user.bio ?? undefined,
+            }
+            : undefined,
+        };
+      }),
+      totalCount: totalCountGroups.length,
+      nextCursor,
+      user: user
+        ? {
+          displayName: user.displayName ?? undefined,
+          authUserId: user.authUserId,
+          profileImage: user.profileImage ?? undefined,
+          bio: user.bio ?? undefined,
+        }
+        : undefined,
     };
   }
 
@@ -168,6 +419,7 @@ export class R2FilesService {
     owner?: {
       displayName?: string | null;
       authUserId: string;
+      profileImage?: string | null;
     } | null;
   }): PublicR2FileResponse {
     return {
@@ -176,6 +428,7 @@ export class R2FilesService {
         ? {
           displayName: file.owner.displayName ?? undefined,
           authUserId: file.owner.authUserId,
+          profileImage: file.owner.profileImage ?? undefined,
         }
         : undefined,
     };
