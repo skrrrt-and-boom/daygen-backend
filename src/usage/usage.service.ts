@@ -78,7 +78,7 @@ export class UsageService {
       // Write a lightweight usage event for audit and pagination
       await this.prisma.usageEvent.create({
         data: {
-          userAuthId: user.authUserId,
+          userId: user.authUserId,
           provider: event.provider,
           model: event.model ?? null,
           prompt: event.prompt ? event.prompt.slice(0, 4096) : null,
@@ -135,7 +135,7 @@ export class UsageService {
       // Create usage event with RESERVED status
       const usageEvent = await this.prisma.usageEvent.create({
         data: {
-          userAuthId: user.authUserId,
+          userId: user.authUserId,
           provider: event.provider,
           model: event.model ?? null,
           prompt: event.prompt ? event.prompt.slice(0, 4096) : null,
@@ -188,7 +188,7 @@ export class UsageService {
 
     // Refund credits
     await this.prisma.user.update({
-      where: { authUserId: event.userAuthId },
+      where: { authUserId: event.userId },
       data: { credits: { increment: event.cost } },
     });
 
@@ -206,14 +206,14 @@ export class UsageService {
   }
 
   async listEvents(params: {
-    userAuthId?: string;
+    userId?: string;
     limit?: number;
     cursor?: string;
   }) {
     const limit = Math.min(Math.max(params.limit ?? 25, 1), 100);
 
     const events = await this.prisma.usageEvent.findMany({
-      where: params.userAuthId ? { userAuthId: params.userAuthId } : undefined,
+      where: params.userId ? { userId: params.userId } : undefined,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       cursor: params.cursor ? { id: params.cursor } : undefined,
@@ -227,7 +227,7 @@ export class UsageService {
     return {
       items: items.map((event) => ({
         id: event.id,
-        userAuthId: event.userAuthId,
+        userId: event.userId,
         provider: event.provider,
         model: event.model,
         prompt: event.prompt,

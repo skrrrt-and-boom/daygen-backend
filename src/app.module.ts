@@ -21,6 +21,8 @@ import { CleanupService } from './cleanup/cleanup.service';
 import { AvatarsModule } from './avatars/avatars.module';
 import { ProductsModule } from './products/products.module';
 
+import { SweeperService } from './cron/sweeper.service';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -81,6 +83,6 @@ import { ProductsModule } from './products/products.module';
     ProductsModule,
   ],
   controllers: [AppController],
-  providers: [AppService, CleanupService],
+  providers: [AppService, CleanupService, SweeperService],
 })
 export class AppModule { }

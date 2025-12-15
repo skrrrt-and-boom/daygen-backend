@@ -22,7 +22,6 @@ export class UsersService {
 
     return this.prisma.user.create({
       data: {
-        id: authUserId, // Use authUserId as the primary key
         email: normalizedEmail,
         authUserId,
         displayName: input.displayName?.trim() || null,
@@ -42,7 +41,6 @@ export class UsersService {
     return this.prisma.user.findUnique({
       where: { email: normalizedEmail },
       select: {
-        id: true,
         authUserId: true,
         email: true,
         displayName: true,
@@ -57,8 +55,8 @@ export class UsersService {
     }) as Promise<PrismaUser | null>;
   }
 
-  async findById(id: string): Promise<PrismaUser> {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+  async findById(authUserId: string): Promise<PrismaUser> {
+    const user = await this.prisma.user.findUnique({ where: { authUserId } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -298,7 +296,6 @@ export class UsersService {
           where: { email: normalizedEmail },
           data: {
             ...updateData,
-            id: authUser.id,
             authUserId: authUser.id,
           },
         });
@@ -306,7 +303,6 @@ export class UsersService {
         // Create new user
         await this.prisma.user.create({
           data: {
-            id: authUser.id,
             authUserId: authUser.id,
             email: normalizedEmail,
             displayName: desiredDisplayName ?? null,
@@ -335,7 +331,7 @@ export class UsersService {
 
   toSanitizedUser(user: PrismaUser & { subscription?: any }): SanitizedUser {
     return {
-      id: user.id,
+      id: user.authUserId,
       authUserId: user.authUserId,
       email: normalizeEmailValue(user.email),
       displayName: user.displayName ?? null,

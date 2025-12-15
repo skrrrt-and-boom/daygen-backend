@@ -3,7 +3,7 @@ import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 export class UsageEventsQueryDto {
   @IsOptional()
   @IsString()
-  userAuthId?: string;
+  userId?: string;
 
   @IsOptional()
   @IsInt()

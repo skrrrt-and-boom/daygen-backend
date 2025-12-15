@@ -424,7 +424,6 @@ export class CloudTasksService {
     return this.prisma.user.findUnique({
       where: { authUserId },
       select: {
-        id: true,
         authUserId: true,
         email: true,
       },

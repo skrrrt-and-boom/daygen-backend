@@ -52,7 +52,7 @@ export interface PublicR2FileResponse extends R2FileResponse {
   };
 }
 
-@Injectable()
+@Injectable() // Correction: @Injectable proper usage
 export class R2FilesService {
   constructor(
     private readonly prisma: PrismaService,
@@ -62,60 +62,59 @@ export class R2FilesService {
   /**
    * Toggle like status for a file
    */
-  async toggleLike(userAuthId: string, fileId: string): Promise<{ isLiked: boolean; likeCount: number }> {
-    const existingLike = await this.prisma.like.findUnique({
-      where: {
-        userAuthId_r2FileId: {
-          userAuthId,
-          r2FileId: fileId,
-        },
-      },
+  async toggleLike(userId: string, fileId: string): Promise<{ isLiked: boolean; likeCount: number }> {
+    const file = await this.prisma.r2File.findUnique({
+      where: { id: fileId },
+      // explicit select is optional if we trust the type, but good for perf
+      select: { id: true, likedByAuthIds: true, likeCount: true }
     });
 
-    if (existingLike) {
-      // Unlike
-      await this.prisma.like.delete({
-        where: { id: existingLike.id },
-      });
-      // Update the legacy isLiked flag on the file owner's record if the liker is the owner
-      const file = await this.prisma.r2File.findUnique({ where: { id: fileId } });
-      if (file && file.ownerAuthId === userAuthId) {
-        await this.prisma.r2File.update({
-          where: { id: fileId },
-          data: { isLiked: false },
-        });
-      }
-    } else {
-      // Like
-      await this.prisma.like.create({
-        data: {
-          userAuthId,
-          r2FileId: fileId,
-        },
-      });
-      // We do NOT update the R2File.isLiked field anymore, keeping private favorites separate from public likes.
+    if (!file) {
+      throw new Error('File not found');
     }
 
-    const likeCount = await this.prisma.like.count({
-      where: { r2FileId: fileId },
-    });
+    const hasLiked = file.likedByAuthIds.includes(userId);
 
-    return { isLiked: !existingLike, likeCount };
+    if (hasLiked) {
+      // Unlike
+      const updated = await this.prisma.r2File.update({
+        where: { id: fileId },
+        data: {
+          likedByAuthIds: {
+            set: file.likedByAuthIds.filter(id => id !== userId)
+          },
+          likeCount: {
+            decrement: 1
+          },
+        }
+      });
+      return { isLiked: false, likeCount: updated.likeCount };
+    } else {
+      // Like
+      const updated = await this.prisma.r2File.update({
+        where: { id: fileId },
+        data: {
+          likedByAuthIds: {
+            push: userId
+          },
+          likeCount: {
+            increment: 1
+          },
+        }
+      });
+      return { isLiked: true, likeCount: updated.likeCount };
+    }
   }
 
   /**
    * Check if a user has liked a file
    */
-  async hasUserLiked(userAuthId: string, fileId: string): Promise<boolean> {
-    const like = await this.prisma.like.findUnique({
-      where: {
-        userAuthId_r2FileId: {
-          userAuthId,
-          r2FileId: fileId,
-        },
-      },
+  async hasUserLiked(userId: string, fileId: string): Promise<boolean> {
+    const file = await this.prisma.r2File.findUnique({
+      where: { id: fileId },
+      select: { likedByAuthIds: true }
     });
-    return !!like;
+    return file ? file.likedByAuthIds.includes(userId) : false;
   }
 
   /**
@@ -136,17 +135,16 @@ export class R2FilesService {
     const fetchBatchSize = Math.min(take * 2, 200);
     const seenKeys = new Set<string>();
 
-    // Type including likes for count
-    type R2FileWithRelations = Awaited<
+    // Type definition helper
+    type R2FileWithOwner = Awaited<
       ReturnType<typeof this.prisma.r2File.findMany<{
         include: {
           owner: { select: { displayName: true; authUserId: true; profileImage: true } };
-          _count: { select: { likes: true } };
         }
       }>>
     >[number];
 
-    const collected: (R2FileWithRelations & { viewerHasLiked?: boolean })[] = [];
+    const collected: (R2FileWithOwner & { viewerHasLiked?: boolean })[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
 
@@ -175,11 +173,6 @@ export class R2FilesService {
               profileImage: true,
             },
           },
-          _count: {
-            select: {
-              likes: true,
-            },
-          },
         },
       });
 
@@ -195,10 +188,7 @@ export class R2FilesService {
 
           let viewerHasLiked = false;
           if (viewerAuthId) {
-            const like = await this.prisma.like.findUnique({
-              where: { userAuthId_r2FileId: { userAuthId: viewerAuthId, r2FileId: item.id } }
-            });
-            viewerHasLiked = !!like;
+            viewerHasLiked = item.likedByAuthIds.includes(viewerAuthId);
           }
 
           collected.push({ ...item, viewerHasLiked });
@@ -225,10 +215,10 @@ export class R2FilesService {
 
     return {
       items: paginatedItems.map((item) => {
-        const likeCount = item._count.likes;
+        const likeCount = item.likeCount;
         let isLiked = item.viewerHasLiked ?? false;
 
-        // Consistency check: A file cannot be liked by the viewer if total likes are 0
+        // Consistency check
         if (likeCount === 0 && isLiked) {
           isLiked = false;
         }
@@ -236,7 +226,7 @@ export class R2FilesService {
         return {
           ...this.toResponse(item),
           likeCount,
-          isLiked, // Override isLiked with actual relationship status
+          isLiked,
           owner: item.owner
             ? {
               displayName: item.owner.displayName ?? undefined,
@@ -254,7 +244,7 @@ export class R2FilesService {
   /**
    * List public generations for a specific user (for creator profile modal)
    */
-  async listPublicByUser(userAuthId: string, limit = 50, cursor?: string, viewerAuthId?: string): Promise<{
+  async listPublicByUser(userId: string, limit = 50, cursor?: string, viewerAuthId?: string): Promise<{
     items: PublicR2FileResponse[];
     totalCount: number;
     nextCursor: string | null;
@@ -269,7 +259,7 @@ export class R2FilesService {
 
     // Get user info first
     const user = await this.prisma.user.findUnique({
-      where: { authUserId: userAuthId },
+      where: { authUserId: userId },
       select: {
         displayName: true,
         authUserId: true,
@@ -279,7 +269,7 @@ export class R2FilesService {
     });
 
     const where: Prisma.R2FileWhereInput = {
-      ownerAuthId: userAuthId,
+      userId: userId,
       isPublic: true,
       deletedAt: null,
     };
@@ -287,13 +277,7 @@ export class R2FilesService {
     const fetchBatchSize = Math.min(take * 2, 200);
     const seenKeys = new Set<string>();
 
-    type R2FileWithCount = Awaited<
-      ReturnType<typeof this.prisma.r2File.findMany<{
-        include: { _count: { select: { likes: true } } }
-      }>>
-    >[number];
-
-    const collected: (R2FileWithCount & { viewerHasLiked?: boolean })[] = [];
+    const collected: (Awaited<ReturnType<typeof this.prisma.r2File.findMany>>[number] & { viewerHasLiked?: boolean })[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
 
@@ -314,13 +298,6 @@ export class R2FilesService {
           { createdAt: 'desc' },
           { id: 'desc' },
         ],
-        include: {
-          _count: {
-            select: {
-              likes: true,
-            },
-          },
-        },
       });
 
       if (batch.length === 0) {
@@ -335,10 +312,7 @@ export class R2FilesService {
 
           let viewerHasLiked = false;
           if (viewerAuthId) {
-            const like = await this.prisma.like.findUnique({
-              where: { userAuthId_r2FileId: { userAuthId: viewerAuthId, r2FileId: item.id } }
-            });
-            viewerHasLiked = !!like;
+            viewerHasLiked = item.likedByAuthIds.includes(viewerAuthId);
           }
 
           collected.push({ ...item, viewerHasLiked });
@@ -365,7 +339,7 @@ export class R2FilesService {
 
     return {
       items: paginatedItems.map((item) => {
-        const likeCount = item._count.likes;
+        const likeCount = item.likeCount;
         let isLiked = item.viewerHasLiked ?? false;
 
         if (likeCount === 0 && isLiked) {
@@ -413,6 +387,8 @@ export class R2FilesService {
     productId?: string | null;
     jobId?: string | null;
     isLiked?: boolean | null;
+    likeCount?: number | null;
+    likedByAuthIds?: string[];
     isPublic?: boolean | null;
     createdAt: Date;
     updatedAt: Date;
@@ -434,11 +410,11 @@ export class R2FilesService {
     };
   }
 
-  async list(ownerAuthId: string, limit = 50, cursor?: string) {
+  async list(userId: string, limit = 50, cursor?: string) {
     const take = Math.min(Math.max(limit, 1), 100);
 
     const where: Prisma.R2FileWhereInput = {
-      ownerAuthId,
+      userId,
       deletedAt: null, // Only show non-deleted files
     };
 
@@ -508,7 +484,7 @@ export class R2FilesService {
     };
   }
 
-  async create(ownerAuthId: string, dto: CreateR2FileDto) {
+  async create(userId: string, dto: CreateR2FileDto) {
     // Validate that fileUrl is not a base64 data URL
     if (dto.fileUrl && this.r2Service.isBase64Url(dto.fileUrl)) {
       throw new Error(
@@ -526,7 +502,7 @@ export class R2FilesService {
     if (normalizedFileUrl) {
       const existing = await this.prisma.r2File.findFirst({
         where: {
-          ownerAuthId,
+          userId,
           fileUrl: normalizedFileUrl,
         },
       });
@@ -558,7 +534,7 @@ export class R2FilesService {
     const file = await this.prisma.r2File.create({
       data: {
         id: randomUUID(),
-        ownerAuthId,
+        userId,
         fileName: dto.fileName,
         fileUrl: normalizedFileUrl ?? dto.fileUrl,
         fileSize: dto.fileSize,
@@ -577,17 +553,17 @@ export class R2FilesService {
     return this.toResponse(file);
   }
 
-  async findById(ownerAuthId: string, id: string) {
+  async findById(userId: string, id: string) {
     const file = await this.prisma.r2File.findFirst({
-      where: { id, ownerAuthId, deletedAt: null },
+      where: { id, userId, deletedAt: null },
     });
 
     return file ? this.toResponse(file) : null;
   }
 
-  async update(ownerAuthId: string, id: string, dto: UpdateR2FileDto) {
+  async update(userId: string, id: string, dto: UpdateR2FileDto) {
     const file = await this.prisma.r2File.findFirst({
-      where: { id, ownerAuthId, deletedAt: null },
+      where: { id, userId, deletedAt: null },
     });
 
     if (!file) {
@@ -607,7 +583,7 @@ export class R2FilesService {
     return this.toResponse(updated);
   }
 
-  async updateByFileUrl(ownerAuthId: string, fileUrl: string, dto: UpdateR2FileDto) {
+  async updateByFileUrl(userId: string, fileUrl: string, dto: UpdateR2FileDto) {
     const normalized = fileUrl?.trim();
     if (!normalized) {
       throw new Error('fileUrl is required');
@@ -615,7 +591,7 @@ export class R2FilesService {
 
     const result = await this.prisma.r2File.updateMany({
       where: {
-        ownerAuthId,
+        userId,
         deletedAt: null,
         fileUrl: normalized,
       },
@@ -634,9 +610,9 @@ export class R2FilesService {
     return { success: true, count: result.count };
   }
 
-  async remove(ownerAuthId: string, id: string) {
+  async remove(userId: string, id: string) {
     const file = await this.prisma.r2File.findFirst({
-      where: { id, ownerAuthId, deletedAt: null }, // Only find non-deleted files
+      where: { id, userId, deletedAt: null }, // Only find non-deleted files
     });
 
     if (!file) {
@@ -648,7 +624,7 @@ export class R2FilesService {
 
     await this.prisma.r2File.updateMany({
       where: {
-        ownerAuthId,
+        userId,
         deletedAt: null,
         OR: [
           { id },
@@ -680,6 +656,7 @@ export class R2FilesService {
     productId?: string | null;
     jobId?: string | null;
     isLiked?: boolean | null;
+    likeCount?: number | null;
     isPublic?: boolean | null;
     createdAt: Date;
     updatedAt: Date;
@@ -698,6 +675,7 @@ export class R2FilesService {
       productId: file.productId ?? undefined,
       jobId: file.jobId ?? undefined,
       isLiked: file.isLiked ?? undefined,
+      likeCount: file.likeCount ?? 0,
       isPublic: file.isPublic ?? undefined,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt,

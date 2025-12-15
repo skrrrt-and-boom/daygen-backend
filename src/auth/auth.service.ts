@@ -21,7 +21,7 @@ export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
-  ) {}
+  ) { }
 
   signUp(): Promise<AuthResult> {
     // This method is deprecated - use Supabase Auth instead
@@ -55,7 +55,7 @@ export class AuthService {
 
     // Generate a password reset token
     const resetToken = await this.jwtService.signAsync(
-      { sub: user.id, type: 'password-reset' },
+      { sub: user.authUserId, type: 'password-reset' },
       { expiresIn: '1h' },
     );
 

@@ -194,7 +194,7 @@ export class TimelineService {
         }
     }
 
-    private async checkAndTriggerNextSegment(jobId: string, currentIndex: number, currentVideoUrl: string) {
+    public async checkAndTriggerNextSegment(jobId: string, currentIndex: number, currentVideoUrl: string) {
         const nextIndex = currentIndex + 1;
 
         // 1. Check if next segment exists and is pending/waiting
@@ -215,40 +215,48 @@ export class TimelineService {
         // BUT, we can infer it: if `imageUrl` is NULL and status is `pending`, it means it was skipped.
         // And if we are strictly implementing "last_frame", we should check if we can proceed.
 
-        if (nextSegment.status === 'pending' && !nextSegment.imageUrl) {
-            // It is likely waiting for the image.
+        if (nextSegment.status === 'pending') {
+            const config = nextSegment.config as any;
+            const visualSource = config?.visualSource;
 
-            // FIX: Immediately lock the segment status to prevent race conditions during long running frame extraction
-            await this.prisma.timelineSegment.update({
-                where: { jobId_index: { jobId, index: nextIndex } },
-                data: { status: 'generating' }
-            });
+            // Check if it's waiting for value (explicit state) OR if legacy inferred state (implicit)
+            const isWaitingForFrame = visualSource === 'last_frame' || (!visualSource && !nextSegment.imageUrl);
 
-            this.logger.log(`Segment ${nextIndex} appears to be waiting for continuity. Extracting last frame from Seg ${currentIndex}...`);
+            if (isWaitingForFrame && !nextSegment.imageUrl) {
+                // It is likely waiting for the image.
 
-            try {
-                const lastFrameUrl = await this.extractLastFrameFromVideo(currentVideoUrl, jobId, currentIndex);
-
-                // Update and Trigger Next
+                // FIX: Immediately lock the segment status to prevent race conditions during long running frame extraction
                 await this.prisma.timelineSegment.update({
                     where: { jobId_index: { jobId, index: nextIndex } },
-                    data: {
-                        imageUrl: lastFrameUrl,
-                        status: 'generating' // Trigger state (confirming)
-                    }
+                    data: { status: 'generating' }
                 });
 
-                await this._syncJobMetadata(jobId);
+                this.logger.log(`Segment ${nextIndex} waiting for continuity (Source: ${visualSource}). Extracting last frame from Seg ${currentIndex}...`);
 
-                // Trigger Video
-                await this._triggerVideoGeneration(jobId, nextIndex, nextSegment.visualPrompt, nextSegment.motionPrompt, lastFrameUrl);
+                try {
+                    const lastFrameUrl = await this.extractLastFrameFromVideo(currentVideoUrl, jobId, currentIndex);
 
-            } catch (e) {
-                this.logger.error(`Failed to handle continuity for segment ${nextIndex}`, e);
-                await this.prisma.timelineSegment.update({
-                    where: { jobId_index: { jobId, index: nextIndex } },
-                    data: { status: 'failed', error: `Continuity failure: ${e}` }
-                });
+                    // Update and Trigger Next
+                    await this.prisma.timelineSegment.update({
+                        where: { jobId_index: { jobId, index: nextIndex } },
+                        data: {
+                            imageUrl: lastFrameUrl,
+                            status: 'generating' // Trigger state (confirming)
+                        }
+                    });
+
+                    await this._syncJobMetadata(jobId);
+
+                    // Trigger Video
+                    await this._triggerVideoGeneration(jobId, nextIndex, nextSegment.visualPrompt, nextSegment.motionPrompt, lastFrameUrl);
+
+                } catch (e) {
+                    this.logger.error(`Failed to handle continuity for segment ${nextIndex}`, e);
+                    await this.prisma.timelineSegment.update({
+                        where: { jobId_index: { jobId, index: nextIndex } },
+                        data: { status: 'failed', error: `Continuity failure: ${e}` }
+                    });
+                }
             }
         }
     }
@@ -488,8 +496,9 @@ export class TimelineService {
         // 3. Visual Regeneration (Image)
         if (shouldRegenerateImage) {
             // Fetch User for Orchestrator
-            const user = await this.usersService.findById(job.userId);
-            if (!user) throw new InternalServerErrorException('User not found');
+            const rawUser = await this.usersService.findById(job.userId);
+            if (!rawUser) throw new InternalServerErrorException('User not found');
+            const user = this.usersService.toSanitizedUser(rawUser);
 
             try {
                 // Generate New Image
@@ -670,8 +679,9 @@ export class TimelineService {
     private async processTimelineGeneration(job: any, dto: GenerateTimelineDto) {
         try {
             // 0. Fetch User
-            const user = await this.usersService.findById(job.userId);
-            if (!user) throw new Error('User not found');
+            const rawUser = await this.usersService.findById(job.userId);
+            if (!rawUser) throw new Error('User not found');
+            const user = this.usersService.toSanitizedUser(rawUser);
 
             // Initialize current metadata state to avoid overwriting updates with stale job.metadata
             let currentMetadata = { ...job.metadata };
@@ -813,7 +823,11 @@ export class TimelineService {
                     visualPrompt: seg.visualPrompt,
                     motionPrompt: seg.visualPrompt,
                     status: 'pending',
-                    duration: seg.duration // Save beat-aligned duration
+                    duration: seg.duration, // Save beat-aligned duration
+                    config: {
+                        visualSource: seg.visual_source || (seg.fromPreviousScene ? 'last_frame' : 'generated'),
+                        motionPrompt: seg.motionPrompt
+                    }
                 }))
             });
 

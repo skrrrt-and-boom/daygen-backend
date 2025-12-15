@@ -13,9 +13,9 @@ function generateSlug(name: string): string {
 export class AvatarsService {
     constructor(private readonly prisma: PrismaService) { }
 
-    async findAll(ownerAuthId: string) {
+    async findAll(userId: string) {
         const avatars = await this.prisma.avatar.findMany({
-            where: { ownerAuthId, deletedAt: null },
+            where: { userId, deletedAt: null },
             include: { images: true },
             orderBy: { createdAt: 'desc' },
         });
@@ -23,9 +23,9 @@ export class AvatarsService {
         return avatars.map(avatar => this.toResponse(avatar));
     }
 
-    async findOne(ownerAuthId: string, id: string) {
+    async findOne(userId: string, id: string) {
         const avatar = await this.prisma.avatar.findFirst({
-            where: { id, ownerAuthId, deletedAt: null },
+            where: { id, userId, deletedAt: null },
             include: { images: true },
         });
 
@@ -36,7 +36,7 @@ export class AvatarsService {
         return this.toResponse(avatar);
     }
 
-    async create(ownerAuthId: string, dto: CreateAvatarDto) {
+    async create(userId: string, dto: CreateAvatarDto) {
         const baseSlug = generateSlug(dto.name);
 
         // Find unique slug
@@ -44,7 +44,7 @@ export class AvatarsService {
         let counter = 1;
         while (true) {
             const existing = await this.prisma.avatar.findUnique({
-                where: { ownerAuthId_slug: { ownerAuthId, slug } },
+                where: { userId_slug: { userId, slug } },
             });
             if (!existing) break;
             slug = `${baseSlug}-${counter}`;
@@ -53,7 +53,7 @@ export class AvatarsService {
 
         const avatar = await this.prisma.avatar.create({
             data: {
-                ownerAuthId,
+                userId,
                 name: dto.name,
                 slug,
                 imageUrl: dto.imageUrl,
@@ -63,7 +63,9 @@ export class AvatarsService {
                 images: dto.images?.length
                     ? {
                         create: dto.images.map((img, index) => ({
-                            url: img.url,
+                            fileUrl: img.url,
+                            fileName: img.url.split('/').pop() || 'avatar-image',
+                            userId,
                             source: img.source,
                             sourceId: img.sourceId,
                             isPrimary: img.isPrimary ?? index === 0,
@@ -71,7 +73,9 @@ export class AvatarsService {
                     }
                     : {
                         create: {
-                            url: dto.imageUrl,
+                            fileUrl: dto.imageUrl,
+                            fileName: dto.imageUrl.split('/').pop() || 'avatar-image',
+                            userId,
                             source: dto.source,
                             sourceId: dto.sourceId,
                             isPrimary: true,
@@ -84,9 +88,9 @@ export class AvatarsService {
         return this.toResponse(avatar);
     }
 
-    async update(ownerAuthId: string, id: string, dto: UpdateAvatarDto) {
+    async update(userId: string, id: string, dto: UpdateAvatarDto) {
         const avatar = await this.prisma.avatar.findFirst({
-            where: { id, ownerAuthId, deletedAt: null },
+            where: { id, userId, deletedAt: null },
         });
 
         if (!avatar) {
@@ -101,7 +105,7 @@ export class AvatarsService {
             let counter = 1;
             while (true) {
                 const existing = await this.prisma.avatar.findFirst({
-                    where: { ownerAuthId, slug, id: { not: id } },
+                    where: { userId, slug, id: { not: id } },
                 });
                 if (!existing) break;
                 slug = `${baseSlug}-${counter}`;
@@ -125,9 +129,9 @@ export class AvatarsService {
         return this.toResponse(updated);
     }
 
-    async delete(ownerAuthId: string, id: string) {
+    async delete(userId: string, id: string) {
         const avatar = await this.prisma.avatar.findFirst({
-            where: { id, ownerAuthId, deletedAt: null },
+            where: { id, userId, deletedAt: null },
         });
 
         if (!avatar) {
@@ -142,9 +146,9 @@ export class AvatarsService {
         return { success: true };
     }
 
-    async addImage(ownerAuthId: string, avatarId: string, dto: AddAvatarImageDto) {
+    async addImage(userId: string, avatarId: string, dto: AddAvatarImageDto) {
         const avatar = await this.prisma.avatar.findFirst({
-            where: { id: avatarId, ownerAuthId, deletedAt: null },
+            where: { id: avatarId, userId, deletedAt: null },
         });
 
         if (!avatar) {
@@ -153,16 +157,18 @@ export class AvatarsService {
 
         // If this is marked as primary, unmark others
         if (dto.isPrimary) {
-            await this.prisma.avatarImage.updateMany({
+            await this.prisma.r2File.updateMany({
                 where: { avatarId },
                 data: { isPrimary: false },
             });
         }
 
-        const image = await this.prisma.avatarImage.create({
+        const image = await this.prisma.r2File.create({
             data: {
                 avatarId,
-                url: dto.url,
+                fileUrl: dto.url,
+                fileName: dto.url.split('/').pop() || 'avatar-image',
+                userId, // We need userId here. It was passed to method.
                 source: dto.source,
                 sourceId: dto.sourceId,
                 isPrimary: dto.isPrimary ?? false,
@@ -180,9 +186,9 @@ export class AvatarsService {
         return image;
     }
 
-    async removeImage(ownerAuthId: string, avatarId: string, imageId: string) {
+    async removeImage(userId: string, avatarId: string, imageId: string) {
         const avatar = await this.prisma.avatar.findFirst({
-            where: { id: avatarId, ownerAuthId, deletedAt: null },
+            where: { id: avatarId, userId, deletedAt: null },
             include: { images: true },
         });
 
@@ -200,7 +206,7 @@ export class AvatarsService {
             throw new Error('Cannot delete the last image');
         }
 
-        await this.prisma.avatarImage.delete({
+        await this.prisma.r2File.delete({
             where: { id: imageId },
         });
 
@@ -208,13 +214,13 @@ export class AvatarsService {
         if (image.isPrimary) {
             const remaining = avatar.images.filter(img => img.id !== imageId);
             if (remaining.length > 0) {
-                await this.prisma.avatarImage.update({
+                await this.prisma.r2File.update({
                     where: { id: remaining[0].id },
                     data: { isPrimary: true },
                 });
                 await this.prisma.avatar.update({
                     where: { id: avatarId },
-                    data: { imageUrl: remaining[0].url },
+                    data: { imageUrl: remaining[0].fileUrl },
                 });
             }
         }
@@ -238,7 +244,7 @@ export class AvatarsService {
             primaryImageId: primaryImage?.id || null,
             images: avatar.images?.map((img: any) => ({
                 id: img.id,
-                url: img.url,
+                url: img.fileUrl,
                 source: img.source,
                 sourceId: img.sourceId,
                 createdAt: img.createdAt.toISOString(),

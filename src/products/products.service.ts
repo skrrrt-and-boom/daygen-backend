@@ -13,9 +13,9 @@ function generateSlug(name: string): string {
 export class ProductsService {
     constructor(private readonly prisma: PrismaService) { }
 
-    async findAll(ownerAuthId: string) {
+    async findAll(userId: string) {
         const products = await this.prisma.product.findMany({
-            where: { ownerAuthId, deletedAt: null },
+            where: { userId, deletedAt: null },
             include: { images: true },
             orderBy: { createdAt: 'desc' },
         });
@@ -23,9 +23,9 @@ export class ProductsService {
         return products.map(product => this.toResponse(product));
     }
 
-    async findOne(ownerAuthId: string, id: string) {
+    async findOne(userId: string, id: string) {
         const product = await this.prisma.product.findFirst({
-            where: { id, ownerAuthId, deletedAt: null },
+            where: { id, userId, deletedAt: null },
             include: { images: true },
         });
 
@@ -36,7 +36,7 @@ export class ProductsService {
         return this.toResponse(product);
     }
 
-    async create(ownerAuthId: string, dto: CreateProductDto) {
+    async create(userId: string, dto: CreateProductDto) {
         const baseSlug = generateSlug(dto.name);
 
         // Find unique slug
@@ -44,7 +44,7 @@ export class ProductsService {
         let counter = 1;
         while (true) {
             const existing = await this.prisma.product.findUnique({
-                where: { ownerAuthId_slug: { ownerAuthId, slug } },
+                where: { userId_slug: { userId, slug } },
             });
             if (!existing) break;
             slug = `${baseSlug}-${counter}`;
@@ -53,7 +53,7 @@ export class ProductsService {
 
         const product = await this.prisma.product.create({
             data: {
-                ownerAuthId,
+                userId,
                 name: dto.name,
                 slug,
                 imageUrl: dto.imageUrl,
@@ -63,7 +63,9 @@ export class ProductsService {
                 images: dto.images?.length
                     ? {
                         create: dto.images.map((img, index) => ({
-                            url: img.url,
+                            fileUrl: img.url,
+                            fileName: img.url.split('/').pop() || 'product-image',
+                            userId,
                             source: img.source,
                             sourceId: img.sourceId,
                             isPrimary: img.isPrimary ?? index === 0,
@@ -71,7 +73,9 @@ export class ProductsService {
                     }
                     : {
                         create: {
-                            url: dto.imageUrl,
+                            fileUrl: dto.imageUrl,
+                            fileName: dto.imageUrl.split('/').pop() || 'product-image',
+                            userId,
                             source: dto.source,
                             sourceId: dto.sourceId,
                             isPrimary: true,
@@ -84,9 +88,9 @@ export class ProductsService {
         return this.toResponse(product);
     }
 
-    async update(ownerAuthId: string, id: string, dto: UpdateProductDto) {
+    async update(userId: string, id: string, dto: UpdateProductDto) {
         const product = await this.prisma.product.findFirst({
-            where: { id, ownerAuthId, deletedAt: null },
+            where: { id, userId, deletedAt: null },
         });
 
         if (!product) {
@@ -101,7 +105,7 @@ export class ProductsService {
             let counter = 1;
             while (true) {
                 const existing = await this.prisma.product.findFirst({
-                    where: { ownerAuthId, slug, id: { not: id } },
+                    where: { userId, slug, id: { not: id } },
                 });
                 if (!existing) break;
                 slug = `${baseSlug}-${counter}`;
@@ -125,9 +129,9 @@ export class ProductsService {
         return this.toResponse(updated);
     }
 
-    async delete(ownerAuthId: string, id: string) {
+    async delete(userId: string, id: string) {
         const product = await this.prisma.product.findFirst({
-            where: { id, ownerAuthId, deletedAt: null },
+            where: { id, userId, deletedAt: null },
         });
 
         if (!product) {
@@ -142,9 +146,9 @@ export class ProductsService {
         return { success: true };
     }
 
-    async addImage(ownerAuthId: string, productId: string, dto: AddProductImageDto) {
+    async addImage(userId: string, productId: string, dto: AddProductImageDto) {
         const product = await this.prisma.product.findFirst({
-            where: { id: productId, ownerAuthId, deletedAt: null },
+            where: { id: productId, userId, deletedAt: null },
         });
 
         if (!product) {
@@ -153,16 +157,18 @@ export class ProductsService {
 
         // If this is marked as primary, unmark others
         if (dto.isPrimary) {
-            await this.prisma.productImage.updateMany({
+            await this.prisma.r2File.updateMany({
                 where: { productId },
                 data: { isPrimary: false },
             });
         }
 
-        const image = await this.prisma.productImage.create({
+        const image = await this.prisma.r2File.create({
             data: {
                 productId,
-                url: dto.url,
+                fileUrl: dto.url,
+                fileName: dto.url.split('/').pop() || 'product-image',
+                userId, // Need to make sure userId is passed.
                 source: dto.source,
                 sourceId: dto.sourceId,
                 isPrimary: dto.isPrimary ?? false,
@@ -180,9 +186,9 @@ export class ProductsService {
         return image;
     }
 
-    async removeImage(ownerAuthId: string, productId: string, imageId: string) {
+    async removeImage(userId: string, productId: string, imageId: string) {
         const product = await this.prisma.product.findFirst({
-            where: { id: productId, ownerAuthId, deletedAt: null },
+            where: { id: productId, userId, deletedAt: null },
             include: { images: true },
         });
 
@@ -200,7 +206,7 @@ export class ProductsService {
             throw new Error('Cannot delete the last image');
         }
 
-        await this.prisma.productImage.delete({
+        await this.prisma.r2File.delete({
             where: { id: imageId },
         });
 
@@ -208,13 +214,13 @@ export class ProductsService {
         if (image.isPrimary) {
             const remaining = product.images.filter(img => img.id !== imageId);
             if (remaining.length > 0) {
-                await this.prisma.productImage.update({
+                await this.prisma.r2File.update({
                     where: { id: remaining[0].id },
                     data: { isPrimary: true },
                 });
                 await this.prisma.product.update({
                     where: { id: productId },
-                    data: { imageUrl: remaining[0].url },
+                    data: { imageUrl: remaining[0].fileUrl },
                 });
             }
         }
@@ -238,7 +244,7 @@ export class ProductsService {
             primaryImageId: primaryImage?.id || null,
             images: product.images?.map((img: any) => ({
                 id: img.id,
-                url: img.url,
+                url: img.fileUrl,
                 source: img.source,
                 sourceId: img.sourceId,
                 createdAt: img.createdAt.toISOString(),
