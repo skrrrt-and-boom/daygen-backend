@@ -22,7 +22,8 @@ def test_stitch():
     manifest = [{
         "video": os.path.abspath("dummy_video.mp4"),
         "audio": os.path.abspath("dummy_audio.mp4"),
-        "text": "Hello World Test"
+        "text": "Hello World Test",
+        "duration": 2.0
     }]
     
     with open("test_manifest.json", "w") as f:

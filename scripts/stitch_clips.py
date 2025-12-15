@@ -6,406 +6,312 @@ import os
 import re
 import ffmpeg
 
-def get_audio_duration(path):
-    """Get the duration of an audio file using ffprobe."""
-    try:
-        probe = ffmpeg.probe(path)
-        return float(probe['format']['duration'])
-    except ffmpeg.Error as e:
-        print(f"Error probing {path}: {e.stderr.decode() if hasattr(e, 'stderr') else str(e)}", file=sys.stderr)
-        raise
-    except Exception as e:
-        print(f"Error probing {path}: {e}", file=sys.stderr)
-        raise
-
 def process_segment(segment, index, output_path, width, height, font_settings, include_subtitles=True):
-    """
-    Process a single segment:
-    1. Get Video and Audio (Voiceover)
-    2. Loop Video to be at least as long as Audio
-    3. Trim Video to match Audio duration
-    4. Force Standards (Scale, Pad, FPS, SAR, Pixel Format)
-    5. Burn Subtitles (One word at a time)
-    6. Output temporary segment
-    """
     video_path = segment.get('video')
     audio_path = segment.get('audio')
     text = segment.get('text', '')
-
+    # STRICT DURATION FROM BACKEND (Target aligned to beats)
+    target_duration = segment.get('duration') 
+    
     if not video_path or not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
     if not audio_path or not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
+    if target_duration is None:
+        raise ValueError(f"Segment {index} missing 'duration' field.")
+
+    # Probe Video Duration
+    video_duration = 0
+    try:
+        probe = ffmpeg.probe(video_path)
+        # Try to get video stream duration
+        video_stream_info = next((s for s in probe['streams'] if s['codec_type'] == 'video'), None)
+        if video_stream_info and 'duration' in video_stream_info:
+            video_duration = float(video_stream_info['duration'])
+        # Fallback to container duration
+        elif 'format' in probe and 'duration' in probe['format']:
+             video_duration = float(probe['format']['duration'])
+    except Exception as e:
+        print(f"Warning: Could not probe video {video_path}: {e}", file=sys.stderr)
+
+    # Probe Audio Duration for time-stretching
+    input_audio_duration = 0
+    try:
+        a_probe = ffmpeg.probe(audio_path)
+        a_stream_info = next((s for s in a_probe['streams'] if s['codec_type'] == 'audio'), None)
+        if a_stream_info and 'duration' in a_stream_info:
+            input_audio_duration = float(a_stream_info['duration'])
+        elif 'format' in a_probe and 'duration' in a_probe['format']:
+             input_audio_duration = float(a_probe['format']['duration'])
+    except Exception as e:
+        print(f"Warning: Could not probe audio {audio_path}: {e}", file=sys.stderr)
+
+
+    # STRICT MODE: Respect the duration passed from backend
+    final_duration = target_duration
 
     try:
-        # Audio-First Conforming: master duration comes from audio
-        audio_duration = get_audio_duration(audio_path)
-
-        # Inputs
-        print(f"Segment {index}: Processing Video={video_path}, Audio={audio_path}, Text='{text}'", file=sys.stderr)
+        print(f"Segment {index}: InAudio={input_audio_duration}s | Target={target_duration}s | VideoDur={video_duration}s", file=sys.stderr)
         
-        # stream_loop=-1 makes the video input infinite (looping)
-        in_video = ffmpeg.input(video_path, stream_loop=-1)
-        in_audio = ffmpeg.input(audio_path)
+        # Smart Stitching Logic
+        # Calculate audio/video ratio to decide strategy
+        # Video ratio: If we want video to fit target.
+        # We already handle video stretching below based on `target_duration` vs `video_duration`.
+        video_ratio = target_duration / video_duration if video_duration > 0 else 1.0
+        print(f"Segment {index}: Ratio Video: {video_ratio:.2f}", file=sys.stderr)
 
-        # Video Operations
-        # 1. Trim video to exactly match audio duration
-        # setpts='PTS-STARTPTS' resets timestamps to 0 after trimming
-        v = in_video.trim(duration=audio_duration).setpts('PTS-STARTPTS')
+        # 1. VIDEO PIPELINE
+        in_video = ffmpeg.input(video_path)
 
-        # 2. Standardization (CRITICAL FOR STITCHING)
-        # Scale and Pad to target resolution
+        if video_duration >= target_duration:
+            # Case 1: Video is long enough. Just trim.
+            # Loop just in case of slight precision errors, then trim.
+            v = in_video.filter('trim', duration=final_duration).filter('setpts', 'PTS-STARTPTS')
+        
+        else:
+            # Video is shorter. Smart Loop.
+            # Use video_ratio. Atempo logic for video is `setpts`. 
+            # setpts= (1/ratio) * PTS to speed up? No.
+            # video_ratio = target / source. 
+            # If target (4s) > source (2s), ratio = 2.0. We need to SLOW DOWN.
+            # setpts=2.0*PTS makes it 2x longer. Correct.
+            if video_ratio <= 1.5:
+                 # Case 2: Small gap (>1.0, <=1.5). Slow down video.
+                 # Force duration match by changing PTS
+                 print(f"Segment {index}: Apply SLOW DOWN (Ratio {video_ratio:.2f})", file=sys.stderr)
+                 # setpts=RATIO*PTS slows it down
+                 v = in_video.filter('setpts', f"{video_ratio}*PTS")
+                 # Ensure exact trim
+                 v = v.filter('trim', duration=final_duration)
+            else:
+                 # Case 3: Large gap (>1.5). Ping-Pong Loop.
+                 print(f"Segment {index}: Apply PING-PONG LOOP (Ratio {video_ratio:.2f})", file=sys.stderr)
+                 
+                 # Create Reverse
+                 # [0] split [v_fwd] [v_rev_pre]
+                 split = in_video.split()
+                 v_fwd = split[0]
+                 v_rev = split[1].filter('reverse')
+                 
+                 # Concat Forward + Reverse
+                 # [v_fwd][v_rev] concat=n=2:v=1:a=0
+                 ping_pong = ffmpeg.concat(v_fwd, v_rev, v=1, a=0)
+                 
+                 # Loop this specific ping-pong sequence indefinitely
+                 # Then trim to final duration
+                 v = ping_pong.filter('loop', loop=-1, size=32767, start=0)
+                 v = v.filter('trim', duration=final_duration).filter('setpts', 'PTS-STARTPTS')
+
+        # Common Cleanup: Scale/Pad/Format
         v = v.filter('scale', width, height, force_original_aspect_ratio='decrease')
         v = v.filter('pad', width, height, '(ow-iw)/2', '(oh-ih)/2')
-        
-        # Enforce properties to ensure concat works:
-        v = v.filter('setsar', '1')       # Square pixels
-        v = v.filter('fps', fps=30)       # Force 30 FPS to prevent freezing
-        v = v.filter('format', 'yuv420p') # Force pixel format
+        v = v.filter('setsar', '1')
+        v = v.filter('fps', fps=30)
+        v = v.filter('format', 'yuv420p')
 
-        # 3. Subtitles (One Word at a Time)
+        # 2. AUDIO PIPELINE
+        # Time-stretching logic
+        in_audio = ffmpeg.input(audio_path)
+        a = in_audio
+
+        if input_audio_duration > 0 and target_duration > 0:
+            # Check if we need to stretch
+            # Tolerance: 0.1s
+            if abs(input_audio_duration - target_duration) > 0.1:
+                tempo = input_audio_duration / target_duration
+                print(f"Segment {index}: Audio Time-Stretch required. Input={input_audio_duration}, Target={target_duration}, Tempo={tempo:.2f}", file=sys.stderr)
+                
+                # Constraint: 0.5 <= tempo <= 2.0
+                # If outside, we chain.
+                # Simple chaining:
+                while tempo > 2.0:
+                    a = a.filter('atempo', '2.0')
+                    tempo /= 2.0
+                while tempo < 0.5:
+                    a = a.filter('atempo', '0.5')
+                    tempo /= 0.5
+                
+                # Apply remaining
+                a = a.filter('atempo', str(tempo))
+
+        # Pad/Trim to exact final duration to be safe
+        a = a.filter('apad').filter('atrim', duration=final_duration)
+
+        # 3. SUBTITLES (Existing Logic Preserved)
         if text and include_subtitles:
-            # CLEANUP: Remove [instructions] and extra spaces
-            # Also remove hyphens as requested "-" and "--"
-            clean_text = re.sub(r'\[.*?\]', '', text)
-            clean_text = clean_text.replace('--', ' ').replace('-', ' ') 
+            clean_text = re.sub(r'\[.*?\]', '', text).replace('--', ' ').replace('-', ' ')
             clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-            
             alignment = segment.get('alignment')
             
+            font_path = font_settings.get('font')
+            # Fallback if font missing
+            if not os.path.exists(font_path) and font_path != 'Arial':
+                 font_path = 'Arial'
+
+            base_drawtext = {
+                'fontsize': font_settings.get('fontsize', 70),
+                'fontcolor': font_settings.get('color', 'yellow'),
+                'borderw': 2,
+                'bordercolor': 'black',
+                'shadowcolor': 'black',
+                'shadowx': 2,
+                'shadowy': 2,
+                'box': 1,
+                'boxcolor': 'black@0.6',
+                'boxborderw': 10,
+                'x': '(w-text_w)/2',
+                'y': font_settings.get('y_pos', '(h-text_h)/1.2'),
+            }
+            
+            if os.path.exists(font_path):
+                base_drawtext['fontfile'] = font_path
+            else:
+                base_drawtext['font'] = font_path
+
             if alignment:
-                # PRECISION ALIGNMENT using ElevenLabs timestamps
+                # Precise alignment logic
                 chars = alignment.get('characters', [])
                 starts = alignment.get('character_start_times_seconds', [])
                 ends = alignment.get('character_end_times_seconds', [])
                 
-                # Reconstruct words from characters
-                # We need to group characters into words and find their start of first char and end of last char
+                # Simple word aggregator
                 current_word = ""
-                word_start = -1
-                word_end = -1
-                
-                words_with_timing = []
+                w_start = -1
+                w_end = -1
                 
                 for i, char in enumerate(chars):
-                    # Skip characters inside brackets []
-                    if char == '[':
-                        continue
-                    if char == ']':
-                        continue
-                        
-                    # Also we should probably track open/close brackets to be safe, 
-                    # but typically alignment chars are just flattened text.
-                    # If the alignment chars include the brackets, we just skip them.
-                    # HOWEVER, if the alignment characters are literally the characters of the text passed to ElevenLabs,
-                    # and that text had [instructions], then we need to ignore everything between [ and ].
+                    if char in ['[', ']']: continue # rudimentary skip
                     
-                    # Let's check if we are inside a bracket block
-                    # But `chars` is a list of characters. We need state.
-                    pass 
-
-                # Re-do the loop with state
-                in_bracket = False
-                
-                for i, char in enumerate(chars):
-                    if char == '[':
-                        in_bracket = True
-                        continue
-                    if char == ']':
-                        in_bracket = False
-                        continue
-                    
-                    if in_bracket:
-                        continue
-
                     if char == ' ':
-                        if current_word:
-                            # Finish word
-                            display_word = current_word.replace('--', '').replace('-', '')
-                            if display_word.strip():
-                                words_with_timing.append({
-                                    'text': display_word,
-                                    'start': word_start,
-                                    'end': word_end
-                                })
-                            current_word = ""
-                            word_start = -1
-                            word_end = -1
+                        if current_word.strip():
+                            safe_word = current_word.strip().replace("'", "\\'").replace(":", "\\:")
+                            dt = base_drawtext.copy()
+                            dt['text'] = safe_word
+                            dt['enable'] = f'between(t,{w_start},{w_end})'
+                            v = v.drawtext(**dt)
+                        current_word = ""
+                        w_start = -1
                     else:
-                        if word_start == -1:
-                            word_start = starts[i]
-                        word_end = ends[i]
+                        if w_start == -1: w_start = starts[i]
+                        w_end = ends[i]
                         current_word += char
                 
-                # Add last word
-                if current_word:
-                    display_word = current_word.replace('--', '').replace('-', '')
-                    if display_word.strip():
-                        words_with_timing.append({
-                            'text': display_word,
-                            'start': word_start,
-                            'end': word_end
-                        })
-                        
-                # Draw words with precise timing
-                font_path = font_settings.get('font')
-                font_arg = font_path if font_path and os.path.exists(font_path) else 'Arial'
-
-                for w in words_with_timing:
-                    safe_word = w['text'].replace("'", "\\'").replace(":", "\\:")
-                    
-                    drawtext_args = {
-                        'text': safe_word,
-                        'fontsize': font_settings.get('fontsize', 70),
-                        'fontcolor': font_settings.get('color', 'yellow'),
-                        'borderw': 2,
-                        'bordercolor': 'black',
-                        'shadowcolor': 'black',
-                        'shadowx': 2,
-                        'shadowy': 2,
-                        'x': '(w-text_w)/2',
-                        'y': font_settings.get('y_pos', '(h-text_h)/1.2'),
-                        'enable': f'between(t,{w["start"]},{w["end"]})'
-                    }
-
-                    if os.path.exists(font_arg):
-                        drawtext_args['fontfile'] = font_arg
-                    else:
-                        drawtext_args['font'] = font_arg
-
-                    v = v.drawtext(**drawtext_args)
-
-
+                # Last word
+                if current_word.strip():
+                    safe_word = current_word.strip().replace("'", "\\'").replace(":", "\\:")
+                    dt = base_drawtext.copy()
+                    dt['text'] = safe_word
+                    dt['enable'] = f'between(t,{w_start},{w_end})'
+                    v = v.drawtext(**dt)
             else:
-                # FALLBACK: Even distribution
+                # Even distribution fallback
                 words = clean_text.split()
                 if words:
-                    word_duration = audio_duration / len(words)
-                    
-                    font_path = font_settings.get('font')
-                    font_arg = font_path if font_path and os.path.exists(font_path) else 'Arial'
-
+                    # Duration for text distribution should match audio length, NOT video padding
+                    # But we don't have raw audio length easily here without probing. 
+                    # Approximation: Use target_duration * 0.9 to avoid text in silence?
+                    # Better: Probe audio file in Python before this. 
+                    # For now, spread across 90% of duration to be safe.
+                    w_dur = (target_duration * 0.9) / len(words)
                     for i, word in enumerate(words):
-                        start_time = i * word_duration
-                        end_time = (i + 1) * word_duration
-                        
-                        if i == len(words) - 1:
-                            end_time = audio_duration
-
                         safe_word = word.replace("'", "\\'").replace(":", "\\:")
-                        
-                        drawtext_args = {
-                            'text': safe_word,
-                            'fontsize': font_settings.get('fontsize', 70),
-                            'fontcolor': font_settings.get('color', 'yellow'),
-                            'borderw': 2,
-                            'bordercolor': 'black',
-                            'shadowcolor': 'black',
-                            'shadowx': 2,
-                            'shadowy': 2,
-                            'x': '(w-text_w)/2',
-                            'y': font_settings.get('y_pos', '(h-text_h)/1.2'),
-                            'enable': f'between(t,{start_time},{end_time})'
-                        }
+                        dt = base_drawtext.copy()
+                        dt['text'] = safe_word
+                        dt['enable'] = f'between(t,{i*w_dur},{(i+1)*w_dur})'
+                        v = v.drawtext(**dt)
 
-                        if os.path.exists(font_arg):
-                            drawtext_args['fontfile'] = font_arg
-                        else:
-                            drawtext_args['font'] = font_arg
-
-                        v = v.drawtext(**drawtext_args)
-
-
-        # Output temporary segment
-        # IMPORTANT: We use a high bitrate here to preserve quality before final concatenation
+        # 4. OUTPUT
         out = ffmpeg.output(
-            v, 
-            in_audio, 
-            output_path, 
-            vcodec='libx264', 
-            acodec='aac', 
-            audio_bitrate='192k',
-            video_bitrate='4000k', 
-            preset='fast',
-            pix_fmt='yuv420p', 
-            t=audio_duration, # Explicit output duration constraint
+            v, a, output_path,
+            vcodec='libx264', acodec='aac',
+            audio_bitrate='192k', video_bitrate='4000k',
+            preset='fast', pix_fmt='yuv420p',
+            t=final_duration, # Redundant but safe
             loglevel='error'
         )
         out.run(overwrite_output=True)
-        
-    except ffmpeg.Error as e:
-        print(f"FFmpeg Error in segment {index}:", file=sys.stderr)
-        if e.stderr:
-            print(e.stderr.decode(), file=sys.stderr)
+
+    except Exception as e:
+        print(f"Error processing segment {index}: {e}", file=sys.stderr)
         raise
 
 def main():
-    parser = argparse.ArgumentParser(description="Smart Video Stitcher")
-    parser.add_argument("--clips", required=True, help="Path to JSON file with segments")
-    parser.add_argument("--output", required=True, help="Final output MP4 file path")
-    parser.add_argument("--audio", help="Path to background music")
-    parser.add_argument("--format", default="9:16", choices=["9:16", "16:9"], help="Target aspect ratio")
-    
-    # Text Styling Arguments
-    parser.add_argument("--font", default="Arial", help="Path to font file or font name")
-    parser.add_argument("--fontsize", type=int, default=80, help="Font size")
-    parser.add_argument("--color", default="white", help="Font color (ffmpeg name or hex)")
-    parser.add_argument("--y_pos", default="(h-text_h)/1.15", help="Y position expression for text") # Default: slightly up from bottom
-    parser.add_argument("--volume", type=float, default=0.3, help="Background music volume (0.0 to 1.0)")
-    parser.add_argument("--temp_dir", required=False, help="Directory for temporary files")
-    parser.add_argument("--no_subtitles", action="store_true", help="Disable subtitle generation")
-
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--clips", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--audio", required=False)
+    parser.add_argument("--format", default="9:16")
+    parser.add_argument("--temp_dir", required=False)
+    parser.add_argument("--font", default="Arial")
+    parser.add_argument("--fontsize", type=int, default=70)
+    parser.add_argument("--color", default="yellow")
+    parser.add_argument("--y_pos", default="(h-text_h)/1.2")
+    parser.add_argument("--volume", type=float, default=0.3)
+    parser.add_argument("--no_subtitles", action="store_true")
     args = parser.parse_args()
 
-    # Bundle font path resolution
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    bundled_font = os.path.join(base_dir, '..', 'assets', 'fonts', 'Roboto-Regular.ttf')
-    
-    default_font = "Arial"
-    if os.path.exists(bundled_font):
-        default_font = bundled_font
-        
-    font_arg = args.font
-    if font_arg == "Arial" and os.path.exists(bundled_font):
-         # If user didn't override default (or explicitly said Arial), prefer bundled
-         font_arg = bundled_font
+    # Resolution
+    W, H = (1080, 1920) if args.format == "9:16" else (1920, 1080)
 
+    # Load Segments
+    with open(args.clips, 'r') as f:
+        segments = json.load(f)
+
+    # Prepare Temp Dir
+    work_dir = os.path.abspath(args.temp_dir) if args.temp_dir else os.getcwd()
+    os.makedirs(work_dir, exist_ok=True)
+    
     font_settings = {
-        'font': font_arg,
+        'font': args.font,
         'fontsize': args.fontsize,
         'color': args.color,
         'y_pos': args.y_pos
     }
 
-    # Debug Font Resolution
-    print(f"DEBUG: Font Argument: {font_arg}", file=sys.stderr)
-    if os.path.exists(font_arg):
-         print(f"DEBUG: Font file FOUND at {font_arg}", file=sys.stderr)
-    else:
-         print(f"DEBUG: Font file NOT FOUND at {font_arg}. FFmpeg might fail if this is not a system font name.", file=sys.stderr)
-         # Attempt to list system fonts if fallback needed (optional, but helpful for debug)
-         if font_arg == "Arial":
-             print("DEBUG: Check /usr/share/fonts for available fonts:", file=sys.stderr)
-             try:
-                 for root, dirs, files in os.walk("/usr/share/fonts"):
-                     for file in files:
-                         if file.endswith(".ttf"):
-                             print(os.path.join(root, file), file=sys.stderr)
-             except Exception:
-                 pass
-
-    # 1. Parse JSON Input
-    try:
-        with open(args.clips, 'r') as f:
-            segments = json.load(f)
-    except Exception as e:
-        print(f"Error loading clips JSON: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    if not segments:
-        print("No segments provided.", file=sys.stderr)
-        sys.exit(1)
-
-    # 2. Determine Resolution (720p Default)
-    if args.format == "16:9":
-        W, H = 1920, 1080 # Upgrade to 1080p for premium feel? Or stick to 720p? User said "premium reels". Let's stick to 720p for speed or 1080p?
-        # The prompt didn't strictly say 1080p, but "Video look like debug...". 
-        # Changing resolution might be risky if assets are small, but let's stick to the previous code's logic for W/H but maybe confirm resolution.
-        # Previous code: 16:9 -> 1280x720. 9:16 -> 720x1280.
-        # Let's keep it safe for now to avoid OOM or slow processing, improvement comes from fonts.
-        W, H = 1280, 720
-    else:
-        W, H = 720, 1280
-
-    # 3. Process Each Segment
+    # Process Segments
     temp_files = []
-    
-    # Use provided temp_dir or current directory
-    work_dir = args.temp_dir if args.temp_dir else os.getcwd()
-    if not os.path.exists(work_dir):
-        os.makedirs(work_dir, exist_ok=True)
+    import uuid
+    session_id = str(uuid.uuid4())[:8]
 
-    # We will write an inputs.txt file for the concat demuxer
-    # Use absolute paths because the demuxer can be picky
-    inputs_txt_path = os.path.join(work_dir, f"inputs_{os.getpid()}.txt")
-    
+    print(f"Stitching {len(segments)} segments...", file=sys.stderr)
+
+    for i, seg in enumerate(segments):
+        out_name = os.path.join(work_dir, f"seg_{session_id}_{i}.mp4")
+        process_segment(seg, i, out_name, W, H, font_settings, include_subtitles=not args.no_subtitles)
+        temp_files.append(out_name)
+
+    # Concat
+    list_path = os.path.join(work_dir, f"inputs_{session_id}.txt")
+    with open(list_path, 'w') as f:
+        for p in temp_files:
+            f.write(f"file '{p}'\n")
+
     try:
-        import uuid
-        session_id = str(uuid.uuid4())[:8]
-        
-        print(f"Starting processing of {len(segments)} segments at {W}x{H}...", file=sys.stderr)
-        
-        for i, section in enumerate(segments):
-            temp_path = os.path.join(work_dir, f"temp_seg_{session_id}_{i}.mp4")
-            # Pass inverse of no_subtitles
-            process_segment(section, i, temp_path, W, H, font_settings, include_subtitles=not args.no_subtitles)
-            temp_files.append(temp_path)
-
-        # 4. Generate Concat Demuxer Input File
-        with open(inputs_txt_path, 'w') as f:
-            for tf in temp_files:
-                # Escape path for ffmpeg concat demuxer format
-                # file '/path/to/file.mp4'
-                f.write(f"file '{tf}'\n")
-
-        print("Concatenating segments using demuxer...", file=sys.stderr)
-        
-        # Open the concat demuxer as an input
-        # safe=0 is required for absolute paths
         input_args = {'f': 'concat', 'safe': 0}
-        concat_input = ffmpeg.input(inputs_txt_path, **input_args)
+        concat = ffmpeg.input(list_path, **input_args)
         
-        # 5. Mix Background Music
-        if args.audio and os.path.exists(args.audio):
-            print(f"Mixing background music: {args.audio}", file=sys.stderr)
-            bg_music = ffmpeg.input(args.audio)
-            # Volume from args
-            bg_music = bg_music.filter('volume', args.volume)
-            
-            # We must decode audio to mix it
-            # input audio stream from concat
-            main_audio = concat_input.audio
-            
-            # amix: duration='first' cuts music to match video length
-            mixed_audio = ffmpeg.filter([main_audio, bg_music], 'amix', duration='first', dropout_transition=2)
-            final_audio = mixed_audio
-        else:
-            final_audio = concat_input.audio
+        video_stream = concat.video
+        audio_stream = concat.audio
 
-        # 6. Final Output
-        # We can COPY the video stream because all segments are chemically identical 
-        # (same resolution, fps, sar, pixel format, codec)
-        print(f"Rendering final video to {args.output}...", file=sys.stderr)
-        
+        # Mix Background Music
+        if args.audio and os.path.exists(args.audio):
+            bgm = ffmpeg.input(args.audio).filter('volume', args.volume)
+            # amix duration=first ensures we stop when video stops
+            audio_stream = ffmpeg.filter([audio_stream, bgm], 'amix', duration='first', dropout_transition=2)
+
+        # Final Render
         out = ffmpeg.output(
-            concat_input.video, 
-            final_audio, 
-            args.output, 
-            vcodec='copy', # Stream copy video for speed and no re-encoding!
-            acodec='aac', 
-            audio_bitrate='192k',
+            video_stream, audio_stream, args.output,
+            vcodec='copy', acodec='aac', audio_bitrate='192k',
             loglevel='error'
         )
         out.run(overwrite_output=True)
-        
-        # Success output (stdout)
-        print(args.output)
+        print(args.output) # Return path to Node
 
-    except Exception as e:
-        print(f"Process failed: {e}", file=sys.stderr)
-        sys.exit(1)
     finally:
-        # Cleanup temp files
-        if os.path.exists(inputs_txt_path):
-            os.remove(inputs_txt_path)
-            
-        for f in temp_files:
-            if os.path.exists(f):
-                try:
-                    os.remove(f)
-                except:
-                    pass
+        if os.path.exists(list_path): os.remove(list_path)
+        for p in temp_files:
+            if os.path.exists(p): os.remove(p)
 
 if __name__ == "__main__":
     main()

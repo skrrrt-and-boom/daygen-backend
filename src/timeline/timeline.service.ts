@@ -677,16 +677,31 @@ export class TimelineService {
             let currentMetadata = { ...job.metadata };
 
             // 1. Script Generation
-            // 1. Script Generation
+            // 1. Music Selection & Beat Analysis (Moved Before Script)
+            // We do this first so we can potentially guide the script (future)
+            // and definitely enforce strict timing.
+            const musicUrl = this.musicService.getBackgroundTrack(dto.style || 'upbeat');
+            let beatTimes: number[] = [];
+            if (musicUrl) {
+                try {
+                    beatTimes = await this.analyzeBeats(musicUrl);
+                    this.logger.log(`Analyzed beats for ${musicUrl}: ${beatTimes.length} beats found.`);
+                } catch (error) {
+                    this.logger.error('Failed to analyze beats', error);
+                }
+            }
+
+            // 2. Script Generation
+            // TODO: In future, pass target segment durations to prompt based on BPM
             const { script, title, rawOutput } = await this.generateScript(dto.topic, dto.style, dto.duration, dto.referenceImageUrls);
             this.logger.log(`Generated script with ${script.length} segments. Title: "${title}"`);
 
-            // 1.5 Update Job Title & Persist Full Raw Script
+            // 2.5 Update Job Title & Persist Full Raw Script
             if (title || rawOutput) {
                 currentMetadata = {
                     ...currentMetadata,
                     title: title,
-                    script: rawOutput // Save the exact raw JSON output from GPT
+                    script: rawOutput
                 };
 
                 await this.prisma.job.update({
@@ -697,49 +712,79 @@ export class TimelineService {
                 });
             }
 
-            // 2. Audio Gen & Beat Sync Setup
-            const musicUrl = this.musicService.getBackgroundTrack(dto.style || 'upbeat');
-            let beatTimes: number[] = [];
-            if (musicUrl) {
-                try {
-                    beatTimes = await this.analyzeBeats(musicUrl);
-                } catch (error) {
-                    this.logger.error('Failed to analyze beats', error);
-                }
-            }
-
-            // 2.5 Create Initial "Pending" Segments in DB (Streaming UX)
+            // 3. Calculate Durations with Strict Beat Snapping
             // Helper for smart duration
             const estimateDuration = (text: string) => {
                 if (dto.includeNarration === false) {
                     return 5.0; // Default to 5s if strictly visual
                 }
                 const wordCount = text.split(/\s+/).length;
-                // Approx 2.5 words per second is a good average reading speed
                 const estimated = Math.max(5.0, wordCount / 2.5);
-                return Math.round(estimated * 10) / 10; // Round to 1 decimal
+                return Math.round(estimated * 10) / 10;
             };
 
-            await this.prisma.timelineSegment.createMany({
-                data: script.map((item, index) => ({
-                    jobId: job.id,
-                    index: index,
-                    script: item.text,
-                    visualPrompt: item.visualPrompt,
-                    motionPrompt: item.motionPrompt,
-                    status: 'pending',
-                    duration: estimateDuration(item.text) // Save estimated duration
-                }))
-            });
-
-            // 2.6 Initialize Job Metadata Response with FULL script details (including visual_source)
-            // We do this manually here to ensure 'visual_source' is captured, as it is not in the DB schema.
-
             let currentStartTime = 0;
+
+            // BEAT SNAPPING STRATEGY:
+            // We want segments to land on 4-beat boundaries (Bar lines).
+            // Assuming beatTimes[0] is the first beat.
+            // Indices 0, 4, 8, 12... are the Downbeats of each bar.
+            // We want the *end* of a segment to align with a Downbeat ideally, 
+            // or at least a strong beat (2-beat intervals).
+            // Let's enforce 4-beat (Bar) alignment for "Music-Based" logic.
+
+            // Find the index of the beat that is closest to currentStartTime
+            // (Ideally exact match if we are chaining perfectly)
+
+
+            let currentBeatIndex = 0; // The index in beatTimes corresponding to the START of the current segment
+
             const segmentsWithTiming = script.map((item, index) => {
-                const duration = estimateDuration(item.text);
+                const minDuration = estimateDuration(item.text);
+                const idealEndTime = currentStartTime + minDuration;
+
+                let actualEndTime = idealEndTime;
+                let actualDuration = minDuration;
+
+                if (beatTimes && beatTimes.length > 0) {
+                    // Logic: Find a beat `targetBeatIndex` such that:
+                    // 1. beatTimes[targetBeatIndex] >= idealEndTime
+                    // 2. (targetBeatIndex - currentBeatIndex) % 4 == 0 (Strict 4-beat phrase)
+
+                    // Start looking from currentBeatIndex + 4
+                    let targetBeatIndex = currentBeatIndex + 4;
+
+                    // While the beat time is too early (cuts off text), add another bar (4 beats)
+                    while (targetBeatIndex < beatTimes.length && beatTimes[targetBeatIndex] < idealEndTime) {
+                        targetBeatIndex += 4;
+                    }
+
+                    // If we ran out of beats, just use the last beat or fallback to time
+                    if (targetBeatIndex >= beatTimes.length) {
+                        // Fallback: Just take the last beat
+                        if (beatTimes.length > currentBeatIndex) {
+                            actualEndTime = beatTimes[beatTimes.length - 1];
+                        }
+                        // If still undershooting, we just extend silence/video beyond music? 
+                        // Or loop? usage: `actualEndTime` remains `idealEndTime` if no beats left.
+                    } else {
+                        actualEndTime = beatTimes[targetBeatIndex];
+                        // Update currentBeatIndex for next segment
+                        currentBeatIndex = targetBeatIndex;
+                    }
+
+                    actualDuration = actualEndTime - currentStartTime;
+                }
+
+                // Sanity check
+                if (actualDuration < 2.0) {
+                    // 4 beats at 120bpm is 2s. If fast tempo, 4 beats might be short.
+                    // But we respected minDuration (based on text) in the loop above.
+                    // So this should be fine.
+                }
+
                 const startTime = currentStartTime;
-                const endTime = startTime + duration;
+                const endTime = actualEndTime;
                 currentStartTime = endTime;
 
                 return {
@@ -753,11 +798,27 @@ export class TimelineService {
                     imageUrl: undefined,
                     videoUrl: undefined,
                     status: 'pending',
-                    duration: duration,
+                    duration: actualDuration,
                     startTime: startTime,
                     endTime: endTime,
                 };
             });
+
+            // 2.6 Create "Pending" Segments in DB (Streaming UX)
+            await this.prisma.timelineSegment.createMany({
+                data: segmentsWithTiming.map((seg) => ({
+                    jobId: job.id,
+                    index: seg.index,
+                    script: seg.script,
+                    visualPrompt: seg.visualPrompt,
+                    motionPrompt: seg.visualPrompt,
+                    status: 'pending',
+                    duration: seg.duration // Save beat-aligned duration
+                }))
+            });
+
+            // 2.7 Initialize Job Metadata Response
+            // (segmentsWithTiming already prepared)
 
             const initialResponse: TimelineResponse = {
                 segments: segmentsWithTiming,
@@ -1007,12 +1068,61 @@ export class TimelineService {
         }
     }
 
+    // Helper to calculate beat-aligned durations
+    private calculateBeatAlignedSegments(segments: any[], beatTimes: number[]): any[] {
+        if (!beatTimes || beatTimes.length === 0) {
+            // Fallback: Just use audio duration if no beats
+            return segments.map(s => ({ ...s, targetDuration: s.duration || 5.0 }));
+        }
+
+        let currentTime = 0;
+        const alignedSegments: any[] = [];
+
+        for (const seg of segments) {
+            const minDuration = seg.duration || 3.0; // The actual audio length (or default)
+            const absoluteMinEndTime = currentTime + minDuration;
+
+            // Find the NEXT beat that is after the minimum end time
+            // We add a small buffer (0.1s) to avoid snapping to a beat that is practically 'now'
+            const nextBeat = beatTimes.find(t => t >= (absoluteMinEndTime - 0.05));
+
+            let endTime = absoluteMinEndTime;
+
+            if (nextBeat) {
+                // If the next beat is within reasonable padding range (e.g. < 3 seconds of silence), snap to it.
+                // Otherwise, we might be drifting too far.
+                if (nextBeat - absoluteMinEndTime < 4.0) {
+                    endTime = nextBeat;
+                } else {
+                    // Beat is too far, maybe just add 0.5s padding? 
+                    // Or find the beat matching the 'measure' roughly. 
+                    // For now, let's strictly snap to keep rhythm, assuming beats are frequent.
+                    endTime = nextBeat;
+                }
+            } else {
+                // No more beats? Just use min duration.
+                endTime = absoluteMinEndTime;
+            }
+
+            const duration = endTime - currentTime;
+
+            alignedSegments.push({
+                ...seg,
+                targetDuration: duration
+            });
+
+            currentTime = endTime;
+        }
+        return alignedSegments;
+    }
+
     private async finalizeJob(jobId: string) {
         const job = await this.prisma.job.findUnique({ where: { id: jobId } });
         if (!job) return;
 
         const metadata: any = job.metadata || {};
         const musicUrl = metadata.musicUrl;
+        const beatTimes: number[] = metadata.beatTimes || []; // GET BEATS
 
 
         // Fetch segments from DB
@@ -1039,6 +1149,10 @@ export class TimelineService {
             return;
         }
 
+        // --- NEW: Calculate Aligned Durations ---
+        this.logger.log(`Aligning ${validSegments.length} segments to music beats...`);
+        const alignedSegments = this.calculateBeatAlignedSegments(validSegments, beatTimes);
+
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `job-${jobId}-`));
         this.logger.log(`Created temp dir for stitching: ${tempDir}`);
 
@@ -1052,40 +1166,33 @@ export class TimelineService {
         });
 
         try {
-            // 1. Prepare Assets & Manifest
-            // 1. Prepare Assets & Manifest (Parallel Download)
-            const preparePromises = validSegments.map(async (seg) => {
-                // Video
+            // Prepare Assets & Manifest
+            const preparePromises = alignedSegments.map(async (seg) => {
                 const vExt = path.extname(seg.videoUrl!) || '.mp4';
                 const localVideoPath = path.join(tempDir, `seg-${seg.index}-video${vExt}`);
-
-                // Audio
                 const localAudioPath = path.join(tempDir, `seg-${seg.index}-audio.mp3`);
 
-                // Run downloads in parallel for this segment
-                const videoTask = this.downloadFile(seg.videoUrl!, localVideoPath);
+                // Parallel Download
+                const downloadPromises: Promise<any>[] = [
+                    this.downloadFile(seg.videoUrl!, localVideoPath)
+                ];
 
-                const audioTask = (async () => {
-                    if (seg.audioUrl) {
-                        await this.downloadFile(seg.audioUrl, localAudioPath);
-                    } else {
-                        // Generate silent audio matched to segment duration (or default 5s)
-                        const targetDuration = seg.duration || 5;
-                        try {
-                            await exec(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${targetDuration} -c:a libmp3lame -q:a 4 "${localAudioPath}"`);
-                        } catch (e) {
-                            this.logger.warn(`Failed to generate silent audio for segment ${seg.index}: ${e}`);
-                        }
-                    }
-                })();
+                if (seg.audioUrl) {
+                    downloadPromises.push(this.downloadFile(seg.audioUrl, localAudioPath));
+                } else {
+                    // Generate silent audio matched to aligned duration
+                    // Note: ffmpeg 'anullsrc' is infinite, -t limits it.
+                    downloadPromises.push(exec(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${seg.targetDuration} -c:a libmp3lame -q:a 4 "${localAudioPath}"`));
+                }
 
-                await Promise.all([videoTask, audioTask]);
+                await Promise.all(downloadPromises);
 
                 return {
                     video: localVideoPath,
                     audio: localAudioPath,
                     text: seg.script || '',
-                    alignment: (seg as any).alignment // Pass alignment to python script
+                    alignment: (seg as any).alignment,
+                    duration: seg.targetDuration // PASS THE SNAPPED DURATION
                 };
             });
 
