@@ -242,7 +242,7 @@ export class AudioService {
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => ({}));
-      
+
       // Log the full error response for debugging
       this.logger.error(`ElevenLabs TTS Error Response:`, {
         status: response.status,
@@ -251,13 +251,13 @@ export class AudioService {
         voiceId,
         modelId: requestBody.model_id,
       });
-      
+
       const message =
         errorPayload?.detail?.message ||
         errorPayload?.message ||
         errorPayload?.detail ||
         `ElevenLabs responded with status ${response.status}`;
-      
+
       throw new HttpException(message, response.status);
     }
 

@@ -34,5 +34,16 @@ export class CreateVideoGenerationJobDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
   references?: string[];
+
+  @IsOptional()
+  @IsString()
+  script?: string;
+
+  @IsOptional()
+  @IsString()
+  voiceId?: string;
 }
