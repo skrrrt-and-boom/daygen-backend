@@ -1168,13 +1168,13 @@ export class TimelineService {
         try {
             // Prepare Assets & Manifest
             const preparePromises = alignedSegments.map(async (seg) => {
-                const vExt = path.extname(seg.videoUrl!) || '.mp4';
+                const vExt = path.extname(seg.videoUrl) || '.mp4';
                 const localVideoPath = path.join(tempDir, `seg-${seg.index}-video${vExt}`);
                 const localAudioPath = path.join(tempDir, `seg-${seg.index}-audio.mp3`);
 
                 // Parallel Download
                 const downloadPromises: Promise<any>[] = [
-                    this.downloadFile(seg.videoUrl!, localVideoPath)
+                    this.downloadFile(seg.videoUrl, localVideoPath)
                 ];
 
                 if (seg.audioUrl) {
@@ -1191,7 +1191,7 @@ export class TimelineService {
                     video: localVideoPath,
                     audio: localAudioPath,
                     text: seg.script || '',
-                    alignment: (seg as any).alignment,
+                    alignment: (seg).alignment,
                     duration: seg.targetDuration // PASS THE SNAPPED DURATION
                 };
             });
