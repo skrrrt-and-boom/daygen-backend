@@ -14,7 +14,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
 
-@Controller('api/avatars')
+@Controller('avatars')
 @UseGuards(JwtAuthGuard)
 export class AvatarsController {
     constructor(private readonly avatarsService: AvatarsService) { }
