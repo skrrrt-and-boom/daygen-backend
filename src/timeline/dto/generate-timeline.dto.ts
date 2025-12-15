@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsNumber } from 'class-validator';
 
 export class GenerateTimelineDto {
     @IsString()
@@ -6,8 +6,8 @@ export class GenerateTimelineDto {
     topic: string;
 
     @IsString()
-    @IsNotEmpty()
-    style: string;
+    @IsOptional()
+    style?: string;
 
     @IsOptional()
     @IsString()
@@ -17,9 +17,13 @@ export class GenerateTimelineDto {
     @IsBoolean()
     includeNarration?: boolean = true;
 
-    @IsOptional()
     @IsBoolean()
-    includeSubtitles?: boolean = true;
+    @IsOptional()
+    includeSubtitles?: boolean;
+
+    @IsNumber()
+    @IsOptional()
+    musicStartTime?: number;
 
     @IsString()
     @IsOptional()
@@ -29,4 +33,12 @@ export class GenerateTimelineDto {
     @IsArray()
     @IsString({ each: true })
     referenceImageUrls?: string[];
+
+    @IsOptional()
+    @IsString()
+    musicUrl?: string;
+
+    @IsOptional()
+    @IsNumber()
+    musicVolume?: number;
 }

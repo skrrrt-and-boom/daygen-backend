@@ -14,13 +14,18 @@ import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AudioService } from './audio.service';
+import { MusicService } from './music.service';
+import { Public } from '../auth/public.decorator';
 import { GenerateSpeechDto } from './dto/generate-speech.dto';
 import { CloneVoiceDto } from './dto/clone-voice.dto';
 
 @Controller('audio')
 @UseGuards(JwtAuthGuard)
 export class AudioController {
-  constructor(private readonly audioService: AudioService) { }
+  constructor(
+    private readonly audioService: AudioService,
+    private readonly musicService: MusicService
+  ) { }
 
   @Get('voices')
   async listVoices() {
@@ -33,6 +38,12 @@ export class AudioController {
       console.error('GET /audio/voices - Error', error);
       throw error;
     }
+  }
+
+  @Public()
+  @Get('tracks')
+  async listTracks() {
+    return this.musicService.getAllTracks();
   }
 
   @Post('voices/clone')

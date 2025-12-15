@@ -62,7 +62,7 @@ export class TimelineService {
                 userId: userId,
                 type: 'CYRAN_ROLL' as any,
                 status: 'PROCESSING',
-                metadata: { topic: dto.topic, style: dto.style },
+                metadata: { topic: dto.topic, style: dto.style, musicStartTime: dto.musicStartTime },
                 progress: 0
             }
         });
@@ -699,7 +699,7 @@ export class TimelineService {
             // 1. Music Selection & Beat Analysis (Moved Before Script)
             // We do this first so we can potentially guide the script (future)
             // and definitely enforce strict timing.
-            const musicUrl = this.musicService.getBackgroundTrack(dto.style || 'upbeat');
+            const musicUrl = dto.musicUrl || this.musicService.getRandomTrack().url;
             let beatTimes: number[] = [];
             if (musicUrl) {
                 try {
@@ -712,7 +712,7 @@ export class TimelineService {
 
             // 2. Script Generation
             // TODO: In future, pass target segment durations to prompt based on BPM
-            const { script, title, rawOutput } = await this.generateScript(dto.topic, dto.style, dto.duration, dto.referenceImageUrls);
+            const { script, title, rawOutput } = await this.generateScript(dto.topic, dto.duration, dto.referenceImageUrls);
             this.logger.log(`Generated script with ${script.length} segments. Title: "${title}"`);
 
             // 2.5 Update Job Title & Persist Full Raw Script
@@ -1248,9 +1248,12 @@ export class TimelineService {
             const volume = metadata.dto?.musicVolume ?? 0.3;
             // Get subtitle preference (default to true)
             const includeSubtitles = metadata.dto?.includeSubtitles ?? true;
+            // Get musicStartTime
+            const musicStartTime = metadata.musicStartTime ?? 0;
 
             let cmd = `python3 "${scriptPath}" --clips "${manifestPath}" --output "${outputPath}" --format "9:16" --temp_dir "${tempDir}"`;
             if (localMusicPath) cmd += ` --audio "${localMusicPath}" --volume ${volume}`;
+            if (musicStartTime > 0) cmd += ` --music_start_time ${musicStartTime}`;
             if (!includeSubtitles) cmd += ` --no_subtitles`; // Pass flag to python
 
             this.logger.log(`Spawning stitch_clips.py: ${cmd}`);
@@ -1397,7 +1400,7 @@ export class TimelineService {
         throw new Error(`Segment ${segmentIndex} failed after ${maxRetries} rate-limit retries`);
     }
 
-    private async generateScript(topic: string, style: string, duration: 'short' | 'medium' | 'long' = 'medium', referenceImageUrls: string[] = []): Promise<{ script: any[]; title?: string; rawOutput?: any }> {
+    private async generateScript(topic: string, duration: 'short' | 'medium' | 'long' = 'medium', referenceImageUrls: string[] = []): Promise<{ script: any[]; title?: string; rawOutput?: any }> {
         const modelId = this.configService.get<string>('REPLICATE_MODEL_ID') || 'openai/gpt-5';
 
         let sceneCount = 6;
@@ -1427,7 +1430,9 @@ export class TimelineService {
             ` - 'user_image_{index}': Use user reference image at index {index} (e.g., 'user_image_0'). Set this ONLY if the scene clearly refers to the subject in that provided image.`
             : `For each scene, add a 'visual_source' field: set to 'last_frame' if the scene continues the previous shot, otherwise 'generated'.`;
 
-        const prompt = `Topic: ${topic}\nStyle: ${style}\nTarget: ${durationText}\n${refInstruction}\nInstruction: Strictly generate EXACTLY ${sceneCount} scenes. Output JSON only. No more, no less.`;
+        const styleInstruction = "Style: Select the most viral and engaging style for this topic (e.g. Cinematic, Vlog, Documentary).";
+
+        const prompt = `Topic: ${topic}\n${styleInstruction}\nTarget: ${durationText}\n${refInstruction}\nInstruction: Strictly generate EXACTLY ${sceneCount} scenes. Output JSON only. No more, no less.`;
 
         try {
             const output = await this.replicate.run(modelId as any, {

@@ -257,6 +257,7 @@ def main():
     parser.add_argument("--color", default="yellow")
     parser.add_argument("--y_pos", default="(h-text_h)/1.2")
     parser.add_argument("--volume", type=float, default=0.3)
+    parser.add_argument("--music_start_time", type=float, default=0.0)
     parser.add_argument("--no_subtitles", action="store_true")
     args = parser.parse_args()
 
@@ -332,7 +333,11 @@ def main():
 
         # Mix Background Music
         if args.audio and os.path.exists(args.audio):
-            bgm = ffmpeg.input(args.audio).filter('volume', args.volume)
+            input_kwargs = {}
+            if args.music_start_time > 0:
+                input_kwargs['ss'] = args.music_start_time
+            
+            bgm = ffmpeg.input(args.audio, **input_kwargs).filter('volume', args.volume)
             # amix duration=first ensures we stop when video stops
             audio_stream = ffmpeg.filter([audio_stream, bgm], 'amix', duration='first', dropout_transition=2)
 
