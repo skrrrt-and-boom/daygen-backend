@@ -15,6 +15,7 @@ import { MetricsService } from '../common/metrics.service';
 import { RequestContextService } from '../common/request-context.service';
 import { ScenesModule } from '../scenes/scenes.module';
 import { TimelineModule } from '../timeline/timeline.module';
+import { AudioModule } from '../audio/audio.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { TimelineModule } from '../timeline/timeline.module';
     PaymentsModule,
     forwardRef(() => ScenesModule),
     forwardRef(() => TimelineModule),
+    AudioModule,
   ],
   providers: [
     CloudTasksService,

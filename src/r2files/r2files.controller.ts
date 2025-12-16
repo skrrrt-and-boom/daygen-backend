@@ -102,6 +102,21 @@ export class R2FilesController {
     );
   }
 
+  // Public endpoint to get a specific public file by ID
+  // Optional auth to check for likes
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('public/:id')
+  async getPublicById(
+    @CurrentUser() user: SanitizedUser | null,
+    @Param('id') id: string,
+  ) {
+    const file = await this.r2FilesService.findPublicById(id, user?.authUserId);
+    if (!file) {
+      throw new HttpException('File not found', HttpStatus.NOT_FOUND);
+    }
+    return file;
+  }
+
   @UseGuards(JwtAuthGuard)
   @Post(':id/toggle-like')
   async toggleLike(

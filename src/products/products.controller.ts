@@ -14,7 +14,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { SanitizedUser } from '../users/types';
 
-@Controller('api/products')
+@Controller('products')
 @UseGuards(JwtAuthGuard)
 export class ProductsController {
     constructor(private readonly productsService: ProductsService) { }

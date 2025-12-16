@@ -22,7 +22,7 @@ export class VideoGenerationController {
   constructor(
     private readonly configService: ConfigService,
     private readonly cloudTasksService: CloudTasksService,
-  ) {}
+  ) { }
 
   @Post('sora')
   async generateSoraVideo(
@@ -120,6 +120,73 @@ export class VideoGenerationController {
     );
 
     return { jobId, status: 'queued', provider: 'veo', model };
+  }
+
+  @Post('omnihuman')
+  async generateOmnihumanVideo(
+    @CurrentUser() user: SanitizedUser,
+    @Body()
+    body: {
+      prompt?: string;
+      script?: string;
+      voiceId?: string;
+      imageUrls?: string[];
+      model?: string;
+      providerOptions?: ProviderOptions;
+      avatarId?: string;
+      avatarImageId?: string;
+      productId?: string;
+    },
+  ) {
+    const prompt = body.prompt?.trim();
+    if (!prompt) {
+      throw new BadRequestException('Prompt is required for Omnihuman video generation.');
+    }
+
+    const script = body.script?.trim();
+    if (!script) {
+      throw new BadRequestException('Script is required for Omnihuman video generation.');
+    }
+
+    const imageUrl = body.imageUrls?.[0]?.trim();
+    if (!imageUrl) {
+      throw new BadRequestException('Image URL is required for Omnihuman video generation.');
+    }
+
+    const voiceId = body.voiceId?.trim();
+    // voiceId is optional, we can default in service if needed, or require it.
+    // For now, let's keep it optional in controller, but maybe mandatory for good results.
+    // Actually, "LipSync" implies audio.
+    if (!voiceId) {
+      throw new BadRequestException('Voice ID is required for Omnihuman video generation.');
+    }
+
+
+    const replicateToken = this.configService.get<string>('REPLICATE_API_TOKEN');
+    if (!replicateToken) {
+      throw new HttpException('Replicate API token is not configured', HttpStatus.BAD_GATEWAY);
+    }
+
+    const providerOptions = this.normalizeProviderOptions(body.providerOptions);
+    const model = 'omni-human-1.5'; // Fixed model for now
+
+    const { jobId } = await this.cloudTasksService.createVideoGenerationJob(
+      user.authUserId,
+      {
+        prompt,
+        script,
+        voiceId,
+        imageUrls: [imageUrl],
+        model,
+        provider: 'omnihuman',
+        options: providerOptions,
+        avatarId: typeof body.avatarId === 'string' ? body.avatarId.trim() : undefined,
+        avatarImageId: typeof body.avatarImageId === 'string' ? body.avatarImageId.trim() : undefined,
+        productId: typeof body.productId === 'string' ? body.productId.trim() : undefined,
+      },
+    );
+
+    return { jobId, status: 'queued', provider: 'omnihuman', model };
   }
 
   private normalizeProviderOptions(rawOptions: unknown): Record<string, unknown> {

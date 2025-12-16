@@ -15,6 +15,8 @@ import { ScenesService, SceneGenerationJobPayload } from '../scenes/scenes.servi
 import { R2Service } from '../upload/r2.service';
 import { R2FilesService } from '../r2files/r2files.service';
 import { GEMINI_API_KEY_CANDIDATES } from '../generation/constants';
+import { AudioService } from '../audio/audio.service';
+import Replicate from 'replicate';
 import sharp from 'sharp';
 
 export interface ProcessJobPayload {
@@ -43,6 +45,7 @@ export class JobProcessingService {
     private readonly configService: ConfigService,
     private readonly r2Service: R2Service,
     private readonly r2FilesService: R2FilesService,
+    private readonly audioService: AudioService,
   ) { }
 
   async processJob(payload: ProcessJobPayload) {
@@ -413,6 +416,55 @@ export class JobProcessingService {
         return;
       }
 
+      if (provider === 'omnihuman') {
+        // Required fields validated in controller
+        const script = data.script as string;
+        const voiceId = data.voiceId as string;
+        const imageUrl = data.imageUrls && Array.isArray(data.imageUrls) ? data.imageUrls[0] : (data.imageUrl as string);
+
+        if (!imageUrl) {
+          throw new Error('Image URL is required for Omnihuman generation');
+        }
+
+        const omniResult = await this.handleOmnihumanVideoGeneration(
+          jobId,
+          prompt,
+          script,
+          voiceId,
+          imageUrl,
+        );
+
+        await this.usageService.captureCredits(reservationId, {
+          finalStatus: 'COMPLETED',
+          assetCount: 1,
+        });
+
+        const r2File = await this.r2FilesService.create(user.authUserId, {
+          fileName: `omnihuman-${Date.now()}.mp4`,
+          fileUrl: omniResult.videoUrl,
+          mimeType: 'video/mp4',
+          prompt,
+          model: omniResult.model,
+          jobId,
+          aspectRatio: fallbackAspectRatio,
+          avatarId,
+          avatarImageId,
+          productId,
+        });
+
+        await this.cloudTasksService.completeJob(jobId, omniResult.videoUrl, {
+          videoUrl: omniResult.videoUrl,
+          provider: 'omnihuman',
+          model: omniResult.model,
+          prompt,
+          script,
+          voiceId,
+          r2FileId: r2File.id,
+        });
+
+        return;
+      }
+
       // Fallback placeholder for other providers (kept to avoid breaking existing flows)
       await this.cloudTasksService.updateJobProgress(jobId, 75);
 
@@ -453,6 +505,93 @@ export class JobProcessingService {
       );
       throw error;
     }
+  }
+
+  private async handleOmnihumanVideoGeneration(
+    jobId: string,
+    prompt: string | undefined,
+    script: string,
+    voiceId: string,
+    imageUrl: string,
+  ): Promise<{
+    videoUrl: string;
+    model: string;
+  }> {
+    this.logger.log(`Starting Omnihuman generation for job ${jobId}`);
+
+    // 1. Generate Audio via ElevenLabs
+    const audioResult = await this.audioService.generateSpeech({
+      text: script,
+      voiceId: voiceId,
+    });
+
+    if (!audioResult.success) {
+      throw new Error('Failed to generate speech for LipSync');
+    }
+
+    // 2. Upload Audio to R2 (Omnihuman needs a public URL)
+    const audioUrl = await this.r2Service.uploadBase64Image(
+      audioResult.audioBase64,
+      'audio/mpeg', // generateSpeech returns mp3 usually, assume mpeg
+      'generated-audio',
+      `omnihuman-audio-${jobId}-${Date.now()}.mp3`
+    );
+
+    this.logger.log(`Audio generated and uploaded to ${audioUrl}`);
+
+    await this.cloudTasksService.updateJobProgress(jobId, 20);
+
+    // 3. Init Replicate
+    const replicateToken = this.configService.get<string>('REPLICATE_API_TOKEN');
+    if (!replicateToken) {
+      throw new Error('REPLICATE_API_TOKEN not configured');
+    }
+    const replicate = new Replicate({ auth: replicateToken });
+
+    // 4. Run Omnihuman
+    const model = 'bytedance/omni-human-1.5';
+    this.logger.log(`Calling Replicate model ${model}`);
+
+    // We use predictions.create to poll for status if we want, or run() to block.
+    // run() is simpler but might timeout for long generations if default timeout is short.
+    // However, Replicate's run() polls internally.
+    // Omnihuman can take some time.
+    // Let's use run() for now, mirroring basic usage.
+    const output = await replicate.run(
+      model,
+      {
+        input: {
+          image: imageUrl,
+          audio: audioUrl,
+          prompt: prompt || 'realistic', // prompt is optional but often helpful
+        }
+      }
+    );
+
+    await this.cloudTasksService.updateJobProgress(jobId, 90);
+
+    // output is the video URL
+    const replicateVideoUrl = (output as unknown) as string;
+    this.logger.log(`Replicate generation completed. URL: ${replicateVideoUrl}`);
+
+    // 5. Download and Persist Video
+    const downloadResponse = await fetch(replicateVideoUrl);
+    if (!downloadResponse.ok) {
+      throw new Error('Failed to download generated video from Replicate');
+    }
+    const buffer = Buffer.from(await downloadResponse.arrayBuffer());
+
+    const videoUrl = await this.r2Service.uploadBuffer(
+      buffer,
+      'video/mp4',
+      'generated-videos',
+      `omnihuman-${jobId}-${Date.now()}.mp4`
+    );
+
+    return {
+      videoUrl,
+      model
+    };
   }
 
   private async processImageUpscale(

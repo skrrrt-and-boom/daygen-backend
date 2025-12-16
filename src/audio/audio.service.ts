@@ -68,13 +68,16 @@ export class AudioService {
 
   async listVoices(): Promise<{ success: boolean; voices: VoiceSummary[] }> {
     const apiKey = this.ensureApiKey();
+    this.logger.log(`Using API Key (len: ${apiKey.length}): ${apiKey.substring(0, 4)}...`);
     let response: Response;
     try {
+      this.logger.log('Fetching voices from ElevenLabs...');
       response = await fetch('https://api.elevenlabs.io/v1/voices', {
         headers: {
           'xi-api-key': apiKey,
         },
       });
+      this.logger.log(`ElevenLabs response status: ${response.status} ${response.statusText}`);
     } catch (error) {
       this.logger.error('Failed to reach ElevenLabs voices endpoint', error);
       throw new ServiceUnavailableException(
@@ -82,13 +85,20 @@ export class AudioService {
       );
     }
 
-    const payload = (await response.json().catch(() => ({}))) as {
-      voices?: ElevenLabsVoice[];
-      detail?: string;
-      message?: string;
-    };
+    let payload;
+    try {
+      payload = (await response.json()) as {
+        voices?: ElevenLabsVoice[];
+        detail?: string;
+        message?: string;
+      };
+    } catch (e) {
+      this.logger.warn('Failed to parse ElevenLabs JSON response', e);
+      payload = {};
+    }
 
     if (!response.ok) {
+      this.logger.error(`ElevenLabs error: ${JSON.stringify(payload)}`);
       const message =
         payload?.message ||
         payload?.detail ||
@@ -97,6 +107,7 @@ export class AudioService {
     }
 
     const voices = Array.isArray(payload.voices) ? payload.voices : [];
+    this.logger.log(`Found ${voices.length} voices`);
     return {
       success: true,
       voices: voices.map((voice) => this.buildVoiceSummary(voice)),
@@ -242,7 +253,7 @@ export class AudioService {
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => ({}));
-      
+
       // Log the full error response for debugging
       this.logger.error(`ElevenLabs TTS Error Response:`, {
         status: response.status,
@@ -251,13 +262,13 @@ export class AudioService {
         voiceId,
         modelId: requestBody.model_id,
       });
-      
+
       const message =
         errorPayload?.detail?.message ||
         errorPayload?.message ||
         errorPayload?.detail ||
         `ElevenLabs responded with status ${response.status}`;
-      
+
       throw new HttpException(message, response.status);
     }
 
