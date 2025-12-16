@@ -373,6 +373,50 @@ export class R2FilesService {
     };
   }
 
+  /**
+   * Find a single public file by ID
+   */
+  async findPublicById(id: string, viewerAuthId?: string): Promise<PublicR2FileResponse | null> {
+    const file = await this.prisma.r2File.findFirst({
+      where: {
+        id,
+        isPublic: true,
+        deletedAt: null,
+      },
+      include: {
+        owner: {
+          select: {
+            displayName: true,
+            authUserId: true,
+            profileImage: true,
+          },
+        },
+      },
+    });
+
+    if (!file) {
+      return null;
+    }
+
+    let viewerHasLiked = false;
+    if (viewerAuthId) {
+      viewerHasLiked = file.likedByAuthIds.includes(viewerAuthId);
+    }
+
+    const likeCount = file.likeCount;
+    let isLiked = viewerHasLiked;
+
+    if (likeCount === 0 && isLiked) {
+      isLiked = false;
+    }
+
+    return {
+      ...this.toPublicResponse(file),
+      likeCount,
+      isLiked,
+    };
+  }
+
   private toPublicResponse(file: {
     id: string;
     fileName: string;
