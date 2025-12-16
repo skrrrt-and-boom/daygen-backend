@@ -41,4 +41,8 @@ export class GenerateTimelineDto {
     @IsOptional()
     @IsNumber()
     musicVolume?: number;
+
+    @IsOptional()
+    @IsBoolean()
+    useVisualReferenceOnly?: boolean;
 }

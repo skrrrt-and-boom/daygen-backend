@@ -305,6 +305,11 @@ export class TimelineService {
         }
 
         const webhookHost = this.configService.get<string>('WEBHOOK_HOST');
+        if (!webhookHost) {
+            throw new InternalServerErrorException(
+                'WEBHOOK_HOST is not configured. Please set WEBHOOK_HOST in .env to your public ngrok URL (e.g., https://xyz.ngrok-free.app)'
+            );
+        }
         const webhookUrl = `${webhookHost}/api/webhooks/replicate?jobId=${jobId}&segmentIndex=${index}`;
 
         try {
@@ -712,7 +717,14 @@ export class TimelineService {
 
             // 2. Script Generation
             // TODO: In future, pass target segment durations to prompt based on BPM
-            const { script, title, rawOutput } = await this.generateScript(dto.topic, dto.duration, dto.referenceImageUrls);
+            // 2. Script Generation
+            // TODO: In future, pass target segment durations to prompt based on BPM
+            const { script, title, rawOutput } = await this.generateScript(
+                dto.topic,
+                dto.duration,
+                dto.referenceImageUrls,
+                dto.useVisualReferenceOnly // Pass flag
+            );
             this.logger.log(`Generated script with ${script.length} segments. Title: "${title}"`);
 
             // 2.5 Update Job Title & Persist Full Raw Script
@@ -720,7 +732,8 @@ export class TimelineService {
                 currentMetadata = {
                     ...currentMetadata,
                     title: title,
-                    script: rawOutput
+                    script: rawOutput,
+                    musicUrl: musicUrl // Ensure musicUrl is persisted (especially for random tracks)
                 };
 
                 await this.prisma.job.update({
@@ -1400,7 +1413,12 @@ export class TimelineService {
         throw new Error(`Segment ${segmentIndex} failed after ${maxRetries} rate-limit retries`);
     }
 
-    private async generateScript(topic: string, duration: 'short' | 'medium' | 'long' = 'medium', referenceImageUrls: string[] = []): Promise<{ script: any[]; title?: string; rawOutput?: any }> {
+    private async generateScript(
+        topic: string,
+        duration: 'short' | 'medium' | 'long' = 'medium',
+        referenceImageUrls: string[] = [],
+        useVisualReferenceOnly: boolean = false
+    ): Promise<{ script: any[]; title?: string; rawOutput?: any }> {
         const modelId = this.configService.get<string>('REPLICATE_MODEL_ID') || 'openai/gpt-5';
 
         let sceneCount = 6;
@@ -1432,13 +1450,22 @@ export class TimelineService {
 
         const styleInstruction = "Style: Select the most viral and engaging style for this topic (e.g. Cinematic, Vlog, Documentary).";
 
-        const prompt = `Topic: ${topic}\n${styleInstruction}\nTarget: ${durationText}\n${refInstruction}\nInstruction: Strictly generate EXACTLY ${sceneCount} scenes. Output JSON only. No more, no less.`;
+        // [NEW] 🔞 Direct Reference Mode Logic
+        let finalRefInstruction = refInstruction;
+        if (useVisualReferenceOnly && referenceCount > 0) {
+            // Override instructions to FORCE usage of user images
+            finalRefInstruction = `CRITICAL INSTRUCTION: You MUST set 'visual_source' for EVERY scene to 'user_image_{index}'. Cycle through the available ${referenceCount} images (0 to ${referenceCount - 1}) sequentially (0, 1, 2, 0, 1...). Do NOT use 'generated' or 'last_frame'. Use the user images directly.`;
+        }
+
+        const prompt = `Topic: ${topic}\n${styleInstruction}\nTarget: ${durationText}\n${finalRefInstruction}\nInstruction: Strictly generate EXACTLY ${sceneCount} scenes. Output JSON only. No more, no less.`;
 
         try {
             const output = await this.replicate.run(modelId as any, {
                 input: {
                     prompt: prompt,
-                    image_input: referenceCount > 0 ? referenceImageUrls : undefined,
+                    // FAILSAFE: If Direct Reference Mode (🔞) is ON, do NOT send images to GPT.
+                    // We want GPT to blindy assign them, not analyze them.
+                    image_input: (referenceCount > 0 && !useVisualReferenceOnly) ? referenceImageUrls : undefined,
                     max_completion_tokens: 2048,
                     system_prompt: REEL_GENERATOR_SYSTEM_PROMPT
                 }

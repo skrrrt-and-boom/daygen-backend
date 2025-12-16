@@ -73,6 +73,9 @@ export class PixVerseProvider {
             };
 
             if (webhookUrl) {
+                if (!webhookUrl.startsWith('http')) {
+                    throw new Error(`Invalid webhook URL provided: ${webhookUrl}`);
+                }
                 options.webhook = webhookUrl;
                 options.webhook_events_filter = ["completed"];
             }
