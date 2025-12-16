@@ -23,7 +23,6 @@ export class UsersService {
     return this.prisma.user.create({
       data: {
         email: normalizedEmail,
-        id: authUserId,
         authUserId,
         displayName: input.displayName?.trim() || null,
         credits: 20, // 20 free credits for new accounts
@@ -305,7 +304,6 @@ export class UsersService {
         await this.prisma.user.create({
           data: {
             authUserId: authUser.id,
-            id: authUser.id,
             email: normalizedEmail,
             displayName: desiredDisplayName ?? null,
             profileImage: desiredProfileImage,
