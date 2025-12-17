@@ -130,6 +130,8 @@ export class R2FilesService {
     const where: Prisma.R2FileWhereInput = {
       isPublic: true,
       deletedAt: null,
+      avatarId: null,
+      productId: null,
     };
 
     const fetchBatchSize = Math.min(take * 2, 200);
@@ -272,6 +274,8 @@ export class R2FilesService {
       userId: userId,
       isPublic: true,
       deletedAt: null,
+      avatarId: null,
+      productId: null,
     };
 
     const fetchBatchSize = Math.min(take * 2, 200);
@@ -458,8 +462,10 @@ export class R2FilesService {
     const take = Math.min(Math.max(limit, 1), 100);
 
     const where: Prisma.R2FileWhereInput = {
-      userId,
-      deletedAt: null, // Only show non-deleted files
+      isPublic: true,
+      deletedAt: null,
+      avatarId: null,
+      productId: null,
     };
 
     const fetchBatchSize = Math.min(take * 2, 200);
