@@ -832,7 +832,8 @@ export class JobProcessingService {
       'grok-2-image-latest': 'grok-2-image-latest',
       'runway-gen4': 'runway-gen4',
       'runway-gen4-turbo': 'runway-gen4-turbo',
-      'chatgpt-image': 'chatgpt-image',
+      'gpt-image-1.5': 'gpt-image-1.5',
+      'chatgpt-image': 'gpt-image-1.5',
       'seedream-3.0': 'seedream-3.0',
     };
 

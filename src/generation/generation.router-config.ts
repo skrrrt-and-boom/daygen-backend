@@ -52,7 +52,7 @@ export const PROVIDER_ROUTES: Record<string, ProviderRouteConfig> = {
         allowedModels: FLUX_MODELS,
     },
     chatgpt: {
-        defaultModel: 'chatgpt-image',
+        defaultModel: 'gpt-image-1.5',
     },
     ideogram: {
         defaultModel: 'ideogram',
