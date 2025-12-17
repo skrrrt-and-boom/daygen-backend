@@ -73,6 +73,13 @@ export class ChatGptImageAdapter implements ImageProviderAdapter {
     if (!response.ok) {
       const details = stringifyUnknown(resultPayload);
       this.logger.error(`OpenAI API error ${response.status}: ${details}`);
+
+      // Log more details for debugging 400 errors
+      if (response.status === 400) {
+        this.logger.error(`[GPT Image 1.5] 400 Error Details - References count: ${references.length}, Prompt: ${dto.prompt.substring(0, 100)}...`);
+        this.logger.error(`[GPT Image 1.5] Full error response: ${JSON.stringify(resultPayload, null, 2)}`);
+      }
+
       throw new HttpException(
         buildHttpErrorPayload(
           `OpenAI API error: ${response.status}`,
@@ -158,6 +165,7 @@ export class ChatGptImageAdapter implements ImageProviderAdapter {
           size,
           quality,
           background,
+          moderation: 'low',
         }),
       },
       120_000, // GPT Image 1.5 can take up to 2 minutes for complex prompts
@@ -187,15 +195,26 @@ export class ChatGptImageAdapter implements ImageProviderAdapter {
     }
     // Use high input fidelity for reference images to preserve details
     formData.append('input_fidelity', 'high');
+    formData.append('moderation', 'low');
 
     // Convert reference URLs/data URLs to blobs and append as image[]
-    for (let i = 0; i < Math.min(references.length, 5); i++) {
+    // OpenAI's API accepts multiple images with the 'image[]' field name
+    this.logger.log(`[GPT Image 1.5] Processing ${references.length} reference images (max 16)`);
+    let attachedCount = 0;
+    for (let i = 0; i < Math.min(references.length, 16); i++) {
       const ref = references[i];
+      this.logger.log(`[GPT Image 1.5] Processing reference ${i + 1}/${references.length}: ${ref.substring(0, 50)}...`);
       const blob = await this.urlToBlob(ref);
       if (blob) {
-        formData.append('image', blob, `reference_${i}.png`);
+        // Use 'image[]' for array notation - OpenAI expects this for multiple images
+        formData.append('image[]', blob, `reference_${i}.png`);
+        attachedCount++;
+        this.logger.log(`[GPT Image 1.5] Attached reference ${i + 1} as blob (size: ${blob.size} bytes)`);
+      } else {
+        this.logger.warn(`[GPT Image 1.5] Failed to convert reference ${i + 1} to blob`);
       }
     }
+    this.logger.log(`[GPT Image 1.5] Attached ${attachedCount}/${references.length} references to form data`);
 
     const response = await this.http.fetchWithTimeout(
       'https://api.openai.com/v1/images/edits',

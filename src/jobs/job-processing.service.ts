@@ -79,6 +79,7 @@ export class JobProcessingService {
     try {
       switch (jobType) {
         case JobType.IMAGE_GENERATION:
+        case JobType.IMAGE_EDIT: // Edit uses same processing as image generation (with references)
         case JobType.IMAGE_RESIZE: // Resize uses same processing as image generation
           await this.processImageGeneration(jobId, userId, data);
           break;
