@@ -2,7 +2,6 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
-  NotFoundException,
 } from '@nestjs/common';
 import { Prisma, UsageStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';

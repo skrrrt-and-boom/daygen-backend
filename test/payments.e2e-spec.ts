@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import supertest from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
 import { StripeService } from '../src/payments/stripe.service';
 
 /**
@@ -15,7 +14,6 @@ import { StripeService } from '../src/payments/stripe.service';
  */
 describe('Payments E2E', () => {
     let app: INestApplication;
-    let prismaService: PrismaService;
 
     // Mock Stripe responses
     const mockStripeService = {
@@ -49,7 +47,6 @@ describe('Payments E2E', () => {
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
-        prismaService = app.get(PrismaService);
         await app.init();
     });
 

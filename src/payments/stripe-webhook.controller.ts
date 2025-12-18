@@ -97,32 +97,32 @@ export class StripeWebhookController {
       // Handle the event
       switch (event.type) {
         case 'checkout.session.completed':
-          await this.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+          await this.handleCheckoutSessionCompleted(event.data.object);
           break;
 
         case 'customer.subscription.deleted':
-          await this.handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
+          await this.handleSubscriptionDeleted(event.data.object);
           break;
 
         case 'invoice.paid':
         case 'invoice.payment_succeeded': // backward compatibility
-          await this.handleInvoicePaymentSucceeded(event.data.object as Stripe.Invoice);
+          await this.handleInvoicePaymentSucceeded(event.data.object);
           break;
 
         case 'invoice.payment_failed':
-          await this.handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
+          await this.handleInvoicePaymentFailed(event.data.object);
           break;
 
         case 'payment_intent.payment_failed':
-          await this.handlePaymentIntentFailed(event.data.object as Stripe.PaymentIntent);
+          await this.handlePaymentIntentFailed(event.data.object);
           break;
 
         case 'customer.subscription.created':
-          await this.handleSubscriptionCreated(event.data.object as Stripe.Subscription);
+          await this.handleSubscriptionCreated(event.data.object);
           break;
 
         case 'customer.subscription.updated':
-          await this.handleSubscriptionUpdated(event.data.object as Stripe.Subscription);
+          await this.handleSubscriptionUpdated(event.data.object);
           break;
 
         default:
@@ -235,8 +235,8 @@ export class StripeWebhookController {
         error.stack || error,
       );
       // Log specific error details
-      if ((error as any).code) {
-        this.logger.error(`Error code: ${(error as any).code}`);
+      if ((error).code) {
+        this.logger.error(`Error code: ${(error).code}`);
       }
       if (error instanceof Error) {
         this.logger.error(`Error message: ${error.message}`);

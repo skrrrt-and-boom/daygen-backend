@@ -243,18 +243,7 @@ export class PaymentsController {
   }
 
   @Post('test/create-manual-subscription')
-  createManualSubscription(
-    @Body()
-    _body: {
-      userEmail: string;
-      planId: string;
-      credits: number;
-      amount: number;
-      paymentIntentId: string;
-      stripeSubscriptionId: string;
-      stripePriceId: string;
-    },
-  ) {
+  createManualSubscription() {
     this.checkTestEnv();
     // This was not fully implemented in refactor plan as it's a test helper
     // If absolutely needed, I would implement it in SubscriptionService

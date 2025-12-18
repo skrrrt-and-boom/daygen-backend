@@ -11,7 +11,6 @@ export function validateStripePriceIds(): void {
 
     // In development/test, warn but don't block startup
     const isProduction = nodeEnv === 'production';
-    const logLevel = isProduction ? 'error' : 'warn';
 
     // Required subscription price IDs
     const requiredSubscriptionPriceIds = [
