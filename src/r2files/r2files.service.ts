@@ -130,6 +130,8 @@ export class R2FilesService {
     const where: Prisma.R2FileWhereInput = {
       isPublic: true,
       deletedAt: null,
+      avatarId: null,
+      productId: null,
     };
 
     const fetchBatchSize = Math.min(take * 2, 200);
@@ -272,6 +274,8 @@ export class R2FilesService {
       userId: userId,
       isPublic: true,
       deletedAt: null,
+      avatarId: null,
+      productId: null,
     };
 
     const fetchBatchSize = Math.min(take * 2, 200);
@@ -458,8 +462,10 @@ export class R2FilesService {
     const take = Math.min(Math.max(limit, 1), 100);
 
     const where: Prisma.R2FileWhereInput = {
-      userId,
-      deletedAt: null, // Only show non-deleted files
+      userId: userId,
+      deletedAt: null,
+      avatarId: null,
+      productId: null,
     };
 
     const fetchBatchSize = Math.min(take * 2, 200);
@@ -675,6 +681,60 @@ export class R2FilesService {
           {
             fileUrl: file.fileUrl,
           },
+        ],
+      },
+      data: {
+        deletedAt: now,
+        updatedAt: now,
+      },
+    });
+
+    return { success: true };
+  }
+
+  async removeByFileUrl(userId: string, fileUrl: string) {
+    // Normalize URL - strip query params for flexible matching
+    const normalized = fileUrl?.trim();
+    if (!normalized) {
+      throw new Error('fileUrl is required');
+    }
+    const baseUrl = normalized.split('?')[0];
+
+    // Try exact match first
+    let file = await this.prisma.r2File.findFirst({
+      where: {
+        userId,
+        deletedAt: null,
+        fileUrl: normalized,
+      },
+    });
+
+    // If no exact match, try matching by base URL (without query params)
+    if (!file) {
+      file = await this.prisma.r2File.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          fileUrl: {
+            startsWith: baseUrl,
+          },
+        },
+      });
+    }
+
+    if (!file) {
+      throw new Error('File not found');
+    }
+
+    // Soft delete
+    const now = new Date();
+    await this.prisma.r2File.updateMany({
+      where: {
+        userId,
+        deletedAt: null,
+        OR: [
+          { id: file.id },
+          { fileUrl: file.fileUrl },
         ],
       },
       data: {

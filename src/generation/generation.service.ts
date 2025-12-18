@@ -432,6 +432,7 @@ export class GenerationService {
         return this.withCircuit('runway', () => this.handleRunway(dto));
       case 'seedream-3.0':
         return this.withCircuit('seedream', () => this.handleSeedream(dto));
+      case 'gpt-image-1.5':
       case 'chatgpt-image':
         return this.withCircuit('openai', () => this.handleChatGpt(dto));
       case 'reve-image':

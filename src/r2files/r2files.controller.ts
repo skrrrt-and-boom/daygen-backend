@@ -173,6 +173,19 @@ export class R2FilesController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Delete('by-url')
+  removeByUrl(
+    @CurrentUser() user: SanitizedUser,
+    @Body() body: { fileUrl: string },
+  ) {
+    const fileUrl = typeof body.fileUrl === 'string' ? body.fileUrl.trim() : '';
+    if (!fileUrl) {
+      throw new HttpException('fileUrl is required', HttpStatus.BAD_REQUEST);
+    }
+    return this.r2FilesService.removeByFileUrl(user.authUserId, fileUrl);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete(':id')
   remove(@CurrentUser() user: SanitizedUser, @Param('id') id: string) {
     return this.r2FilesService.remove(user.authUserId, id);

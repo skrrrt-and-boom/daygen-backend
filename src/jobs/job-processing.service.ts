@@ -77,6 +77,7 @@ export class JobProcessingService {
     try {
       switch (jobType) {
         case JobType.IMAGE_GENERATION:
+        case JobType.IMAGE_EDIT: // Edit uses same processing as image generation (with references)
         case JobType.IMAGE_RESIZE: // Resize uses same processing as image generation
           await this.processImageGeneration(jobId, userId, data);
           break;
@@ -830,7 +831,8 @@ export class JobProcessingService {
       'grok-2-image-latest': 'grok-2-image-latest',
       'runway-gen4': 'runway-gen4',
       'runway-gen4-turbo': 'runway-gen4-turbo',
-      'chatgpt-image': 'chatgpt-image',
+      'gpt-image-1.5': 'gpt-image-1.5',
+      'chatgpt-image': 'gpt-image-1.5',
       'seedream-3.0': 'seedream-3.0',
     };
 

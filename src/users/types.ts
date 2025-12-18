@@ -7,6 +7,7 @@ export interface SanitizedUser {
   id: string;
   authUserId: string;
   email: string;
+  username: string | null;
   displayName: string | null;
   credits: number;
   profileImage: string | null;

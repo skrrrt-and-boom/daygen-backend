@@ -98,15 +98,35 @@ export class UsersService {
 
   async updateProfile(
     authUserId: string,
-    patch: { displayName?: string | null; profileImage?: string | null; bio?: string | null },
+    patch: { displayName?: string | null; profileImage?: string | null; bio?: string | null; username?: string | null },
   ): Promise<SanitizedUser> {
+    // Build update data object with only the fields that were explicitly provided
+    const updateData: Prisma.UserUpdateInput = {};
+
+    // Only update displayName if it was explicitly provided in the patch
+    if (patch.displayName !== undefined) {
+      updateData.displayName = patch.displayName?.trim() || null;
+    }
+
+    // Only update bio if it was explicitly provided in the patch
+    if (patch.bio !== undefined) {
+      updateData.bio = patch.bio ?? null;
+    }
+
+    // Only update profileImage if it was explicitly provided in the patch
+    // This prevents accidental deletion of profile pictures when updating name/bio
+    if (patch.profileImage !== undefined) {
+      updateData.profileImage = patch.profileImage ?? null;
+    }
+
+    // Only update username if it was explicitly provided in the patch
+    if (patch.username !== undefined) {
+      updateData.username = patch.username?.toLowerCase().trim() || null;
+    }
+
     const user = await this.prisma.user.update({
       where: { authUserId },
-      data: {
-        displayName: patch.displayName?.trim() || null,
-        profileImage: patch.profileImage ?? null,
-        bio: patch.bio ?? null,
-      },
+      data: updateData,
     });
 
     return this.toSanitizedUser(user);
@@ -336,6 +356,7 @@ export class UsersService {
       id: user.authUserId,
       authUserId: user.authUserId,
       email: normalizeEmailValue(user.email),
+      username: (user as any).username ?? null,
       displayName: user.displayName ?? null,
       credits: user.credits,
       profileImage: user.profileImage ?? null,
@@ -354,6 +375,23 @@ export class UsersService {
         }
         : null,
     };
+  }
+
+  /**
+   * Find a user by their username (for public profile URLs)
+   */
+  async findByUsername(username: string): Promise<SanitizedUser | null> {
+    const normalizedUsername = username.toLowerCase().trim();
+    const user = await this.prisma.user.findFirst({
+      where: { username: normalizedUsername },
+      include: { subscription: true },
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    return this.toSanitizedUser(user);
   }
 
   private extractString(value: unknown): string | null {
