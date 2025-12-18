@@ -1,6 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaymentStatus, PaymentType } from '@prisma/client';
+import { StripeService } from '../stripe.service';
+import { SanitizedUser } from '../../users/types';
+import {
+    getCreditPackageById,
+    getPriceIdForPackage
+} from '../../config/plans.config';
+import { UserWalletService } from './user-wallet.service';
 
 export interface PaymentHistoryItem {
     id: string;
@@ -12,11 +19,137 @@ export interface PaymentHistoryItem {
     metadata?: any;
 }
 
+type SessionStatusResult = {
+    status: string;
+    paymentStatus?: string;
+    mode?: string;
+    metadata?: any;
+};
+
 @Injectable()
 export class CreditLedgerService {
     private readonly logger = new Logger(CreditLedgerService.name);
 
-    constructor(private readonly prisma: PrismaService) { }
+    // In-memory cache for session status with TTL
+    private sessionCache = new Map<string, { data: any; expires: number }>();
+    private readonly CACHE_TTL = 120 * 1000; // 120 seconds;
+
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly stripeService: StripeService,
+        private readonly userWalletService: UserWalletService,
+    ) { }
+
+    async createOneTimePurchaseSession(
+        user: SanitizedUser,
+        packageId: string,
+    ): Promise<{ sessionId: string; url: string }> {
+        const creditPackage = getCreditPackageById(packageId);
+        if (!creditPackage) {
+            throw new BadRequestException('Invalid credit package');
+        }
+
+        const priceId = getPriceIdForPackage(packageId);
+
+        const session = await this.stripeService.createCheckoutSession(
+            user.authUserId,
+            'one_time',
+            priceId,
+            {
+                packageId,
+                credits: creditPackage.credits.toString(),
+                amount: creditPackage.price.toString(),
+            },
+        );
+
+        await this.createPaymentRecord({
+            userId: user.authUserId,
+            stripeSessionId: session.id,
+            amount: creditPackage.price,
+            credits: creditPackage.credits,
+            status: 'PENDING',
+            type: 'ONE_TIME',
+            metadata: {
+                packageId,
+                packageName: creditPackage.name,
+            },
+        });
+
+        return {
+            sessionId: session.id,
+            url: session.url!,
+        };
+    }
+
+    async handleSuccessfulPayment(session: { id: string; payment_intent?: string | null; mode?: string }): Promise<void> {
+        const payment = await this.findPaymentBySessionId(session.id);
+
+        if (!payment) {
+            this.logger.error(`Payment not found for session ${session.id}`);
+            return;
+        }
+
+        if (payment.status === 'COMPLETED') {
+            this.logger.warn(`Payment ${payment.id} already processed`);
+            return;
+        }
+
+        // Update payment status first
+        await this.prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+                status: 'COMPLETED',
+                stripePaymentIntentId: (session.payment_intent as string) || null,
+            },
+        });
+
+        // DUAL-WALLET: Add credits to top-up wallet (perpetual credits)
+        await this.userWalletService.addTopUpCredits(
+            payment.userId,
+            payment.credits,
+            session.id,
+            `Top-up purchase: ${payment.credits} credits`,
+        );
+
+        this.logger.log(`Successfully processed one-time payment ${session.id}. Added ${payment.credits} top-up credits.`);
+        this.invalidateSessionCache(session.id);
+    }
+
+    async getSessionStatus(sessionId: string): Promise<SessionStatusResult> {
+        const cached = this.sessionCache.get(sessionId);
+        if (cached && cached.expires > Date.now()) {
+            return cached.data;
+        }
+
+        const session = await this.stripeService.retrieveSession(sessionId);
+        const payment = await this.findPaymentBySessionId(sessionId);
+
+        const result: SessionStatusResult = {
+            status: session.payment_status,
+            paymentStatus: payment?.status || 'PENDING',
+            mode: session.mode,
+        };
+
+        if (session.mode === 'subscription' && payment?.metadata) {
+            const metadata = payment.metadata as any;
+            result.metadata = {
+                planName: metadata.planName,
+                billingPeriod: metadata.billingPeriod || 'monthly',
+                planId: metadata.planId,
+            };
+        }
+
+        this.sessionCache.set(sessionId, {
+            data: result,
+            expires: Date.now() + this.CACHE_TTL,
+        });
+
+        return result;
+    }
+
+    private invalidateSessionCache(sessionId: string): void {
+        this.sessionCache.delete(sessionId);
+    }
 
     async addCredits(userId: string, amount: number): Promise<void> {
         await this.prisma.user.update({

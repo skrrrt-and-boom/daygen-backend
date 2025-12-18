@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 import { GenerationService } from './generation.service';
 import { UsageService } from '../usage/usage.service';
-import { PaymentsService } from '../payments/payments.service';
 import { GeneratedAssetService } from './generated-asset.service';
 import type { SanitizedUser } from '../users/types';
 import { ProviderGenerateDto } from './dto/base-generate.dto';
@@ -27,7 +26,6 @@ export class GenerationOrchestrator {
     constructor(
         private readonly generationService: GenerationService,
         private readonly usageService: UsageService,
-        private readonly paymentsService: PaymentsService,
         private readonly generatedAssetService: GeneratedAssetService,
     ) { }
 

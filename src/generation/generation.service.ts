@@ -16,7 +16,7 @@ import { R2FilesService } from '../r2files/r2files.service';
 import { R2Service } from '../upload/r2.service';
 import { ProviderGenerateDto } from './dto/base-generate.dto';
 import { UsageService } from '../usage/usage.service';
-import { PaymentsService } from '../payments/payments.service';
+import { CreditLedgerService } from '../payments/services/credit-ledger.service';
 import { FluxImageAdapter } from './providers/flux.adapter';
 import { GeminiImageAdapter } from './providers/gemini.adapter';
 import { IdeogramImageAdapter } from './providers/ideogram.adapter';
@@ -219,7 +219,7 @@ export class GenerationService {
     private readonly r2FilesService: R2FilesService,
     private readonly r2Service: R2Service,
     private readonly usageService: UsageService,
-    private readonly paymentsService: PaymentsService,
+    private readonly creditLedgerService: CreditLedgerService,
     private readonly registry: ImageProviderRegistry,
     private readonly generatedAssetService: GeneratedAssetService,
     private readonly providerHttpService: ProviderHttpService,
@@ -316,7 +316,7 @@ export class GenerationService {
 
       // Auto-refund credits on generation failure
       try {
-        await this.paymentsService.refundCredits(
+        await this.creditLedgerService.refundCredits(
           user.authUserId,
           1,
           `Generation failed: ${error instanceof Error ? error.message : String(error)}`,

@@ -22,6 +22,7 @@ export class UsersService {
 
     return this.prisma.user.create({
       data: {
+        id: randomUUID(),
         email: normalizedEmail,
         authUserId,
         displayName: input.displayName?.trim() || null,
@@ -303,6 +304,7 @@ export class UsersService {
         // Create new user
         await this.prisma.user.create({
           data: {
+            id: randomUUID(),
             authUserId: authUser.id,
             email: normalizedEmail,
             displayName: desiredDisplayName ?? null,

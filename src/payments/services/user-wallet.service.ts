@@ -1,0 +1,458 @@
+import {
+    Injectable,
+    Logger,
+    NotFoundException,
+    BadRequestException,
+} from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { WalletType, TransactionType, Prisma } from '@prisma/client';
+
+export interface WalletBalance {
+    subscriptionCredits: number;
+    topUpCredits: number;
+    totalCredits: number;
+    subscriptionExpiresAt: Date | null;
+    graceLimit: number;
+}
+
+export interface DeductResult {
+    subscriptionDeducted: number;
+    topUpDeducted: number;
+    totalDeducted: number;
+    newSubscriptionBalance: number;
+    newTopUpBalance: number;
+}
+
+export class InsufficientCreditsError extends Error {
+    constructor(
+        public readonly required: number,
+        public readonly available: number,
+    ) {
+        super(`Insufficient credits. Required: ${required}, Available: ${available}`);
+        this.name = 'InsufficientCreditsError';
+    }
+}
+
+@Injectable()
+export class UserWalletService {
+    private readonly logger = new Logger(UserWalletService.name);
+
+    constructor(private readonly prisma: PrismaService) { }
+
+    /**
+     * Create a new wallet for a user
+     */
+    async createWallet(userId: string, initialTopUpCredits: number = 0) {
+        return this.prisma.userWallet.create({
+            data: {
+                userId,
+                topUpCredits: initialTopUpCredits,
+                subscriptionCredits: 0,
+            },
+        });
+    }
+
+    /**
+     * Get or create wallet for user
+     */
+    async getOrCreateWallet(userId: string) {
+        let wallet = await this.prisma.userWallet.findUnique({
+            where: { userId },
+        });
+
+        if (!wallet) {
+            // Migrate existing credits from User table
+            const user = await this.prisma.user.findUnique({
+                where: { authUserId: userId },
+                select: { credits: true },
+            });
+
+            wallet = await this.prisma.userWallet.create({
+                data: {
+                    userId,
+                    topUpCredits: Math.max(user?.credits || 0, 0),
+                    subscriptionCredits: 0,
+                },
+            });
+
+            this.logger.log(`Created wallet for user ${userId} with ${wallet.topUpCredits} top-up credits`);
+        }
+
+        return wallet;
+    }
+
+    /**
+     * Get wallet balance for display
+     */
+    async getBalance(userId: string): Promise<WalletBalance> {
+        const wallet = await this.getOrCreateWallet(userId);
+
+        return {
+            subscriptionCredits: wallet.subscriptionCredits,
+            topUpCredits: wallet.topUpCredits,
+            totalCredits: wallet.subscriptionCredits + wallet.topUpCredits,
+            subscriptionExpiresAt: wallet.subscriptionExpiresAt,
+            graceLimit: wallet.graceLimit,
+        };
+    }
+
+    /**
+     * Smart deduction: subscription credits first, then top-up credits
+     * Uses a transaction for atomicity
+     */
+    async deductCredits(
+        userId: string,
+        cost: number,
+        sourceType: string,
+        sourceId?: string,
+        description?: string,
+    ): Promise<DeductResult> {
+        if (cost <= 0) {
+            throw new BadRequestException('Cost must be positive');
+        }
+
+        return this.prisma.$transaction(async (tx) => {
+            const wallet = await tx.userWallet.findUnique({
+                where: { userId },
+            });
+
+            if (!wallet) {
+                throw new NotFoundException(`Wallet not found for user ${userId}`);
+            }
+
+            const totalAvailable = wallet.subscriptionCredits + wallet.topUpCredits + wallet.graceLimit;
+            if (totalAvailable < cost) {
+                throw new InsufficientCreditsError(cost, wallet.subscriptionCredits + wallet.topUpCredits);
+            }
+
+            // 1. Deduct from subscription wallet first (expiring credits)
+            let subscriptionDeducted = 0;
+            let topUpDeducted = 0;
+
+            if (wallet.subscriptionCredits > 0) {
+                subscriptionDeducted = Math.min(wallet.subscriptionCredits, cost);
+            }
+
+            // 2. Remaining cost from top-up wallet
+            const remaining = cost - subscriptionDeducted;
+            if (remaining > 0) {
+                topUpDeducted = remaining;
+            }
+
+            // 3. Update wallet balances
+            const newSubscriptionBalance = wallet.subscriptionCredits - subscriptionDeducted;
+            const newTopUpBalance = wallet.topUpCredits - topUpDeducted;
+
+            await tx.userWallet.update({
+                where: { userId },
+                data: {
+                    subscriptionCredits: newSubscriptionBalance,
+                    topUpCredits: newTopUpBalance,
+                },
+            });
+
+            // 4. Record transactions for audit trail
+            if (subscriptionDeducted > 0) {
+                await tx.walletTransaction.create({
+                    data: {
+                        userId,
+                        walletType: WalletType.SUBSCRIPTION,
+                        transactionType: TransactionType.DEBIT,
+                        amount: subscriptionDeducted,
+                        balanceBefore: wallet.subscriptionCredits,
+                        balanceAfter: newSubscriptionBalance,
+                        sourceType,
+                        sourceId,
+                        description,
+                    },
+                });
+            }
+
+            if (topUpDeducted > 0) {
+                await tx.walletTransaction.create({
+                    data: {
+                        userId,
+                        walletType: WalletType.TOPUP,
+                        transactionType: TransactionType.DEBIT,
+                        amount: topUpDeducted,
+                        balanceBefore: wallet.topUpCredits,
+                        balanceAfter: newTopUpBalance,
+                        sourceType,
+                        sourceId,
+                        description,
+                    },
+                });
+            }
+
+            // 5. Sync legacy credits field for backward compatibility
+            await tx.user.update({
+                where: { authUserId: userId },
+                data: { credits: newSubscriptionBalance + newTopUpBalance },
+            });
+
+            this.logger.log(
+                `Deducted ${cost} credits from user ${userId}: ${subscriptionDeducted} from subscription, ${topUpDeducted} from top-up`,
+            );
+
+            return {
+                subscriptionDeducted,
+                topUpDeducted,
+                totalDeducted: cost,
+                newSubscriptionBalance,
+                newTopUpBalance,
+            };
+        });
+    }
+
+    /**
+     * Add credits to top-up wallet (one-time purchases)
+     */
+    async addTopUpCredits(
+        userId: string,
+        amount: number,
+        sourceId: string,
+        description?: string,
+    ): Promise<void> {
+        if (amount <= 0) {
+            throw new BadRequestException('Amount must be positive');
+        }
+
+        await this.prisma.$transaction(async (tx) => {
+            const wallet = await this.getOrCreateWalletInTx(tx, userId);
+
+            const newBalance = wallet.topUpCredits + amount;
+
+            await tx.userWallet.update({
+                where: { userId },
+                data: { topUpCredits: newBalance },
+            });
+
+            await tx.walletTransaction.create({
+                data: {
+                    userId,
+                    walletType: WalletType.TOPUP,
+                    transactionType: TransactionType.CREDIT,
+                    amount,
+                    balanceBefore: wallet.topUpCredits,
+                    balanceAfter: newBalance,
+                    sourceType: 'PAYMENT',
+                    sourceId,
+                    description: description || 'Top-up purchase',
+                },
+            });
+
+            // Sync legacy credits
+            await tx.user.update({
+                where: { authUserId: userId },
+                data: { credits: wallet.subscriptionCredits + newBalance },
+            });
+        });
+
+        this.logger.log(`Added ${amount} top-up credits to user ${userId}`);
+    }
+
+    /**
+     * Reset subscription credits (called on billing cycle renewal)
+     * This is a RESET, not an ADD - previous subscription credits are wiped
+     */
+    async resetSubscriptionCredits(
+        userId: string,
+        planLimit: number,
+        expiresAt: Date,
+        sourceId?: string,
+    ): Promise<void> {
+        await this.prisma.$transaction(async (tx) => {
+            const wallet = await this.getOrCreateWalletInTx(tx, userId);
+
+            const oldBalance = wallet.subscriptionCredits;
+            const newBalance = planLimit;
+
+            await tx.userWallet.update({
+                where: { userId },
+                data: {
+                    subscriptionCredits: newBalance,
+                    subscriptionExpiresAt: expiresAt,
+                },
+            });
+
+            await tx.walletTransaction.create({
+                data: {
+                    userId,
+                    walletType: WalletType.SUBSCRIPTION,
+                    transactionType: TransactionType.RESET,
+                    amount: newBalance,
+                    balanceBefore: oldBalance,
+                    balanceAfter: newBalance,
+                    sourceType: 'SUBSCRIPTION_CYCLE',
+                    sourceId,
+                    description: `Subscription reset to ${planLimit} credits`,
+                    metadata: {
+                        planLimit,
+                        expiredCredits: oldBalance,
+                    } as Prisma.InputJsonValue,
+                },
+            });
+
+            // Sync legacy credits
+            await tx.user.update({
+                where: { authUserId: userId },
+                data: { credits: newBalance + wallet.topUpCredits },
+            });
+        });
+
+        this.logger.log(`Reset subscription credits for user ${userId} to ${planLimit} (expires: ${expiresAt.toISOString()})`);
+    }
+
+    /**
+     * Grant initial subscription credits (first subscription purchase)
+     */
+    async grantInitialSubscriptionCredits(
+        userId: string,
+        planCredits: number,
+        expiresAt: Date,
+        sourceId?: string,
+    ): Promise<void> {
+        await this.prisma.$transaction(async (tx) => {
+            const wallet = await this.getOrCreateWalletInTx(tx, userId);
+
+            await tx.userWallet.update({
+                where: { userId },
+                data: {
+                    subscriptionCredits: planCredits,
+                    subscriptionExpiresAt: expiresAt,
+                },
+            });
+
+            await tx.walletTransaction.create({
+                data: {
+                    userId,
+                    walletType: WalletType.SUBSCRIPTION,
+                    transactionType: TransactionType.CREDIT,
+                    amount: planCredits,
+                    balanceBefore: wallet.subscriptionCredits,
+                    balanceAfter: planCredits,
+                    sourceType: 'SUBSCRIPTION_CYCLE',
+                    sourceId,
+                    description: 'Initial subscription credits',
+                },
+            });
+
+            // Sync legacy credits
+            await tx.user.update({
+                where: { authUserId: userId },
+                data: { credits: planCredits + wallet.topUpCredits },
+            });
+        });
+
+        this.logger.log(`Granted ${planCredits} initial subscription credits to user ${userId}`);
+    }
+
+    /**
+     * Refund credits to the appropriate wallet
+     */
+    async refundCredits(
+        userId: string,
+        amount: number,
+        originalWalletType: WalletType,
+        reason: string,
+        sourceId?: string,
+    ): Promise<void> {
+        if (amount <= 0) {
+            return;
+        }
+
+        await this.prisma.$transaction(async (tx) => {
+            const wallet = await tx.userWallet.findUnique({
+                where: { userId },
+            });
+
+            if (!wallet) {
+                throw new NotFoundException(`Wallet not found for user ${userId}`);
+            }
+
+            const field = originalWalletType === WalletType.SUBSCRIPTION ? 'subscriptionCredits' : 'topUpCredits';
+            const oldBalance = wallet[field];
+            const newBalance = oldBalance + amount;
+
+            await tx.userWallet.update({
+                where: { userId },
+                data: { [field]: newBalance },
+            });
+
+            await tx.walletTransaction.create({
+                data: {
+                    userId,
+                    walletType: originalWalletType,
+                    transactionType: TransactionType.REFUND,
+                    amount,
+                    balanceBefore: oldBalance,
+                    balanceAfter: newBalance,
+                    sourceType: 'SYSTEM',
+                    sourceId,
+                    description: reason,
+                },
+            });
+
+            // Sync legacy credits
+            const totalCredits = originalWalletType === WalletType.SUBSCRIPTION
+                ? newBalance + wallet.topUpCredits
+                : wallet.subscriptionCredits + newBalance;
+
+            await tx.user.update({
+                where: { authUserId: userId },
+                data: { credits: totalCredits },
+            });
+        });
+
+        this.logger.log(`Refunded ${amount} credits to user ${userId} (${originalWalletType} wallet). Reason: ${reason}`);
+    }
+
+    /**
+     * Check if user has sufficient credits
+     */
+    async hasCredits(userId: string, cost: number): Promise<boolean> {
+        const wallet = await this.getOrCreateWallet(userId);
+        const totalAvailable = wallet.subscriptionCredits + wallet.topUpCredits + wallet.graceLimit;
+        return totalAvailable >= cost;
+    }
+
+    /**
+     * Get transaction history for a user
+     */
+    async getTransactionHistory(userId: string, limit: number = 50) {
+        return this.prisma.walletTransaction.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+        });
+    }
+
+    /**
+     * Helper to get or create wallet within a transaction
+     */
+    private async getOrCreateWalletInTx(
+        tx: Prisma.TransactionClient,
+        userId: string,
+    ) {
+        let wallet = await tx.userWallet.findUnique({
+            where: { userId },
+        });
+
+        if (!wallet) {
+            const user = await tx.user.findUnique({
+                where: { authUserId: userId },
+                select: { credits: true },
+            });
+
+            wallet = await tx.userWallet.create({
+                data: {
+                    userId,
+                    topUpCredits: Math.max(user?.credits || 0, 0),
+                    subscriptionCredits: 0,
+                },
+            });
+        }
+
+        return wallet;
+    }
+}

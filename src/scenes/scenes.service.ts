@@ -10,7 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { SanitizedUser } from '../users/types';
 import { UsageService } from '../usage/usage.service';
-import { PaymentsService } from '../payments/payments.service';
+import { CreditLedgerService } from '../payments/services/credit-ledger.service';
 import { R2Service } from '../upload/r2.service';
 import { R2FilesService } from '../r2files/r2files.service';
 import { CloudTasksService } from '../jobs/cloud-tasks.service';
@@ -77,12 +77,12 @@ export class ScenesService {
   constructor(
     private readonly configService: ConfigService,
     private readonly usageService: UsageService,
-    private readonly paymentsService: PaymentsService,
+    private readonly creditLedgerService: CreditLedgerService,
     private readonly r2Service: R2Service,
     private readonly r2FilesService: R2FilesService,
     @Inject(forwardRef(() => CloudTasksService))
     private readonly cloudTasksService: CloudTasksService,
-  ) {}
+  ) { }
 
   listTemplates(): PublicSceneTemplate[] {
     return listPublicSceneTemplates();
@@ -439,7 +439,7 @@ export class ScenesService {
 
     return {
       url: urls[0],
-        rawResponse: normalizedPayload,
+      rawResponse: normalizedPayload,
     };
   }
 
@@ -543,7 +543,7 @@ export class ScenesService {
   private async safeRefund(user: SanitizedUser, error: unknown) {
     try {
       const reason = error instanceof Error ? error.message : 'Scene generation failed';
-      await this.paymentsService.refundCredits(user.authUserId, this.costPerScene, reason);
+      await this.creditLedgerService.refundCredits(user.authUserId, this.costPerScene, reason);
       this.logger.log(`Refunded ${this.costPerScene} credit(s) to ${user.authUserId} after failure`);
     } catch (refundError) {
       this.logger.error(`Failed to refund credits for ${user.authUserId}`, refundError);

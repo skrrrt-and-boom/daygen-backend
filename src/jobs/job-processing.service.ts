@@ -4,7 +4,6 @@ import { JobStatus, JobType } from '@prisma/client';
 import { GenerationService } from '../generation/generation.service';
 import { GenerationOrchestrator } from '../generation/generation.orchestrator';
 import { UsageService } from '../usage/usage.service';
-import { PaymentsService } from '../payments/payments.service';
 import { CloudTasksService } from './cloud-tasks.service';
 import { LoggerService } from '../common/logger.service';
 import { MetricsService } from '../common/metrics.service';
@@ -34,7 +33,6 @@ export class JobProcessingService {
     private readonly generationService: GenerationService,
     private readonly generationOrchestrator: GenerationOrchestrator,
     private readonly usageService: UsageService,
-    private readonly paymentsService: PaymentsService,
     @Inject(forwardRef(() => CloudTasksService))
     private readonly cloudTasksService: CloudTasksService,
     @Inject(forwardRef(() => ScenesService))

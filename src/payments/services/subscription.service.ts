@@ -7,9 +7,15 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { StripeService } from '../stripe.service';
 import { UsersService } from '../../users/users.service';
-import { PlanConfigService } from './plan-config.service';
 import { CreditLedgerService } from './credit-ledger.service';
+import { UserWalletService } from './user-wallet.service';
 import { SubscriptionStatus } from '@prisma/client';
+import {
+    getPlanByStripePriceId,
+    getSubscriptionPlanById,
+    getPriceIdForSubscription
+} from '../../config/plans.config';
+import { SanitizedUser } from '../../users/types';
 import Stripe from 'stripe';
 
 export interface SubscriptionInfo {
@@ -34,9 +40,133 @@ export class SubscriptionService {
         private readonly prisma: PrismaService,
         private readonly stripeService: StripeService,
         private readonly usersService: UsersService,
-        private readonly planConfigService: PlanConfigService,
         private readonly creditLedgerService: CreditLedgerService,
+        private readonly userWalletService: UserWalletService,
     ) { }
+
+    async createSubscriptionSession(
+        user: SanitizedUser,
+        planId: string,
+    ): Promise<{ sessionId: string; url: string }> {
+        this.logger.log(`🔍 Creating subscription session for planId: ${planId}`);
+
+        const subscriptionPlan = getSubscriptionPlanById(planId);
+
+        if (!subscriptionPlan) {
+            this.logger.error(`❌ Invalid subscription plan: ${planId}`);
+            throw new BadRequestException('Invalid subscription plan');
+        }
+
+        const existingSubscription = await this.getUserSubscription(
+            user.authUserId,
+        );
+
+        if (existingSubscription && existingSubscription.status === 'ACTIVE') {
+            const currentPlanId = existingSubscription.planId;
+
+            if (currentPlanId === planId) {
+                throw new BadRequestException(
+                    'You already have this subscription plan. To upgrade or downgrade, please use the subscription management page.',
+                );
+            }
+
+            throw new BadRequestException(
+                'You already have an active subscription. Please use the upgrade/downgrade option instead.',
+            );
+        }
+
+        const priceId = getPriceIdForSubscription(planId);
+
+        const existingPending = await this.creditLedgerService.findPendingSubscriptionPayment(
+            user.authUserId,
+            planId
+        );
+
+        if (existingPending?.stripeSessionId) {
+            try {
+                const existingSession = await this.stripeService.retrieveSession(
+                    existingPending.stripeSessionId,
+                );
+                if (existingSession.status === 'open') {
+                    this.logger.log(`♻️ Reusing existing session: ${existingSession.id}`);
+                    return {
+                        sessionId: existingSession.id,
+                        url: existingSession.url!,
+                    };
+                }
+            } catch {
+                this.logger.warn('Existing session not found, creating new one');
+            }
+        }
+
+        const uniqueIdempotencyKey = `${user.authUserId}:subscription:${planId}:${Date.now()}`;
+        const session = await this.stripeService.createCheckoutSession(
+            user.authUserId,
+            'subscription',
+            priceId,
+            {
+                planId,
+                credits: subscriptionPlan.credits.toString(),
+                amount: subscriptionPlan.price.toString(),
+            },
+            { idempotencyKey: uniqueIdempotencyKey },
+        );
+
+        if (existingPending) {
+            await this.creditLedgerService.updatePaymentStatus(existingPending.id, 'PENDING', {
+                metadata: {
+                    ...(existingPending.metadata as any),
+                    planId,
+                    planName: subscriptionPlan.name,
+                    billingPeriod: subscriptionPlan.interval === 'year' ? 'yearly' : 'monthly',
+                }
+            });
+            // Also update session ID directly
+            await this.prisma.payment.update({
+                where: { id: existingPending.id },
+                data: { stripeSessionId: session.id }
+            });
+        } else {
+            await this.creditLedgerService.createPaymentRecord({
+                userId: user.authUserId,
+                stripeSessionId: session.id,
+                amount: subscriptionPlan.price,
+                credits: subscriptionPlan.credits,
+                status: 'PENDING',
+                type: 'SUBSCRIPTION',
+                metadata: {
+                    planId,
+                    planName: subscriptionPlan.name,
+                    billingPeriod: subscriptionPlan.interval === 'year' ? 'yearly' : 'monthly',
+                },
+            });
+        }
+
+        return {
+            sessionId: session.id,
+            url: session.url!,
+        };
+    }
+
+    async createCustomerPortalSession(
+        userId: string,
+        returnUrl: string,
+    ): Promise<{ url: string }> {
+        const user = await this.prisma.user.findUnique({
+            where: { authUserId: userId },
+        });
+
+        if (!user?.stripeCustomerId) {
+            throw new BadRequestException('User has no billing account');
+        }
+
+        const session = await this.stripeService.createPortalSession(
+            user.stripeCustomerId,
+            returnUrl,
+        );
+
+        return { url: session.url };
+    }
 
     async getUserSubscription(userId: string): Promise<SubscriptionInfo | null> {
         const subscription = await this.prisma.subscription.findUnique({
@@ -47,7 +177,7 @@ export class SubscriptionService {
             return null;
         }
 
-        const plan = this.planConfigService.getPlanByStripePriceId(
+        const plan = getPlanByStripePriceId(
             subscription.stripePriceId,
         );
 
@@ -145,15 +275,15 @@ export class SubscriptionService {
             throw new NotFoundException('No active subscription found');
         }
 
-        const newPlan = this.planConfigService.getSubscriptionPlanById(newPlanId);
+        const newPlan = getSubscriptionPlanById(newPlanId);
         if (!newPlan) {
             throw new BadRequestException('Invalid plan ID');
         }
 
-        const newPriceId = this.planConfigService.getPriceIdForSubscription(newPlan.id);
+        const newPriceId = getPriceIdForSubscription(newPlan.id);
 
         // Check if it's actually an upgrade (higher price)
-        const currentPlan = this.planConfigService.getPlanByStripePriceId(subscription.stripePriceId);
+        const currentPlan = getPlanByStripePriceId(subscription.stripePriceId);
 
         // If we can't resolve current plan, assume upgrade if prices differ, or just proceed
         const isUpgrade = currentPlan ? newPlan.price > currentPlan.price : true;
@@ -237,7 +367,7 @@ export class SubscriptionService {
                 data: { stripeCustomerId: customer.id } as any,
             });
 
-            const fallbackPlan = this.planConfigService.getPlanByStripePriceId(priceId);
+            const fallbackPlan = getPlanByStripePriceId(priceId);
             const fallbackCredits = fallbackPlan?.credits || 0;
 
             await this.prisma.subscription.upsert({
@@ -272,6 +402,19 @@ export class SubscriptionService {
                     credits: fallbackCredits,
                 },
             });
+
+            // DUAL-WALLET: Grant initial subscription credits
+            const periodEnd = new Date(
+                ((subscription as any).current_period_end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
+            );
+
+            await this.userWalletService.grantInitialSubscriptionCredits(
+                user.authUserId,
+                fallbackCredits,
+                periodEnd,
+                subscription.id,
+            );
+            this.logger.log(`Granted ${fallbackCredits} initial subscription credits to user ${user.authUserId}`);
 
             const subscriptionPayment = await this.creditLedgerService.findPendingSubscriptionPaymentByStripeId(
                 user.authUserId,
@@ -309,25 +452,33 @@ export class SubscriptionService {
                 return;
             }
 
-            const plan = this.planConfigService.getPlanByStripePriceId(subscription.stripePriceId);
-            const creditsToAdd = plan?.credits || 0;
+            const plan = getPlanByStripePriceId(subscription.stripePriceId);
+            const planCredits = plan?.credits || 0;
+            const periodEnd = new Date(invoice.period_end * 1000);
 
-            await this.creditLedgerService.addCredits(subscription.userId, creditsToAdd);
+            // DUAL-WALLET: RESET subscription credits (not ADD!)
+            // This is the key change: subscription credits reset each billing cycle
+            await this.userWalletService.resetSubscriptionCredits(
+                subscription.userId,
+                planCredits,
+                periodEnd,
+                subscriptionId,
+            );
 
             await this.creditLedgerService.createPaymentRecord({
                 userId: subscription.userId,
                 stripeSessionId: `invoice_${invoice.id}`,
                 amount: invoice.amount_paid,
-                credits: creditsToAdd,
+                credits: planCredits,
                 status: 'COMPLETED',
-                // Fix: Use SUBSCRIPTION instead of SUBSCRIPTION_RENEWAL
                 type: 'SUBSCRIPTION',
                 metadata: {
                     invoiceId: invoice.id,
                     subscriptionId: subscriptionId,
                     periodStart: invoice.period_start,
                     periodEnd: invoice.period_end,
-                    type: 'renewal' // Add type in metadata instead
+                    type: 'renewal',
+                    walletAction: 'reset', // Track that this was a reset, not an add
                 },
             });
 
@@ -336,11 +487,11 @@ export class SubscriptionService {
                 where: { id: subscription.id },
                 data: {
                     currentPeriodStart: new Date(invoice.period_start * 1000),
-                    currentPeriodEnd: new Date(invoice.period_end * 1000),
+                    currentPeriodEnd: periodEnd,
                 },
             });
 
-            this.logger.log(`Processed recurring payment for user ${subscription.userId}. Added ${creditsToAdd} credits.`);
+            this.logger.log(`Processed recurring payment for user ${subscription.userId}. Reset subscription credits to ${planCredits}.`);
         } catch (error) {
             this.logger.error(`Error processing recurring payment for invoice ${invoice.id}:`, error);
             throw error;

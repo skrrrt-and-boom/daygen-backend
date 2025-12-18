@@ -14,7 +14,7 @@ model User {
   email            String        @unique
   createdAt        DateTime      @default(now())
   displayName      String?
-  credits          Int           @default(20)
+  credits          Int           @default(20)  // Legacy - kept for backward compatibility
   profileImage     String?
   bio              String?
   updatedAt        DateTime      @updatedAt
@@ -27,6 +27,7 @@ model User {
   usageEvents      UsageEvent[]
   voices           Voice[]
   avatars          Avatar[]
+  wallet           UserWallet?   // Dual-wallet architecture
 
   products         Product[]
   userMusic        UserMusic[]
@@ -329,6 +330,63 @@ enum CreditSourceType {
   PAYMENT
   SUBSCRIPTION_CYCLE
   SYSTEM
+}
+
+// Dual-Wallet Architecture
+enum WalletType {
+  SUBSCRIPTION
+  TOPUP
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+  RESET
+  REFUND
+  EXPIRATION
+}
+
+model UserWallet {
+  id                     String    @id @default(cuid())
+  userId                 String    @unique
+  
+  // Subscription wallet (resets each billing cycle)
+  subscriptionCredits    Int       @default(0)
+  subscriptionExpiresAt  DateTime?
+  
+  // Top-up wallet (perpetual - never expires)
+  topUpCredits           Int       @default(0)
+  
+  // Grace limit for overdraft
+  graceLimit             Int       @default(50)
+  
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  
+  user                   User      @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+model WalletTransaction {
+  id              String          @id @default(cuid())
+  userId          String
+  walletType      WalletType
+  transactionType TransactionType
+  amount          Int
+  balanceBefore   Int
+  balanceAfter    Int
+  
+  // Audit fields
+  sourceType      String?         // PAYMENT | JOB | SUBSCRIPTION_CYCLE | SYSTEM
+  sourceId        String?         // paymentId, jobId, subscriptionId
+  description     String?
+  metadata        Json?
+  
+  createdAt       DateTime        @default(now())
+  
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([sourceType, sourceId])
 }
 
 // Avatar and Product models for user content

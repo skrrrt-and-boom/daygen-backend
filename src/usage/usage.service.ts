@@ -7,6 +7,7 @@ import {
 import { Prisma, UsageStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SanitizedUser } from '../users/types';
+import { UserWalletService, InsufficientCreditsError } from '../payments/services/user-wallet.service';
 
 interface UsageEventInput {
   provider: string;
@@ -26,23 +27,17 @@ export class UsageService {
   private readonly logger = new Logger(UsageService.name);
   private readonly defaultCost = 1;
 
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly userWalletService: UserWalletService,
+  ) { }
 
+  // DUAL-WALLET: Check if user has sufficient credits across both wallets
   async checkCredits(user: SanitizedUser, cost: number = 1): Promise<boolean> {
-    const userRecord = await this.prisma.user.findUnique({
-      where: { authUserId: user.authUserId },
-      select: { credits: true },
-    });
-
-    if (!userRecord) {
-      throw new NotFoundException('User not found');
-    }
-
-    const graceCredits = this.getGraceCredits();
-    const projected = userRecord.credits - cost;
-    return projected >= -graceCredits;
+    return this.userWalletService.hasCredits(user.authUserId, cost);
   }
 
+  // DUAL-WALLET: Record generation and deduct using smart deduction
   async recordGeneration(
     user: SanitizedUser,
     event: UsageEventInput,
@@ -50,32 +45,19 @@ export class UsageService {
     const cost = this.normalizeCost(event.cost);
     const sanitizedMetadata = this.sanitizeMetadata(event.metadata);
 
-    // Apply atomic debit via SQL function; it enforces grace based on plan
     try {
-      const newBalanceRows = await this.prisma.$queryRawUnsafe<
-        { apply_credit_delta: number }[]
-      >(
-        'SELECT public.apply_credit_delta($1, $2::BIGINT, $3, $4, $5, $6, $7, $8, $9::jsonb)::INTEGER as apply_credit_delta',
+      // Smart deduction: subscription credits first, then top-up
+      const deductResult = await this.userWalletService.deductCredits(
         user.authUserId,
-        -cost,
+        cost,
         'JOB',
-        'JOB',
-        null,
-        event.provider,
-        event.model ?? null,
-        null,
-        JSON.stringify({
-          prompt: event.prompt?.slice(0, 256),
-          ...sanitizedMetadata,
-        }),
+        undefined, // sourceId
+        `Generation: ${event.provider}${event.model ? ` / ${event.model}` : ''}`,
       );
-      const balanceAfterRaw = newBalanceRows?.[0]?.apply_credit_delta ?? 0;
-      const balanceAfter =
-        typeof balanceAfterRaw === 'bigint'
-          ? Number(balanceAfterRaw)
-          : Number(balanceAfterRaw);
 
-      // Write a lightweight usage event for audit and pagination
+      const balanceAfter = deductResult.newSubscriptionBalance + deductResult.newTopUpBalance;
+
+      // Write usage event for audit and pagination
       await this.prisma.usageEvent.create({
         data: {
           userId: user.authUserId,
@@ -85,7 +67,13 @@ export class UsageService {
           cost,
           balanceAfter,
           status: balanceAfter < 0 ? UsageStatus.GRACE : UsageStatus.COMPLETED,
-          metadata: sanitizedMetadata as Prisma.InputJsonValue | undefined,
+          metadata: {
+            ...sanitizedMetadata,
+            walletDeduction: {
+              subscription: deductResult.subscriptionDeducted,
+              topUp: deductResult.topUpDeducted,
+            },
+          } as Prisma.InputJsonValue,
         },
       });
 
@@ -94,6 +82,11 @@ export class UsageService {
         balanceAfter,
       };
     } catch (e) {
+      if (e instanceof InsufficientCreditsError) {
+        throw new ForbiddenException(
+          `Insufficient credits. Required: ${e.required}, Available: ${e.available}`,
+        );
+      }
       if (e instanceof Error && /Insufficient credits/.test(e.message)) {
         throw new ForbiddenException(
           'Insufficient credits to complete generation.',
