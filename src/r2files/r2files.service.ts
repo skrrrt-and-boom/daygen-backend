@@ -462,7 +462,7 @@ export class R2FilesService {
     const take = Math.min(Math.max(limit, 1), 100);
 
     const where: Prisma.R2FileWhereInput = {
-      isPublic: true,
+      userId: userId,
       deletedAt: null,
       avatarId: null,
       productId: null,
