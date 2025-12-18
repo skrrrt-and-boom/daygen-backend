@@ -692,6 +692,60 @@ export class R2FilesService {
     return { success: true };
   }
 
+  async removeByFileUrl(userId: string, fileUrl: string) {
+    // Normalize URL - strip query params for flexible matching
+    const normalized = fileUrl?.trim();
+    if (!normalized) {
+      throw new Error('fileUrl is required');
+    }
+    const baseUrl = normalized.split('?')[0];
+
+    // Try exact match first
+    let file = await this.prisma.r2File.findFirst({
+      where: {
+        userId,
+        deletedAt: null,
+        fileUrl: normalized,
+      },
+    });
+
+    // If no exact match, try matching by base URL (without query params)
+    if (!file) {
+      file = await this.prisma.r2File.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          fileUrl: {
+            startsWith: baseUrl,
+          },
+        },
+      });
+    }
+
+    if (!file) {
+      throw new Error('File not found');
+    }
+
+    // Soft delete
+    const now = new Date();
+    await this.prisma.r2File.updateMany({
+      where: {
+        userId,
+        deletedAt: null,
+        OR: [
+          { id: file.id },
+          { fileUrl: file.fileUrl },
+        ],
+      },
+      data: {
+        deletedAt: now,
+        updatedAt: now,
+      },
+    });
+
+    return { success: true };
+  }
+
   private toResponse(file: {
     id: string;
     fileName: string;

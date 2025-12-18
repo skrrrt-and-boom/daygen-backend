@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  NotFoundException,
+  Param,
   Patch,
   Post,
   Query,
@@ -21,7 +23,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly supabaseService: SupabaseService,
-  ) {}
+  ) { }
 
   @Post('me')
   async createUserProfile(
@@ -87,5 +89,30 @@ export class UsersController {
   @Post('me/remove-profile-picture')
   async removeProfilePicture(@CurrentUser() user: SanitizedUser) {
     return this.usersService.removeProfilePicture(user.authUserId);
+  }
+
+  /**
+   * Lookup a user by their username for public profile URLs
+   * No auth required - public endpoint
+   */
+  @Get('by-username/:username')
+  async getUserByUsername(@Param('username') username: string) {
+    if (!username) {
+      throw new NotFoundException('Username is required');
+    }
+
+    const user = await this.usersService.findByUsername(username);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Return only public profile fields
+    return {
+      id: user.authUserId,
+      username: user.username,
+      displayName: user.displayName,
+      profileImage: user.profileImage,
+      bio: user.bio,
+    };
   }
 }

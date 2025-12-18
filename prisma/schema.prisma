@@ -12,6 +12,7 @@ model User {
   authUserId       String        @id
   id               String        @unique
   email            String        @unique
+  username         String?       @unique // URL-friendly identifier (e.g., "john-doe")
   createdAt        DateTime      @default(now())
   displayName      String?
   credits          Int           @default(20)
