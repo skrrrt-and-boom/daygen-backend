@@ -10,7 +10,7 @@ datasource db {
 
 model User {
   authUserId       String        @id
-  id               String        @unique
+  id               String?       @unique @default(cuid())
   email            String        @unique
   username         String?       @unique // URL-friendly identifier (e.g., "john-doe")
   createdAt        DateTime      @default(now())
