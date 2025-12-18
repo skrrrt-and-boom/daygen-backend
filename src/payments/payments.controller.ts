@@ -22,6 +22,7 @@ import { StripeService } from './stripe.service';
 import {
   getSubscriptionPlans,
   getCreditPackages,
+  getDefaultGraceLimit,
 } from '../config/plans.config';
 
 @Controller('payments')
@@ -145,7 +146,7 @@ export class PaymentsController {
         topUpCredits: (user as any).credits || 0,
         totalCredits: (user as any).credits || 0,
         subscriptionExpiresAt: null,
-        graceLimit: 50,
+        graceLimit: getDefaultGraceLimit(),
       };
     }
   }
@@ -189,7 +190,10 @@ export class PaymentsController {
 
   @Post('portal')
   async createPortal(@CurrentUser() user: SanitizedUser) {
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const nodeEnv = process.env.NODE_ENV || 'development';
+    const baseUrl = nodeEnv === 'production'
+      ? (process.env.FRONTEND_URL || 'https://daygen.ai')
+      : (process.env.FRONTEND_URL || 'http://localhost:5173');
     const { url } = await this.subscriptionService.createCustomerPortalSession(
       user.authUserId,
       `${baseUrl}/account/billing`,

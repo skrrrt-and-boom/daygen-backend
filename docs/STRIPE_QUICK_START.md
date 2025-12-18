@@ -1,6 +1,4 @@
-# [Archived] Stripe Quick Start Guide
-
-This quick start has its key actions summarized in `docs/BACKEND_GUIDE.md` → Payments. Keep this file for detailed product lists and reference.
+# Stripe Quick Start Guide
 
 Quick setup checklist for developers familiar with Stripe.
 
@@ -14,7 +12,7 @@ Quick setup checklist for developers familiar with Stripe.
 - [ ] Create Stripe account
 - [ ] Enable test mode
 - [ ] Get API keys (Developers → API keys)
-- [ ] Create 6 products with prices (see product list below)
+- [ ] Create 9 products with prices (see product list below)
 - [ ] Create webhook endpoint
 - [ ] Copy webhook signing secret
 
@@ -31,21 +29,35 @@ Quick setup checklist for developers familiar with Stripe.
 - [ ] Verify credits added
 - [ ] Check webhook events
 
+---
+
 ## Required Products
 
-### One-Time Purchases
-| Product | Price | Credits | Price ID Variable |
-|---------|-------|---------|-------------------|
-| Test Pack | $0.01 | 10 | `STRIPE_TEST_PRICE_ID` |
-| Starter Pack | $10.00 | 100 | `STRIPE_STARTER_PRICE_ID` |
-| Popular Pack | $40.00 | 500 | `STRIPE_POPULAR_PRICE_ID` |
-| Best Value Pack | $70.00 | 1000 | `STRIPE_BEST_VALUE_PRICE_ID` |
+### Subscriptions - Monthly
 
-### Subscriptions
 | Product | Price | Credits | Price ID Variable |
 |---------|-------|---------|-------------------|
-| Pro Subscription | $29.00/month | 1000 | `STRIPE_PRO_PRICE_ID` |
-| Enterprise Subscription | $99.00/month | 5000 | `STRIPE_ENTERPRISE_PRICE_ID` |
+| Starter Monthly | $39.00/month | 200 | `STRIPE_STARTER_PRICE_ID` |
+| Pro Monthly | $99.00/month | 1,000 | `STRIPE_PRO_PRICE_ID` |
+| Agency Monthly | $299.00/month | 4,000 | `STRIPE_AGENCY_PRICE_ID` |
+
+### Subscriptions - Yearly (20% savings)
+
+| Product | Price | Credits | Price ID Variable |
+|---------|-------|---------|-------------------|
+| Starter Yearly | $374.40/year | 2,400 | `STRIPE_STARTER_YEARLY_PRICE_ID` |
+| Pro Yearly | $950.40/year | 12,000 | `STRIPE_PRO_YEARLY_PRICE_ID` |
+| Agency Yearly | $2,870.40/year | 48,000 | `STRIPE_AGENCY_YEARLY_PRICE_ID` |
+
+### Top-Up Packages (One-Time)
+
+| Product | Price | Credits | Price ID Variable |
+|---------|-------|---------|-------------------|
+| Starter Top-Up | $19.00 | 100 | `STRIPE_STARTER_TOPUP_PRICE_ID` |
+| Pro Top-Up | $79.00 | 500 | `STRIPE_PRO_TOPUP_PRICE_ID` |
+| Agency Top-Up | $249.00 | 2,000 | `STRIPE_AGENCY_TOPUP_PRICE_ID` |
+
+---
 
 ## Environment Variables Reference
 
@@ -56,13 +68,20 @@ STRIPE_PUBLISHABLE_KEY=pk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 FRONTEND_URL=http://localhost:5173
 
-# Price IDs
-STRIPE_TEST_PRICE_ID=price_...
+# Monthly Subscriptions
 STRIPE_STARTER_PRICE_ID=price_...
-STRIPE_POPULAR_PRICE_ID=price_...
-STRIPE_BEST_VALUE_PRICE_ID=price_...
 STRIPE_PRO_PRICE_ID=price_...
-STRIPE_ENTERPRISE_PRICE_ID=price_...
+STRIPE_AGENCY_PRICE_ID=price_...
+
+# Yearly Subscriptions
+STRIPE_STARTER_YEARLY_PRICE_ID=price_...
+STRIPE_PRO_YEARLY_PRICE_ID=price_...
+STRIPE_AGENCY_YEARLY_PRICE_ID=price_...
+
+# Top-Ups
+STRIPE_STARTER_TOPUP_PRICE_ID=price_...
+STRIPE_PRO_TOPUP_PRICE_ID=price_...
+STRIPE_AGENCY_TOPUP_PRICE_ID=price_...
 ```
 
 ### Frontend (.env)
@@ -70,6 +89,8 @@ STRIPE_ENTERPRISE_PRICE_ID=price_...
 VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...
 VITE_API_URL=http://localhost:3000/api
 ```
+
+---
 
 ## Webhook Events Required
 - `checkout.session.completed`
@@ -121,6 +142,4 @@ stripe logs tail
 2. Verify webhook processing
 3. Check payment history
 4. Test subscription management
-5. Prepare for production deployment
-
-For detailed instructions, see [STRIPE_SETUP.md](../STRIPE_SETUP.md).
+5. See [STRIPE_PRODUCTION_CHECKLIST.md](./STRIPE_PRODUCTION_CHECKLIST.md) for production deployment

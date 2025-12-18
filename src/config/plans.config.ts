@@ -18,18 +18,26 @@ export interface SubscriptionPlan {
     videoMinutes?: number; // Approximate video duration in minutes
 }
 
+// Configurable grace limit - can be overridden via environment variable
+export const DEFAULT_GRACE_LIMIT = parseInt(process.env.DEFAULT_GRACE_LIMIT || '50', 10);
+
+export function getDefaultGraceLimit(): number {
+    return DEFAULT_GRACE_LIMIT;
+}
+
 // Top-Up Credit Packages (perpetual - never expire)
+// Names match subscription tier names for consistency
 export const CREDIT_PACKAGES: CreditPackage[] = [
     {
         id: 'starter-topup',
-        name: 'Starter Top-Up',
+        name: 'Starter',
         credits: 100,
         price: 1900, // $19.00
         description: '~1 minute of video',
     },
     {
         id: 'pro-topup',
-        name: 'Pro Top-Up',
+        name: 'Pro',
         credits: 500,
         price: 7900, // $79.00
         badge: 'POPULAR',
@@ -37,7 +45,7 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
     },
     {
         id: 'agency-topup',
-        name: 'Agency Top-Up',
+        name: 'Agency',
         credits: 2000,
         price: 24900, // $249.00
         badge: 'BEST_VALUE',
@@ -141,7 +149,14 @@ export function getPriceIdForPackage(packageId: string): string {
         // Legacy
         test: process.env.STRIPE_TEST_PRICE_ID || '',
     };
-    return priceIdMap[packageId] || '';
+    const priceId = priceIdMap[packageId];
+    if (!priceId) {
+        throw new Error(
+            `Stripe Price ID not configured for package "${packageId}". ` +
+            `Please set the corresponding STRIPE_*_TOPUP_PRICE_ID environment variable.`
+        );
+    }
+    return priceId;
 }
 
 export function getPriceIdForSubscription(planId: string): string {
@@ -158,7 +173,14 @@ export function getPriceIdForSubscription(planId: string): string {
         enterprise: process.env.STRIPE_PRO_PRICE_ID || '',
         'enterprise-yearly': process.env.STRIPE_PRO_YEARLY_PRICE_ID || '',
     };
-    return priceIdMap[planId] || '';
+    const priceId = priceIdMap[planId];
+    if (!priceId) {
+        throw new Error(
+            `Stripe Price ID not configured for subscription plan "${planId}". ` +
+            `Please set the corresponding STRIPE_*_PRICE_ID environment variable.`
+        );
+    }
+    return priceId;
 }
 
 export function getPlanByStripePriceId(stripePriceId: string): SubscriptionPlan | undefined {

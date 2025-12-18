@@ -32,6 +32,34 @@ async function bootstrap() {
     );
     process.exit(1);
   }
+
+  // Stripe Price ID validation (warnings - not fatal in development)
+  const stripePriceIds = [
+    'STRIPE_STARTER_PRICE_ID',
+    'STRIPE_PRO_PRICE_ID',
+    'STRIPE_AGENCY_PRICE_ID',
+    'STRIPE_STARTER_YEARLY_PRICE_ID',
+    'STRIPE_PRO_YEARLY_PRICE_ID',
+    'STRIPE_AGENCY_YEARLY_PRICE_ID',
+    'STRIPE_STARTER_TOPUP_PRICE_ID',
+    'STRIPE_PRO_TOPUP_PRICE_ID',
+    'STRIPE_AGENCY_TOPUP_PRICE_ID',
+  ];
+
+  const missingStripeIds = stripePriceIds.filter(
+    (key) => !configService.get(key),
+  );
+
+  if (missingStripeIds.length > 0) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const message = `⚠️  Missing Stripe Price IDs: ${missingStripeIds.join(', ')}`;
+    if (isProduction) {
+      console.error(`❌ ${message} - Payment processing will fail!`);
+      process.exit(1);
+    } else {
+      console.warn(message);
+    }
+  }
   app.useLogger(app.get(Logger));
   app.setGlobalPrefix('api', {
     exclude: [

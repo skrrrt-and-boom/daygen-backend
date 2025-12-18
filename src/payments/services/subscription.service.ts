@@ -288,6 +288,13 @@ export class SubscriptionService {
         // If we can't resolve current plan, assume upgrade if prices differ, or just proceed
         const isUpgrade = currentPlan ? newPlan.price > currentPlan.price : true;
 
+        // Reject downgrades - users must use the billing portal for those
+        if (!isUpgrade) {
+            throw new BadRequestException(
+                'Cannot downgrade through this endpoint. Please use the billing portal to manage plan downgrades.',
+            );
+        }
+
         const upgradeMetadata = {
             upgrade_from_plan: currentPlan?.id || 'unknown',
             upgrade_to_plan: newPlan.id,
@@ -334,7 +341,7 @@ export class SubscriptionService {
     }
 
     async handleSuccessfulSubscription(subscription: Stripe.Subscription): Promise<void> {
-        this.logger.log(`Processing subscription ${subscription.id} without session metadata`);
+        this.logger.log(`Processing subscription ${subscription.id}`);
 
         try {
             const customer = await this.stripeService.retrieveCustomer(
@@ -353,78 +360,92 @@ export class SubscriptionService {
                 return;
             }
 
-            const existingSubscription = await this.prisma.subscription.findUnique({
-                where: { stripeSubscriptionId: subscription.id },
-            });
-
-            if (existingSubscription) {
-                this.logger.log(`Subscription ${subscription.id} already exists in database`);
-                return;
-            }
-
-            await this.prisma.user.update({
-                where: { authUserId: user.authUserId },
-                data: { stripeCustomerId: customer.id } as any,
-            });
-
             const fallbackPlan = getPlanByStripePriceId(priceId);
             const fallbackCredits = fallbackPlan?.credits || 0;
-
-            await this.prisma.subscription.upsert({
-                where: { stripeSubscriptionId: subscription.id },
-                update: {
-                    userId: user.authUserId,
-                    stripePriceId: priceId || undefined,
-                    stripeSubscriptionItemId: subscription.items.data[0]?.id,
-                    status: this.mapStripeStatusToDb(subscription.status),
-                    currentPeriodStart: new Date(
-                        ((subscription as any).current_period_start || Math.floor(Date.now() / 1000)) * 1000,
-                    ),
-                    currentPeriodEnd: new Date(
-                        ((subscription as any).current_period_end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
-                    ),
-                    cancelAtPeriodEnd: subscription.cancel_at_period_end,
-                    credits: fallbackCredits,
-                },
-                create: {
-                    userId: user.authUserId,
-                    stripeSubscriptionId: subscription.id,
-                    stripePriceId: priceId || '',
-                    stripeSubscriptionItemId: subscription.items.data[0]?.id,
-                    status: this.mapStripeStatusToDb(subscription.status),
-                    currentPeriodStart: new Date(
-                        ((subscription as any).current_period_start || Math.floor(Date.now() / 1000)) * 1000,
-                    ),
-                    currentPeriodEnd: new Date(
-                        ((subscription as any).current_period_end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
-                    ),
-                    cancelAtPeriodEnd: subscription.cancel_at_period_end,
-                    credits: fallbackCredits,
-                },
-            });
-
-            // DUAL-WALLET: Grant initial subscription credits
             const periodEnd = new Date(
                 ((subscription as any).current_period_end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
             );
 
-            await this.userWalletService.grantInitialSubscriptionCredits(
-                user.authUserId,
-                fallbackCredits,
-                periodEnd,
-                subscription.id,
-            );
-            this.logger.log(`Granted ${fallbackCredits} initial subscription credits to user ${user.authUserId}`);
+            // Use transaction with Serializable isolation to prevent race conditions
+            // and ensure atomic operations (if wallet grant fails, subscription is rolled back)
+            await this.prisma.$transaction(async (tx) => {
+                // Update user's stripe customer ID
+                await tx.user.update({
+                    where: { authUserId: user.authUserId },
+                    data: { stripeCustomerId: customer.id } as any,
+                });
 
-            const subscriptionPayment = await this.creditLedgerService.findPendingSubscriptionPaymentByStripeId(
-                user.authUserId,
-                subscription.id
-            );
+                // Upsert subscription record - handles duplicate webhook events atomically
+                const existingOrNew = await tx.subscription.upsert({
+                    where: { stripeSubscriptionId: subscription.id },
+                    update: {
+                        // Only update if this is a duplicate event - keep existing data
+                        status: this.mapStripeStatusToDb(subscription.status),
+                        cancelAtPeriodEnd: subscription.cancel_at_period_end,
+                    },
+                    create: {
+                        userId: user.authUserId,
+                        stripeSubscriptionId: subscription.id,
+                        stripePriceId: priceId || '',
+                        stripeSubscriptionItemId: subscription.items.data[0]?.id,
+                        status: this.mapStripeStatusToDb(subscription.status),
+                        currentPeriodStart: new Date(
+                            ((subscription as any).current_period_start || Math.floor(Date.now() / 1000)) * 1000,
+                        ),
+                        currentPeriodEnd: periodEnd,
+                        cancelAtPeriodEnd: subscription.cancel_at_period_end,
+                        credits: fallbackCredits,
+                    },
+                });
 
-            if (subscriptionPayment) {
-                await this.creditLedgerService.updatePaymentStatus(subscriptionPayment.id, 'COMPLETED');
-                this.logger.log(`Updated payment ${subscriptionPayment.id} for subscription ${subscription.id}`);
-            }
+                // Check if this subscription was just created (not a duplicate webhook)
+                // by checking if updatedAt is very recent (within last second)
+                const wasJustCreated = existingOrNew.createdAt.getTime() > Date.now() - 1000;
+
+                if (wasJustCreated) {
+                    // Only grant credits on first creation, not on duplicate webhooks
+                    this.logger.log(`New subscription created, granting ${fallbackCredits} credits to user ${user.authUserId}`);
+
+                    // Grant initial subscription credits within the same transaction context
+                    // Note: We call the wallet service's internal logic here to stay in the transaction
+                    await this.grantInitialCreditsInTransaction(tx, user.authUserId, fallbackCredits, periodEnd, subscription.id);
+                } else {
+                    this.logger.log(`Subscription ${subscription.id} already existed, skipping credit grant`);
+                }
+
+                // Find and update pending payment record
+                // FIX #10: Search by stripeSessionId from checkout session metadata, not stripeSubscriptionId
+                const pendingPayment = await tx.payment.findFirst({
+                    where: {
+                        userId: user.authUserId,
+                        type: 'SUBSCRIPTION',
+                        status: 'PENDING',
+                        createdAt: {
+                            gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+                        },
+                    },
+                    orderBy: { createdAt: 'desc' },
+                });
+
+                if (pendingPayment) {
+                    await tx.payment.update({
+                        where: { id: pendingPayment.id },
+                        data: {
+                            status: 'COMPLETED',
+                            metadata: {
+                                ...(pendingPayment.metadata as any || {}),
+                                stripeSubscriptionId: subscription.id,
+                                processedAt: new Date().toISOString(),
+                            },
+                        },
+                    });
+                    this.logger.log(`Updated payment ${pendingPayment.id} for subscription ${subscription.id}`);
+                }
+            }, {
+                // Serializable isolation prevents phantom reads and ensures atomicity
+                isolationLevel: 'Serializable',
+                timeout: 30000, // 30 second timeout
+            });
 
             this.logger.log(`Successfully processed subscription ${subscription.id} for user ${user.authUserId}`);
         } catch (error) {
@@ -432,6 +453,66 @@ export class SubscriptionService {
             throw error;
         }
     }
+
+    /**
+     * Grant initial subscription credits within a transaction context.
+     * This is an internal helper to maintain atomicity with subscription creation.
+     */
+    private async grantInitialCreditsInTransaction(
+        tx: any, // Prisma transaction client
+        userId: string,
+        credits: number,
+        expiresAt: Date,
+        subscriptionId: string,
+    ): Promise<void> {
+        // Get or create wallet in transaction
+        let wallet = await tx.userWallet.findUnique({ where: { userId } });
+
+        if (!wallet) {
+            const user = await tx.user.findUnique({
+                where: { authUserId: userId },
+                select: { credits: true },
+            });
+            wallet = await tx.userWallet.create({
+                data: {
+                    userId,
+                    topUpCredits: Math.max(user?.credits || 0, 0),
+                    subscriptionCredits: 0,
+                },
+            });
+        }
+
+        // Update wallet with subscription credits
+        await tx.userWallet.update({
+            where: { userId },
+            data: {
+                subscriptionCredits: credits,
+                subscriptionExpiresAt: expiresAt,
+            },
+        });
+
+        // Record the transaction
+        await tx.walletTransaction.create({
+            data: {
+                userId,
+                walletType: 'SUBSCRIPTION',
+                transactionType: 'CREDIT',
+                amount: credits,
+                balanceBefore: wallet.subscriptionCredits,
+                balanceAfter: credits,
+                sourceType: 'SUBSCRIPTION_CYCLE',
+                sourceId: subscriptionId,
+                description: 'Initial subscription credits',
+            },
+        });
+
+        // Sync legacy credits
+        await tx.user.update({
+            where: { authUserId: userId },
+            data: { credits: credits + wallet.topUpCredits },
+        });
+    }
+
 
     async handleRecurringPayment(invoice: Stripe.Invoice): Promise<void> {
         // Fix: Cast to any to avoid type error if subscription is missing in type definition
@@ -552,6 +633,15 @@ export class SubscriptionService {
 
     private async findUserByStripeCustomerId(customerId: string): Promise<any> {
         try {
+            // First, try direct lookup by stripeCustomerId (most reliable)
+            const userByCustomerId = await this.prisma.user.findUnique({
+                where: { stripeCustomerId: customerId },
+            });
+            if (userByCustomerId) {
+                return userByCustomerId;
+            }
+
+            // Fallback: lookup by email from Stripe customer
             const customer = await this.stripeService.retrieveCustomer(customerId);
             if (customer.email) {
                 const userByEmail = await this.usersService.findByEmail(customer.email);

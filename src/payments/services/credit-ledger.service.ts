@@ -32,13 +32,40 @@ export class CreditLedgerService {
 
     // In-memory cache for session status with TTL
     private sessionCache = new Map<string, { data: any; expires: number }>();
-    private readonly CACHE_TTL = 120 * 1000; // 120 seconds;
+    private readonly CACHE_TTL = 120 * 1000; // 120 seconds
+    private readonly MAX_CACHE_SIZE = 1000; // Prevent unbounded growth
+    private cacheCleanupInterval: NodeJS.Timeout | null = null;
 
     constructor(
         private readonly prisma: PrismaService,
         private readonly stripeService: StripeService,
         private readonly userWalletService: UserWalletService,
-    ) { }
+    ) {
+        // Start cache cleanup interval (every 5 minutes)
+        this.cacheCleanupInterval = setInterval(() => {
+            this.cleanupExpiredCache();
+        }, 5 * 60 * 1000);
+    }
+
+    onModuleDestroy() {
+        if (this.cacheCleanupInterval) {
+            clearInterval(this.cacheCleanupInterval);
+        }
+    }
+
+    private cleanupExpiredCache() {
+        const now = Date.now();
+        let cleaned = 0;
+        for (const [key, value] of this.sessionCache) {
+            if (value.expires < now) {
+                this.sessionCache.delete(key);
+                cleaned++;
+            }
+        }
+        if (cleaned > 0) {
+            this.logger.debug(`Cleaned ${cleaned} expired session cache entries`);
+        }
+    }
 
     async createOneTimePurchaseSession(
         user: SanitizedUser,
@@ -171,7 +198,7 @@ export class CreditLedgerService {
         const payments = await this.prisma.payment.findMany({
             where: {
                 userId,
-                status: 'COMPLETED',
+                status: { in: ['COMPLETED', 'PENDING', 'FAILED'] },
             },
             orderBy: {
                 createdAt: 'desc',

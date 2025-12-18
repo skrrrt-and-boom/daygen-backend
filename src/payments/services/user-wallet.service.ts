@@ -97,7 +97,7 @@ export class UserWalletService {
     }
 
     /**
-     * Smart deduction: subscription credits first, then top-up credits
+     * Smart deduction: subscription credits first, then top-up credits, then grace
      * Uses a transaction for atomicity
      */
     async deductCredits(
@@ -120,6 +120,7 @@ export class UserWalletService {
                 throw new NotFoundException(`Wallet not found for user ${userId}`);
             }
 
+            // Calculate total available including grace limit
             const totalAvailable = wallet.subscriptionCredits + wallet.topUpCredits + wallet.graceLimit;
             if (totalAvailable < cost) {
                 throw new InsufficientCreditsError(cost, wallet.subscriptionCredits + wallet.topUpCredits);
@@ -128,20 +129,30 @@ export class UserWalletService {
             // 1. Deduct from subscription wallet first (expiring credits)
             let subscriptionDeducted = 0;
             let topUpDeducted = 0;
+            let graceUsed = 0;
 
             if (wallet.subscriptionCredits > 0) {
                 subscriptionDeducted = Math.min(wallet.subscriptionCredits, cost);
             }
 
             // 2. Remaining cost from top-up wallet
-            const remaining = cost - subscriptionDeducted;
-            if (remaining > 0) {
-                topUpDeducted = remaining;
+            let remaining = cost - subscriptionDeducted;
+            if (remaining > 0 && wallet.topUpCredits > 0) {
+                // FIX #11: Only deduct what's actually available in top-up wallet
+                topUpDeducted = Math.min(wallet.topUpCredits, remaining);
+                remaining -= topUpDeducted;
             }
 
-            // 3. Update wallet balances
-            const newSubscriptionBalance = wallet.subscriptionCredits - subscriptionDeducted;
-            const newTopUpBalance = wallet.topUpCredits - topUpDeducted;
+            // 3. Any remaining cost uses grace limit (but doesn't reduce stored balance below 0)
+            if (remaining > 0) {
+                graceUsed = remaining;
+                // Grace is used but doesn't actually reduce the stored balance
+                // The user will need to replenish credits before using more
+            }
+
+            // 4. Update wallet balances - ensure they don't go negative
+            const newSubscriptionBalance = Math.max(0, wallet.subscriptionCredits - subscriptionDeducted);
+            const newTopUpBalance = Math.max(0, wallet.topUpCredits - topUpDeducted);
 
             await tx.userWallet.update({
                 where: { userId },
@@ -151,7 +162,7 @@ export class UserWalletService {
                 },
             });
 
-            // 4. Record transactions for audit trail
+            // 5. Record transactions for audit trail
             if (subscriptionDeducted > 0) {
                 await tx.walletTransaction.create({
                     data: {
@@ -184,14 +195,35 @@ export class UserWalletService {
                 });
             }
 
-            // 5. Sync legacy credits field for backward compatibility
+            // Log grace usage separately (doesn't reduce stored balance)
+            if (graceUsed > 0) {
+                await tx.walletTransaction.create({
+                    data: {
+                        userId,
+                        walletType: WalletType.TOPUP, // Grace is tracked against top-up
+                        transactionType: TransactionType.DEBIT,
+                        amount: graceUsed,
+                        balanceBefore: newTopUpBalance,
+                        balanceAfter: newTopUpBalance, // Balance unchanged, grace is a "loan"
+                        sourceType,
+                        sourceId,
+                        description: `${description || 'Usage'} (grace: ${graceUsed} credits)`,
+                        metadata: { graceUsed: true, graceAmount: graceUsed } as any,
+                    },
+                });
+                this.logger.warn(
+                    `User ${userId} used ${graceUsed} grace credits. Balance is now ${newSubscriptionBalance + newTopUpBalance} but they spent ${cost} total.`,
+                );
+            }
+
+            // 6. Sync legacy credits field for backward compatibility
             await tx.user.update({
                 where: { authUserId: userId },
                 data: { credits: newSubscriptionBalance + newTopUpBalance },
             });
 
             this.logger.log(
-                `Deducted ${cost} credits from user ${userId}: ${subscriptionDeducted} from subscription, ${topUpDeducted} from top-up`,
+                `Deducted ${cost} credits from user ${userId}: ${subscriptionDeducted} from subscription, ${topUpDeducted} from top-up${graceUsed > 0 ? `, ${graceUsed} from grace` : ''}`,
             );
 
             return {
@@ -203,6 +235,7 @@ export class UserWalletService {
             };
         });
     }
+
 
     /**
      * Add credits to top-up wallet (one-time purchases)
