@@ -4,6 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TimelineService } from '../timeline/timeline.service';
 import { ConfigService } from '@nestjs/config';
 
+// Configuration constants
+const STUCK_JOB_THRESHOLD_MINUTES = 5;
+const STALE_JOB_THRESHOLD_MINUTES = 60; // 1 hour
+const HANGING_SEGMENT_THRESHOLD_MINUTES = 10;
+const MAX_SEGMENT_RETRIES = 3;
+
 @Injectable()
 export class SweeperService {
     private readonly logger = new Logger(SweeperService.name);
@@ -23,17 +29,17 @@ export class SweeperService {
     async sweepStuckJobs() {
         this.logger.log('Running Sweeper Job...');
 
-        // Find jobs that are PROCESSING and updated > 5 minutes ago
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+        const stuckThreshold = new Date(Date.now() - STUCK_JOB_THRESHOLD_MINUTES * 60 * 1000);
 
         const stuckJobs = await this.prisma.job.findMany({
             where: {
                 status: 'PROCESSING',
-                updatedAt: {
-                    lt: fiveMinutesAgo
-                }
+                updatedAt: { lt: stuckThreshold }
             },
-            take: 10
+            include: {
+                timelineSegments: { orderBy: { index: 'asc' } }
+            },
+            take: 20
         });
 
         if (stuckJobs.length === 0) {
@@ -48,49 +54,141 @@ export class SweeperService {
     }
 
     private async checkJobHealth(job: any) {
-        // Check if there are segments in 'generating' state that effectively timed out?
-        // Or if we have 'pending' segments that should have been triggered.
+        const segments = job.timelineSegments || [];
+        const jobAgeMinutes = (Date.now() - new Date(job.updatedAt).getTime()) / 60000;
 
-        const segments = await this.prisma.timelineSegment.findMany({
-            where: { jobId: job.id },
-            orderBy: { index: 'asc' }
-        });
+        // ─────────────────────────────────────────────────────────────────────────
+        // 1. AUTO-FAIL: Stale jobs with 0 segments (abandoned during creation)
+        // ─────────────────────────────────────────────────────────────────────────
+        if (segments.length === 0 && jobAgeMinutes > STALE_JOB_THRESHOLD_MINUTES) {
+            this.logger.warn(`Job ${job.id} has 0 segments and is stale (${Math.round(jobAgeMinutes)} min). Marking as FAILED.`);
+            await this.prisma.job.update({
+                where: { id: job.id },
+                data: {
+                    status: 'FAILED',
+                    error: 'Job creation failed - no segments were generated (Sweeper cleanup)'
+                }
+            });
+            return;
+        }
 
-        // 1. Check for Stuck "Pending" (Continuity gap)
-        // If Segment N is 'completed' and Segment N+1 is 'pending' and hasn't started generating.
+        // ─────────────────────────────────────────────────────────────────────────
+        // 2. AUTO-FAIL: All segments have failed
+        // ─────────────────────────────────────────────────────────────────────────
+        if (segments.length > 0) {
+            const allFailed = segments.every((s: any) => s.status === 'failed');
+            const hasAnyPending = segments.some((s: any) => s.status === 'pending' || s.status === 'generating');
+
+            if (allFailed) {
+                this.logger.warn(`Job ${job.id} has all ${segments.length} segments failed. Marking job as FAILED.`);
+                await this.prisma.job.update({
+                    where: { id: job.id },
+                    data: {
+                        status: 'FAILED',
+                        error: 'All segments failed during generation'
+                    }
+                });
+                return;
+            }
+
+            // Also fail if most segments failed and remaining are stuck pending (after failed ones)
+            const failedCount = segments.filter((s: any) => s.status === 'failed').length;
+            const pendingAfterFailed = segments.some((s: any, i: number) => {
+                if (s.status !== 'pending') return false;
+                // Check if any previous segment failed
+                return segments.slice(0, i).some((prev: any) => prev.status === 'failed');
+            });
+
+            if (pendingAfterFailed && failedCount > 0 && jobAgeMinutes > STALE_JOB_THRESHOLD_MINUTES) {
+                this.logger.warn(`Job ${job.id} has ${failedCount} failed segments with pending segments blocked. Marking as FAILED.`);
+                await this.prisma.job.update({
+                    where: { id: job.id },
+                    data: {
+                        status: 'FAILED',
+                        error: `Pipeline blocked: ${failedCount} segment(s) failed, blocking remaining segments`
+                    }
+                });
+                return;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 3. RECOVERY: Stuck "Pending" segments (Continuity gap)
+        // ─────────────────────────────────────────────────────────────────────────
         for (let i = 0; i < segments.length - 1; i++) {
             const current = segments[i];
             const next = segments[i + 1];
 
             if (current.status === 'completed' && next.status === 'pending') {
-                // If previous finished but next didn't start, try to trigger continuity.
-                this.logger.warn(`Job ${job.id}: Segment ${next.index} is stuck in pending after Segment ${current.index} completed. Attempting to trigger.`);
-
-                // We rely on the timeline service to handle the logic. 
-                // However, checkAndTriggerNextSegment expects a webhook trigger context.
-                // We can construct a "synthetic" trigger or just call the logic directly.
+                this.logger.warn(`Job ${job.id}: Segment ${next.index} is stuck pending after Segment ${current.index} completed. Triggering recovery.`);
 
                 if (current.videoUrl) {
-                    this.logger.log(`Triggering recovery for job ${job.id} segment ${next.index}`);
-                    await this.timelineService.checkAndTriggerNextSegment(job.id, current.index, current.videoUrl);
+                    try {
+                        await this.timelineService.checkAndTriggerNextSegment(job.id, current.index, current.videoUrl);
+                    } catch (error) {
+                        this.logger.error(`Recovery failed for job ${job.id} segment ${next.index}: ${error}`);
+                    }
                 }
             }
         }
 
-        // 2. Check for Stuck "Generating"
-        // If a segment has been 'generating' for too long (> 10 mins), it might have failed without webhook.
-        const hangingSegments = segments.filter(s => s.status === 'generating' && s.updatedAt < new Date(Date.now() - 10 * 60 * 1000));
-        if (hangingSegments.length > 0) {
-            this.logger.error(`Job ${job.id} has ${hangingSegments.length} hanging segments. Marking as failed.`);
-            // Optionally fail the segment
-            for (const seg of hangingSegments) {
+        // ─────────────────────────────────────────────────────────────────────────
+        // 4. RETRY: Hanging "Generating" segments with retry mechanism
+        // ─────────────────────────────────────────────────────────────────────────
+        const hangingThreshold = new Date(Date.now() - HANGING_SEGMENT_THRESHOLD_MINUTES * 60 * 1000);
+        const hangingSegments = segments.filter((s: any) =>
+            s.status === 'generating' && new Date(s.updatedAt) < hangingThreshold
+        );
+
+        for (const seg of hangingSegments) {
+            const config = (seg.config as any) || {};
+            const retryCount = config.retryCount || 0;
+
+            if (retryCount < MAX_SEGMENT_RETRIES) {
+                // Retry the segment
+                this.logger.warn(`Job ${job.id}: Segment ${seg.index} timed out. Retrying (attempt ${retryCount + 1}/${MAX_SEGMENT_RETRIES}).`);
+
+                try {
+                    // Update retry count and reset to pending for retry
+                    await this.prisma.timelineSegment.update({
+                        where: { id: seg.id },
+                        data: {
+                            status: 'pending',
+                            config: { ...config, retryCount: retryCount + 1 },
+                            error: null,
+                            predictionId: null
+                        }
+                    });
+
+                    // If this segment has an image, re-trigger video generation
+                    if (seg.imageUrl) {
+                        await this.timelineService['_triggerVideoGeneration'](
+                            job.id,
+                            seg.index,
+                            seg.visualPrompt,
+                            seg.motionPrompt,
+                            seg.imageUrl
+                        );
+                    }
+                } catch (error) {
+                    this.logger.error(`Retry failed for segment ${seg.index}: ${error}`);
+                    // If retry setup fails, mark as failed
+                    await this.prisma.timelineSegment.update({
+                        where: { id: seg.id },
+                        data: { status: 'failed', error: `Retry failed: ${error}` }
+                    });
+                }
+            } else {
+                // Max retries exceeded - mark as failed
+                this.logger.error(`Job ${job.id}: Segment ${seg.index} exceeded max retries (${MAX_SEGMENT_RETRIES}). Marking as failed.`);
                 await this.prisma.timelineSegment.update({
                     where: { id: seg.id },
-                    data: { status: 'failed', error: 'Timed out (Sweeper)' }
+                    data: {
+                        status: 'failed',
+                        error: `Timed out after ${MAX_SEGMENT_RETRIES} retry attempts (Sweeper)`
+                    }
                 });
             }
-
-            // Should we fail the job? Maybe.
         }
     }
 
