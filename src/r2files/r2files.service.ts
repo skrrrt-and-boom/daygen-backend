@@ -16,6 +16,7 @@ export interface CreateR2FileDto {
   avatarImageId?: string;
   productId?: string;
   jobId?: string;
+  references?: string[];  // Reference image URLs used during generation (max 16)
 }
 
 export interface R2FileResponse {
@@ -34,6 +35,7 @@ export interface R2FileResponse {
   isLiked?: boolean;
   likeCount?: number;
   isPublic?: boolean;
+  references?: string[];  // Reference image URLs used during generation
   createdAt: Date;
   updatedAt: Date;
 }
@@ -572,6 +574,7 @@ export class R2FilesService {
             avatarImageId: dto.avatarImageId,
             productId: dto.productId,
             jobId: dto.jobId,
+            references: dto.references?.slice(0, 16) ?? [],
             deletedAt: null,
             updatedAt: new Date(),
           },
@@ -596,6 +599,7 @@ export class R2FilesService {
         avatarImageId: dto.avatarImageId,
         productId: dto.productId,
         jobId: dto.jobId,
+        references: dto.references?.slice(0, 16) ?? [],
         updatedAt: new Date(),
       },
     });
@@ -762,6 +766,7 @@ export class R2FilesService {
     isLiked?: boolean | null;
     likeCount?: number | null;
     isPublic?: boolean | null;
+    references?: string[] | null;
     createdAt: Date;
     updatedAt: Date;
   }): R2FileResponse {
@@ -781,6 +786,7 @@ export class R2FilesService {
       isLiked: file.isLiked ?? undefined,
       likeCount: file.likeCount ?? 0,
       isPublic: file.isPublic ?? undefined,
+      references: file.references && file.references.length > 0 ? file.references : undefined,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt,
     };

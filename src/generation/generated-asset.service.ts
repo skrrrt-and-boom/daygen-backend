@@ -111,6 +111,7 @@ export class GeneratedAssetService {
         avatarId: dto.avatarId,
         avatarImageId: dto.avatarImageId,
         productId: dto.productId,
+        references: dto.references?.slice(0, 16),
       }, options);
     }
 
@@ -152,6 +153,7 @@ export class GeneratedAssetService {
       avatarImageId?: string;
       productId?: string;
       jobId?: string;
+      references?: string[];
     },
     options: {
       bucket?: string;
@@ -221,6 +223,7 @@ export class GeneratedAssetService {
           avatarImageId: metadata.avatarImageId,
           productId: metadata.productId,
           jobId: metadata.jobId,
+          references: metadata.references,
         });
       }
 

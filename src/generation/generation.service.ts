@@ -1858,6 +1858,7 @@ export class GenerationService {
               avatarId: dto.avatarId,
               avatarImageId: dto.avatarImageId,
               productId: dto.productId,
+              references: dto.references?.slice(0, 16),
             });
 
             // Update the asset URL to use R2 URL

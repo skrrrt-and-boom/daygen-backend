@@ -114,6 +114,7 @@ model R2File {
   // Replaces the `Like` table logic
   isLiked       Boolean   @default(false) // Keeping this as a personalized flag if needed, or legacy.
   isPublic      Boolean   @default(false)
+  references    String[]  @default([])  // URLs of reference images used during generation (max 16)
   
   job           Job?      @relation(fields: [jobId], references: [id])
   owner         User      @relation(fields: [userId], references: [authUserId], onDelete: Cascade)
