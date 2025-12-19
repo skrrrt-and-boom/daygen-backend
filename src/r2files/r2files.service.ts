@@ -49,7 +49,6 @@ export interface UpdateR2FileDto {
 export interface PublicR2FileResponse extends R2FileResponse {
   owner?: {
     displayName?: string;
-    username?: string;
     authUserId: string;
     profileImage?: string;
   };
@@ -144,7 +143,7 @@ export class R2FilesService {
     type R2FileWithOwner = Awaited<
       ReturnType<typeof this.prisma.r2File.findMany<{
         include: {
-          owner: { select: { displayName: true; username: true; authUserId: true; profileImage: true } };
+          owner: { select: { displayName: true; authUserId: true; profileImage: true } };
         }
       }>>
     >[number];
@@ -174,7 +173,6 @@ export class R2FilesService {
           owner: {
             select: {
               displayName: true,
-              username: true,
               authUserId: true,
               profileImage: true,
             },
@@ -236,7 +234,6 @@ export class R2FilesService {
           owner: item.owner
             ? {
               displayName: item.owner.displayName ?? undefined,
-              username: (item.owner as { username?: string | null }).username ?? undefined,
               authUserId: item.owner.authUserId,
               profileImage: item.owner.profileImage ?? undefined,
             }
@@ -257,7 +254,6 @@ export class R2FilesService {
     nextCursor: string | null;
     user?: {
       displayName?: string;
-      username?: string;
       authUserId: string;
       profileImage?: string;
       bio?: string;
@@ -270,7 +266,6 @@ export class R2FilesService {
       where: { authUserId: userId },
       select: {
         displayName: true,
-        username: true,
         authUserId: true,
         profileImage: true,
         bio: true,
@@ -364,7 +359,6 @@ export class R2FilesService {
           owner: user
             ? {
               displayName: user.displayName ?? undefined,
-              username: (user as { username?: string | null }).username ?? undefined,
               authUserId: user.authUserId,
               profileImage: user.profileImage ?? undefined,
               bio: user.bio ?? undefined,
@@ -377,7 +371,6 @@ export class R2FilesService {
       user: user
         ? {
           displayName: user.displayName ?? undefined,
-          username: (user as { username?: string | null }).username ?? undefined,
           authUserId: user.authUserId,
           profileImage: user.profileImage ?? undefined,
           bio: user.bio ?? undefined,
@@ -400,7 +393,6 @@ export class R2FilesService {
         owner: {
           select: {
             displayName: true,
-            username: true,
             authUserId: true,
             profileImage: true,
           },
@@ -452,7 +444,6 @@ export class R2FilesService {
     updatedAt: Date;
     owner?: {
       displayName?: string | null;
-      username?: string | null;
       authUserId: string;
       profileImage?: string | null;
     } | null;
@@ -462,7 +453,6 @@ export class R2FilesService {
       owner: file.owner
         ? {
           displayName: file.owner.displayName ?? undefined,
-          username: file.owner.username ?? undefined,
           authUserId: file.owner.authUserId,
           profileImage: file.owner.profileImage ?? undefined,
         }
