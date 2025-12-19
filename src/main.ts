@@ -54,8 +54,8 @@ async function bootstrap() {
     const isProduction = process.env.NODE_ENV === 'production';
     const message = `⚠️  Missing Stripe Price IDs: ${missingStripeIds.join(', ')}`;
     if (isProduction) {
-      console.error(`❌ ${message} - Payment processing will fail!`);
-      process.exit(1);
+      // Changed from process.exit(1) to warning only - allows app to start without Stripe fully configured
+      console.warn(`⚠️  ${message} - Payment processing will fail until configured!`);
     } else {
       console.warn(message);
     }

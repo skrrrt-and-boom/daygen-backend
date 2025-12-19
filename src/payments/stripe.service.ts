@@ -6,12 +6,14 @@ import type { Stripe as StripeType } from 'stripe';
 @Injectable()
 export class StripeService {
   private readonly logger = new Logger(StripeService.name);
-  private readonly stripe: StripeType;
+  private readonly stripe: StripeType | null;
 
   constructor(private readonly configService: ConfigService) {
     const secretKey = this.configService.get<string>('STRIPE_SECRET_KEY');
     if (!secretKey) {
-      throw new Error('STRIPE_SECRET_KEY is required');
+      this.logger.warn('STRIPE_SECRET_KEY not configured - Stripe payments disabled');
+      this.stripe = null;
+      return;
     }
 
     this.stripe = new Stripe(secretKey, {
@@ -21,8 +23,15 @@ export class StripeService {
     });
   }
 
+  private ensureStripeConfigured(): void {
+    if (!this.stripe) {
+      throw new Error('Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.');
+    }
+  }
+
   getClient(): StripeType {
-    return this.stripe;
+    this.ensureStripeConfigured();
+    return this.stripe!;
   }
 
   async createCheckoutSession(
@@ -79,6 +88,7 @@ export class StripeService {
       sessionParams.customer_creation = 'always';
     }
 
+    this.ensureStripeConfigured();
     try {
       // Deterministic idempotency unless overridden (e.g., to force a fresh session)
       const idempotencyKey =
@@ -86,7 +96,7 @@ export class StripeService {
         [userId, type, metadata.packageId || metadata.planId || 'na']
           .filter(Boolean)
           .join(':');
-      const session = await this.stripe.checkout.sessions.create(
+      const session = await this.stripe!.checkout.sessions.create(
         sessionParams,
         { idempotencyKey },
       );
@@ -114,8 +124,9 @@ export class StripeService {
       throw new Error('STRIPE_WEBHOOK_SECRET is required');
     }
 
+    this.ensureStripeConfigured();
     try {
-      return this.stripe.webhooks.constructEvent(
+      return this.stripe!.webhooks.constructEvent(
         payload,
         signature,
         webhookSecret,
@@ -129,8 +140,9 @@ export class StripeService {
   async retrieveSession(
     sessionId: string,
   ): Promise<StripeType.Checkout.Session> {
+    this.ensureStripeConfigured();
     try {
-      return await this.stripe.checkout.sessions.retrieve(sessionId);
+      return await this.stripe!.checkout.sessions.retrieve(sessionId);
     } catch (error) {
       this.logger.error(`Failed to retrieve session ${sessionId}:`, error);
       throw error;
@@ -141,13 +153,14 @@ export class StripeService {
     email: string,
     metadata: Record<string, string> = {},
   ): Promise<StripeType.Customer> {
+    this.ensureStripeConfigured();
     try {
       const customerParams: StripeType.CustomerCreateParams = {
         email,
         metadata,
       };
 
-      return await this.stripe.customers.create(customerParams);
+      return await this.stripe!.customers.create(customerParams);
     } catch (error) {
       this.logger.error(`Failed to create customer for email ${email}:`, error);
       throw error;
@@ -157,8 +170,9 @@ export class StripeService {
   async cancelSubscription(
     subscriptionId: string,
   ): Promise<StripeType.Subscription> {
+    this.ensureStripeConfigured();
     try {
-      return await this.stripe.subscriptions.cancel(subscriptionId);
+      return await this.stripe!.subscriptions.cancel(subscriptionId);
     } catch (error) {
       this.logger.error(
         `Failed to cancel subscription ${subscriptionId}:`,
@@ -171,8 +185,9 @@ export class StripeService {
   async removeCancellation(
     subscriptionId: string,
   ): Promise<StripeType.Subscription> {
+    this.ensureStripeConfigured();
     try {
-      return await this.stripe.subscriptions.update(subscriptionId, {
+      return await this.stripe!.subscriptions.update(subscriptionId, {
         cancel_at_period_end: false,
       });
     } catch (error) {
@@ -190,10 +205,11 @@ export class StripeService {
     prorationBehavior: 'create_prorations' | 'none' = 'create_prorations',
     metadata?: Record<string, string>,
   ): Promise<StripeType.Subscription> {
+    this.ensureStripeConfigured();
     try {
       // First, get the current subscription to find the subscription item
       const subscription =
-        await this.stripe.subscriptions.retrieve(subscriptionId);
+        await this.stripe!.subscriptions.retrieve(subscriptionId);
       const subscriptionItemId = subscription.items.data[0]?.id;
 
       if (!subscriptionItemId) {
@@ -216,7 +232,7 @@ export class StripeService {
         updateParams.metadata = metadata;
       }
 
-      return await this.stripe.subscriptions.update(
+      return await this.stripe!.subscriptions.update(
         subscriptionId,
         updateParams,
       );
@@ -232,8 +248,9 @@ export class StripeService {
   async retrieveSubscription(
     subscriptionId: string,
   ): Promise<StripeType.Subscription> {
+    this.ensureStripeConfigured();
     try {
-      return await this.stripe.subscriptions.retrieve(subscriptionId);
+      return await this.stripe!.subscriptions.retrieve(subscriptionId);
     } catch (error) {
       this.logger.error(
         `Failed to retrieve subscription ${subscriptionId}:`,
@@ -244,8 +261,9 @@ export class StripeService {
   }
 
   async retrieveCustomer(customerId: string): Promise<StripeType.Customer> {
+    this.ensureStripeConfigured();
     try {
-      return (await this.stripe.customers.retrieve(
+      return (await this.stripe!.customers.retrieve(
         customerId,
       )) as StripeType.Customer;
     } catch (error) {
@@ -257,8 +275,9 @@ export class StripeService {
   async listSubscriptions(
     customerId: string,
   ): Promise<StripeType.Subscription[]> {
+    this.ensureStripeConfigured();
     try {
-      const subscriptions = await this.stripe.subscriptions.list({
+      const subscriptions = await this.stripe!.subscriptions.list({
         customer: customerId,
         status: 'all',
       });
@@ -278,6 +297,7 @@ export class StripeService {
     idempotencyKey: string,
     timestamp?: Date,
   ): Promise<any> {
+    this.ensureStripeConfigured();
     try {
       const params: any = {
         quantity,
@@ -288,7 +308,7 @@ export class StripeService {
         (params).timestamp = Math.floor(timestamp.getTime() / 1000);
       }
       // Note: createUsageRecord returns a UsageRecord; summaries are listed separately
-      return await (this.stripe as any).subscriptionItems.createUsageRecord(
+      return await (this.stripe! as any).subscriptionItems.createUsageRecord(
         subscriptionItemId,
         params,
         { idempotencyKey },
@@ -306,9 +326,10 @@ export class StripeService {
     customerId: string,
     returnUrl: string,
   ): Promise<StripeType.BillingPortal.Session> {
+    this.ensureStripeConfigured();
     try {
       // Typings may differ across Stripe versions
-      return await (this.stripe as any).billingPortal.sessions.create({
+      return await (this.stripe! as any).billingPortal.sessions.create({
         customer: customerId,
         return_url: returnUrl,
       });
