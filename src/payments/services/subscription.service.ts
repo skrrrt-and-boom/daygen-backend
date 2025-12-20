@@ -248,8 +248,48 @@ export class SubscriptionService {
         }
 
         try {
-            // Fix 6: Add logging for test subscriptions
+            // Skip Stripe API call for test subscriptions
             if (!subscription.stripeSubscriptionId.startsWith('sub_test_')) {
+                // First, verify the subscription status on Stripe before attempting to resume
+                try {
+                    const stripeSubscription = await this.stripeService.retrieveSubscription(
+                        subscription.stripeSubscriptionId,
+                    );
+
+                    // If subscription is already fully canceled on Stripe, sync DB and inform user
+                    if (stripeSubscription.status === 'canceled') {
+                        this.logger.warn(
+                            `Subscription ${subscription.stripeSubscriptionId} is already canceled on Stripe. Syncing database.`,
+                        );
+
+                        // Sync the database with Stripe's actual status
+                        await this.prisma.subscription.update({
+                            where: { id: subscription.id },
+                            data: {
+                                status: 'CANCELLED',
+                                cancelAtPeriodEnd: false,
+                            },
+                        });
+
+                        throw new BadRequestException(
+                            'This subscription has already been fully canceled. Please create a new subscription.',
+                        );
+                    }
+                } catch (retrieveError) {
+                    // If it's our custom BadRequestException, rethrow it
+                    if (retrieveError instanceof BadRequestException) {
+                        throw retrieveError;
+                    }
+                    // For Stripe API errors (e.g., subscription not found), log and throw user-friendly error
+                    this.logger.error(
+                        `Failed to retrieve subscription ${subscription.stripeSubscriptionId} from Stripe:`,
+                        retrieveError,
+                    );
+                    throw new BadRequestException(
+                        'Unable to verify subscription status. Please try again or contact support.',
+                    );
+                }
+
                 await this.stripeService.resumeSubscription(
                     subscription.stripeSubscriptionId,
                 );
@@ -264,6 +304,11 @@ export class SubscriptionService {
 
             this.logger.log(`User ${userId} removed cancellation`);
         } catch (error) {
+            // If it's already a BadRequestException, rethrow it with its message
+            if (error instanceof BadRequestException) {
+                throw error;
+            }
+
             this.logger.error(
                 `Failed to remove cancellation for user ${userId}:`,
                 error,
