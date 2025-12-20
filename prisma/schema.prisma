@@ -198,6 +198,7 @@ model Subscription {
   currentPeriodEnd         DateTime
   cancelAtPeriodEnd        Boolean            @default(false)
   credits                  Int
+  creditsGranted           Boolean            @default(false)
   createdAt                DateTime           @default(now())
   updatedAt                DateTime           @updatedAt
   stripeSubscriptionItemId String?            @unique
@@ -358,8 +359,10 @@ model UserWallet {
   // Top-up wallet (perpetual - never expires)
   topUpCredits           Int       @default(0)
   
-  // Grace limit for overdraft
+  // Grace limit for overdraft (Fix 10: tracks available grace)
   graceLimit             Int       @default(50)
+  // Fix 10: Track cumulative grace usage for abuse prevention
+  graceUsed              Int       @default(0)
   
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt

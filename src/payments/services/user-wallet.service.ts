@@ -40,6 +40,22 @@ export class UserWalletService {
     constructor(private readonly prisma: PrismaService) { }
 
     /**
+     * Fix 14: Centralized helper to sync legacy user.credits field with wallet balances.
+     * This prevents drift between the dual-wallet system and legacy code that still reads user.credits.
+     */
+    private async syncLegacyCredits(
+        tx: Prisma.TransactionClient,
+        userId: string,
+        subscriptionCredits: number,
+        topUpCredits: number,
+    ): Promise<void> {
+        await tx.user.update({
+            where: { authUserId: userId },
+            data: { credits: subscriptionCredits + topUpCredits },
+        });
+    }
+
+    /**
      * Create a new wallet for a user
      */
     async createWallet(userId: string, initialTopUpCredits: number = 0) {
@@ -153,12 +169,17 @@ export class UserWalletService {
             // 4. Update wallet balances - ensure they don't go negative
             const newSubscriptionBalance = Math.max(0, wallet.subscriptionCredits - subscriptionDeducted);
             const newTopUpBalance = Math.max(0, wallet.topUpCredits - topUpDeducted);
+            // Fix 10: Track grace usage persistently
+            const newGraceUsed = wallet.graceUsed + graceUsed;
+            const newGraceLimit = Math.max(0, wallet.graceLimit - graceUsed);
 
             await tx.userWallet.update({
                 where: { userId },
                 data: {
                     subscriptionCredits: newSubscriptionBalance,
                     topUpCredits: newTopUpBalance,
+                    graceLimit: newGraceLimit, // Fix 10: Reduce available grace
+                    graceUsed: newGraceUsed,   // Fix 10: Track total grace used
                 },
             });
 
@@ -217,10 +238,7 @@ export class UserWalletService {
             }
 
             // 6. Sync legacy credits field for backward compatibility
-            await tx.user.update({
-                where: { authUserId: userId },
-                data: { credits: newSubscriptionBalance + newTopUpBalance },
-            });
+            await this.syncLegacyCredits(tx, userId, newSubscriptionBalance, newTopUpBalance);
 
             this.logger.log(
                 `Deducted ${cost} credits from user ${userId}: ${subscriptionDeducted} from subscription, ${topUpDeducted} from top-up${graceUsed > 0 ? `, ${graceUsed} from grace` : ''}`,
@@ -275,10 +293,7 @@ export class UserWalletService {
             });
 
             // Sync legacy credits
-            await tx.user.update({
-                where: { authUserId: userId },
-                data: { credits: wallet.subscriptionCredits + newBalance },
-            });
+            await this.syncLegacyCredits(tx, userId, wallet.subscriptionCredits, newBalance);
         });
 
         this.logger.log(`Added ${amount} top-up credits to user ${userId}`);
@@ -327,13 +342,66 @@ export class UserWalletService {
             });
 
             // Sync legacy credits
-            await tx.user.update({
-                where: { authUserId: userId },
-                data: { credits: newBalance + wallet.topUpCredits },
-            });
+            await this.syncLegacyCredits(tx, userId, newBalance, wallet.topUpCredits);
         });
 
         this.logger.log(`Reset subscription credits for user ${userId} to ${planLimit} (expires: ${expiresAt.toISOString()})`);
+    }
+
+    /**
+     * Revoke subscription credits (called on payment failure)
+     * Sets subscription credits to 0 and records the revocation
+     */
+    async revokeSubscriptionCredits(
+        userId: string,
+        reason: string,
+    ): Promise<void> {
+        await this.prisma.$transaction(async (tx) => {
+            const wallet = await tx.userWallet.findUnique({
+                where: { userId },
+            });
+
+            if (!wallet) {
+                throw new NotFoundException(`Wallet not found for user ${userId}`);
+            }
+
+            const oldBalance = wallet.subscriptionCredits;
+
+            // Only revoke if there are credits to revoke
+            if (oldBalance <= 0) {
+                this.logger.log(`No subscription credits to revoke for user ${userId}`);
+                return;
+            }
+
+            await tx.userWallet.update({
+                where: { userId },
+                data: {
+                    subscriptionCredits: 0,
+                    subscriptionExpiresAt: null,
+                },
+            });
+
+            await tx.walletTransaction.create({
+                data: {
+                    userId,
+                    walletType: WalletType.SUBSCRIPTION,
+                    transactionType: TransactionType.DEBIT,
+                    amount: oldBalance,
+                    balanceBefore: oldBalance,
+                    balanceAfter: 0,
+                    sourceType: 'SYSTEM',
+                    description: `Credits revoked: ${reason}`,
+                    metadata: {
+                        revocationReason: reason,
+                    } as Prisma.InputJsonValue,
+                },
+            });
+
+            // Sync legacy credits
+            await this.syncLegacyCredits(tx, userId, 0, wallet.topUpCredits);
+        });
+
+        this.logger.log(`Revoked all subscription credits for user ${userId}. Reason: ${reason}`);
     }
 
     /**
@@ -371,10 +439,7 @@ export class UserWalletService {
             });
 
             // Sync legacy credits
-            await tx.user.update({
-                where: { authUserId: userId },
-                data: { credits: planCredits + wallet.topUpCredits },
-            });
+            await this.syncLegacyCredits(tx, userId, planCredits, wallet.topUpCredits);
         });
 
         this.logger.log(`Granted ${planCredits} initial subscription credits to user ${userId}`);
@@ -427,14 +492,9 @@ export class UserWalletService {
             });
 
             // Sync legacy credits
-            const totalCredits = originalWalletType === WalletType.SUBSCRIPTION
-                ? newBalance + wallet.topUpCredits
-                : wallet.subscriptionCredits + newBalance;
-
-            await tx.user.update({
-                where: { authUserId: userId },
-                data: { credits: totalCredits },
-            });
+            const syncSubCredits = originalWalletType === WalletType.SUBSCRIPTION ? newBalance : wallet.subscriptionCredits;
+            const syncTopUpCredits = originalWalletType === WalletType.TOPUP ? newBalance : wallet.topUpCredits;
+            await this.syncLegacyCredits(tx, userId, syncSubCredits, syncTopUpCredits);
         });
 
         this.logger.log(`Refunded ${amount} credits to user ${userId} (${originalWalletType} wallet). Reason: ${reason}`);

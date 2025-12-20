@@ -71,19 +71,20 @@ export class StripeWebhookController {
         `Webhook signature verification completed in ${signatureVerificationTime}ms (total: ${totalTimeSoFar}ms)`,
       );
 
-      // Idempotency: persist event.id and skip duplicates
+      // Idempotency: persist event.id and skip duplicates using upsert to handle race conditions atomically
       const idempotencyStartTime = Date.now();
       let idempotencyCheckTime = 0;
-      try {
-        await (this.prisma as any).webhookEvent.create({
-          data: { eventId: event.id, type: event.type },
-        });
-        idempotencyCheckTime = Date.now() - idempotencyStartTime;
-        this.logger.log(
-          `Webhook idempotency check completed in ${idempotencyCheckTime}ms`,
-        );
-      } catch {
-        idempotencyCheckTime = Date.now() - idempotencyStartTime;
+      const upsertResult = await (this.prisma as any).webhookEvent.upsert({
+        where: { eventId: event.id },
+        create: { eventId: event.id, type: event.type },
+        update: {}, // No-op update - if exists, this is a duplicate
+      });
+      idempotencyCheckTime = Date.now() - idempotencyStartTime;
+
+      // Check if this was an existing record (duplicate) by comparing timestamps
+      // If updatedAt equals createdAt, it was just created; otherwise it's a duplicate
+      const isDuplicate = upsertResult.updatedAt.getTime() !== upsertResult.createdAt.getTime();
+      if (isDuplicate) {
         const totalTime = Date.now() - requestStartTime;
         this.logger.log(`Duplicate webhook event ${event.id}; acknowledging`);
         this.logger.log(
@@ -93,6 +94,10 @@ export class StripeWebhookController {
           .status(HttpStatus.OK)
           .json({ received: true, duplicate: true });
       }
+
+      this.logger.log(
+        `Webhook idempotency check completed in ${idempotencyCheckTime}ms`,
+      );
 
       // Handle the event
       switch (event.type) {

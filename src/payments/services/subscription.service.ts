@@ -210,10 +210,13 @@ export class SubscriptionService {
         }
 
         try {
+            // Fix 6: Add logging for test subscriptions
             if (!subscription.stripeSubscriptionId.startsWith('sub_test_')) {
                 await this.stripeService.cancelSubscription(
                     subscription.stripeSubscriptionId,
                 );
+            } else {
+                this.logger.log(`Skipping Stripe API call for test subscription ${subscription.stripeSubscriptionId}`);
             }
 
             await this.prisma.subscription.update({
@@ -245,10 +248,13 @@ export class SubscriptionService {
         }
 
         try {
+            // Fix 6: Add logging for test subscriptions
             if (!subscription.stripeSubscriptionId.startsWith('sub_test_')) {
                 await this.stripeService.resumeSubscription(
                     subscription.stripeSubscriptionId,
                 );
+            } else {
+                this.logger.log(`Skipping Stripe API call for test subscription ${subscription.stripeSubscriptionId}`);
             }
 
             await this.prisma.subscription.update({
@@ -350,8 +356,9 @@ export class SubscriptionService {
 
             const user = await this.findUserByStripeCustomerId(customer.id);
             if (!user) {
-                this.logger.error(`No user found for Stripe customer ${customer.id}`);
-                return;
+                // Fix 7: Throw error to trigger webhook retry instead of silent failure
+                // This allows Stripe to retry the webhook and gives time for user sync
+                throw new Error(`No user found for Stripe customer ${customer.id}. Webhook will be retried.`);
             }
 
             const priceId = subscription.items.data[0]?.price.id;
@@ -362,9 +369,11 @@ export class SubscriptionService {
 
             const fallbackPlan = getPlanByStripePriceId(priceId);
             const fallbackCredits = fallbackPlan?.credits || 0;
-            const periodEnd = new Date(
-                ((subscription as any).current_period_end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60) * 1000,
-            );
+            // Fix 9: Type assertion needed - current_period_end/start moved from Subscription to SubscriptionItem in newer Stripe API
+            // but webhook still sends these at subscription level for backward compatibility
+            const subAny = subscription as Stripe.Subscription & { current_period_end?: number; current_period_start?: number };
+            const periodEndTimestamp = subAny.current_period_end ?? Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+            const periodEnd = new Date(periodEndTimestamp * 1000);
 
             // Use transaction with Serializable isolation to prevent race conditions
             // and ensure atomic operations (if wallet grant fails, subscription is rolled back)
@@ -389,28 +398,33 @@ export class SubscriptionService {
                         stripePriceId: priceId || '',
                         stripeSubscriptionItemId: subscription.items.data[0]?.id,
                         status: this.mapStripeStatusToDb(subscription.status),
+                        // Fix 9: Type assertion for period fields (moved to SubscriptionItem in newer Stripe)
                         currentPeriodStart: new Date(
-                            ((subscription as any).current_period_start || Math.floor(Date.now() / 1000)) * 1000,
+                            (subAny.current_period_start ?? Math.floor(Date.now() / 1000)) * 1000,
                         ),
                         currentPeriodEnd: periodEnd,
                         cancelAtPeriodEnd: subscription.cancel_at_period_end,
+                        creditsGranted: false, // Fix 5: Use flag-based idempotency
                         credits: fallbackCredits,
                     },
                 });
 
-                // Check if this subscription was just created (not a duplicate webhook)
-                // by checking if updatedAt is very recent (within last second)
-                const wasJustCreated = existingOrNew.createdAt.getTime() > Date.now() - 1000;
-
-                if (wasJustCreated) {
-                    // Only grant credits on first creation, not on duplicate webhooks
+                // Fix 5: Use creditsGranted flag instead of time-based race condition window
+                // This is atomic and reliable, unlike the previous 5-second time check
+                if (!existingOrNew.creditsGranted) {
+                    // Only grant credits if not already granted (flag-based idempotency)
                     this.logger.log(`New subscription created, granting ${fallbackCredits} credits to user ${user.authUserId}`);
 
                     // Grant initial subscription credits within the same transaction context
-                    // Note: We call the wallet service's internal logic here to stay in the transaction
                     await this.grantInitialCreditsInTransaction(tx, user.authUserId, fallbackCredits, periodEnd, subscription.id);
+
+                    // Mark credits as granted in the subscription record
+                    await tx.subscription.update({
+                        where: { id: existingOrNew.id },
+                        data: { creditsGranted: true },
+                    });
                 } else {
-                    this.logger.log(`Subscription ${subscription.id} already existed, skipping credit grant`);
+                    this.logger.log(`Subscription ${subscription.id}: credits already granted (creditsGranted=true), skipping`);
                 }
 
                 // Find and update pending payment record
@@ -440,6 +454,28 @@ export class SubscriptionService {
                         },
                     });
                     this.logger.log(`Updated payment ${pendingPayment.id} for subscription ${subscription.id}`);
+                } else {
+                    // Fix 11: Create payment record if none exists (fallback for subscription.created webhook)
+                    const plan = getPlanByStripePriceId(priceId);
+                    await tx.payment.create({
+                        data: {
+                            userId: user.authUserId,
+                            stripeSessionId: `sub_webhook_${subscription.id}`,
+                            amount: plan?.price || 0,
+                            credits: fallbackCredits,
+                            status: 'COMPLETED',
+                            type: 'SUBSCRIPTION',
+                            metadata: {
+                                stripeSubscriptionId: subscription.id,
+                                planId: plan?.id,
+                                planName: plan?.name,
+                                billingPeriod: plan?.interval === 'year' ? 'yearly' : 'monthly',
+                                source: 'subscription_webhook_fallback',
+                                processedAt: new Date().toISOString(),
+                            },
+                        },
+                    });
+                    this.logger.log(`Created fallback payment record for subscription ${subscription.id}`);
                 }
             }, {
                 // Serializable isolation prevents phantom reads and ensures atomicity
@@ -610,9 +646,60 @@ export class SubscriptionService {
     }
 
     async handleFailedPayment(invoice: Stripe.Invoice): Promise<void> {
-        // Logic to handle failed payment (e.g., notify user, maybe revoke credits if they were optimistically granted?)
-        // For now, just log it as per original service
+        // Fix 4: Implement credit revocation for failed payments
         this.logger.warn(`Payment failed for invoice ${invoice.id}`);
+
+        const invoiceAny = invoice as any;
+        if (!invoiceAny.subscription) {
+            this.logger.log(`Invoice ${invoice.id} has no subscription, skipping revocation`);
+            return;
+        }
+
+        const subscriptionId = typeof invoiceAny.subscription === 'string'
+            ? invoiceAny.subscription
+            : invoiceAny.subscription.id;
+
+        try {
+            const subscription = await this.prisma.subscription.findUnique({
+                where: { stripeSubscriptionId: subscriptionId },
+            });
+
+            if (!subscription) {
+                this.logger.warn(`Subscription ${subscriptionId} not found for failed invoice ${invoice.id}`);
+                return;
+            }
+
+            // Only revoke credits if they were granted
+            if (subscription.creditsGranted) {
+                this.logger.log(`Revoking subscription credits for user ${subscription.userId} due to failed payment`);
+
+                // Revoke subscription credits from wallet
+                await this.userWalletService.revokeSubscriptionCredits(
+                    subscription.userId,
+                    `Failed payment - Invoice ${invoice.id}`,
+                );
+
+                // Update subscription status and reset creditsGranted flag
+                await this.prisma.subscription.update({
+                    where: { id: subscription.id },
+                    data: {
+                        status: 'PAST_DUE',
+                        creditsGranted: false, // Reset so credits can be re-granted on successful retry
+                    },
+                });
+
+                this.logger.log(`Successfully revoked credits for subscription ${subscriptionId}`);
+            } else {
+                // Just update status if no credits to revoke
+                await this.prisma.subscription.update({
+                    where: { id: subscription.id },
+                    data: { status: 'PAST_DUE' },
+                });
+            }
+        } catch (error) {
+            this.logger.error(`Error handling failed payment for invoice ${invoice.id}:`, error);
+            // Don't throw - we don't want to fail the webhook for internal errors
+        }
     }
 
     mapStripeStatusToDb(status: Stripe.Subscription.Status): SubscriptionStatus {

@@ -32,7 +32,7 @@ export class CreditLedgerService {
 
     // In-memory cache for session status with TTL
     private sessionCache = new Map<string, { data: any; expires: number }>();
-    private readonly CACHE_TTL = 120 * 1000; // 120 seconds
+    private readonly CACHE_TTL = 45 * 1000; // 45 seconds (reduced from 120s for faster payment status updates)
     private readonly MAX_CACHE_SIZE = 1000; // Prevent unbounded growth
     private cacheCleanupInterval: NodeJS.Timeout | null = null;
 
@@ -121,6 +121,10 @@ export class CreditLedgerService {
             return;
         }
 
+        // Fix 8: Invalidate session cache BEFORE processing to prevent stale reads
+        // Frontend might query immediately after payment, and we want them to see updated status
+        this.invalidateSessionCache(session.id);
+
         // Update payment status first
         await this.prisma.payment.update({
             where: { id: payment.id },
@@ -139,7 +143,6 @@ export class CreditLedgerService {
         );
 
         this.logger.log(`Successfully processed one-time payment ${session.id}. Added ${payment.credits} top-up credits.`);
-        this.invalidateSessionCache(session.id);
     }
 
     async getSessionStatus(sessionId: string): Promise<SessionStatusResult> {

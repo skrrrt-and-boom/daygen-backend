@@ -257,4 +257,47 @@ export class PaymentsController {
       );
     }
   }
+
+  /**
+   * Sync subscription credits for users who had credits not granted due to webhook timing issues.
+   * This should only be used in development/test environments.
+   */
+  @Post('test/sync-subscription-credits')
+  async syncSubscriptionCredits(@CurrentUser() user: SanitizedUser) {
+    this.checkTestEnv();
+
+    const subscription = await this.subscriptionService.getUserSubscription(user.authUserId);
+    if (!subscription) {
+      throw new BadRequestException('No subscription found');
+    }
+
+    const wallet = await this.userWalletService.getBalance(user.authUserId);
+    if (wallet.subscriptionCredits > 0) {
+      return {
+        message: 'Credits already granted',
+        subscriptionCredits: wallet.subscriptionCredits,
+        subscription
+      };
+    }
+
+    // Grant the subscription credits
+    if (subscription.credits > 0) {
+      await this.userWalletService.grantInitialSubscriptionCredits(
+        user.authUserId,
+        subscription.credits,
+        subscription.currentPeriodEnd,
+        subscription.id,
+      );
+
+      const updatedWallet = await this.userWalletService.getBalance(user.authUserId);
+      return {
+        message: 'Credits synced successfully',
+        grantedCredits: subscription.credits,
+        subscriptionCredits: updatedWallet.subscriptionCredits,
+        totalCredits: updatedWallet.totalCredits,
+      };
+    }
+
+    return { message: 'No credits to sync', subscription };
+  }
 }
