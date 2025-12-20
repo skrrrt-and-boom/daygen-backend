@@ -104,20 +104,17 @@ export class StripeWebhookController {
         `Webhook signature verification completed in ${signatureVerificationTime}ms (total: ${totalTimeSoFar}ms)`,
       );
 
-      // Idempotency: persist event.id and skip duplicates using upsert to handle race conditions atomically
+      // Idempotency: persist event.id and skip duplicates
       const idempotencyStartTime = Date.now();
       let idempotencyCheckTime = 0;
-      const upsertResult = await (this.prisma as any).webhookEvent.upsert({
-        where: { eventId: event.id },
-        create: { eventId: event.id, type: event.type },
-        update: {}, // No-op update - if exists, this is a duplicate
-      });
-      idempotencyCheckTime = Date.now() - idempotencyStartTime;
 
-      // Check if this was an existing record (duplicate) by comparing timestamps
-      // If updatedAt equals createdAt, it was just created; otherwise it's a duplicate
-      const isDuplicate = upsertResult.updatedAt.getTime() !== upsertResult.createdAt.getTime();
-      if (isDuplicate) {
+      // Check if event already exists (safer than upsert with timestamp comparison)
+      const existingEvent = await (this.prisma as any).webhookEvent.findUnique({
+        where: { eventId: event.id },
+      });
+
+      if (existingEvent) {
+        idempotencyCheckTime = Date.now() - idempotencyStartTime;
         const totalTime = Date.now() - requestStartTime;
         this.logger.log(`Duplicate webhook event ${event.id}; acknowledging`);
         this.logger.log(
@@ -127,6 +124,24 @@ export class StripeWebhookController {
           .status(HttpStatus.OK)
           .json({ received: true, duplicate: true });
       }
+
+      // Create the event record (first time processing)
+      try {
+        await (this.prisma as any).webhookEvent.create({
+          data: { eventId: event.id, type: event.type },
+        });
+      } catch (createError: any) {
+        // Handle race condition - if another request created it first, treat as duplicate
+        if (createError?.code === 'P2002') {
+          idempotencyCheckTime = Date.now() - idempotencyStartTime;
+          this.logger.log(`Duplicate webhook event ${event.id} (race condition); acknowledging`);
+          return res
+            .status(HttpStatus.OK)
+            .json({ received: true, duplicate: true });
+        }
+        throw createError;
+      }
+      idempotencyCheckTime = Date.now() - idempotencyStartTime;
 
       this.logger.log(
         `Webhook idempotency check completed in ${idempotencyCheckTime}ms`,
