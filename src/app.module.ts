@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
@@ -67,6 +68,11 @@ import { SweeperService } from './cron/sweeper.service';
       },
     }),
     ScheduleModule.forRoot(),
+    // Global rate limiting: 100 requests per 60 seconds
+    ThrottlerModule.forRoot([{
+      ttl: 60000, // 60 seconds in ms
+      limit: 100, // 100 requests per ttl
+    }]),
     PrismaModule,
     AuthModule,
     UsersModule,

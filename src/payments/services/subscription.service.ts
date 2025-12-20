@@ -414,10 +414,11 @@ export class SubscriptionService {
 
             const fallbackPlan = getPlanByStripePriceId(priceId);
             const fallbackCredits = fallbackPlan?.credits || 0;
-            // Fix 9: Type assertion needed - current_period_end/start moved from Subscription to SubscriptionItem in newer Stripe API
-            // but webhook still sends these at subscription level for backward compatibility
-            const subAny = subscription as Stripe.Subscription & { current_period_end?: number; current_period_start?: number };
-            const periodEndTimestamp = subAny.current_period_end ?? Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+            // Stripe webhooks include current_period_end/start at subscription level for backward compatibility,
+            // but the SDK types moved them to SubscriptionItem. Use type guard with property check for safety.
+            const periodEndTimestamp = 'current_period_end' in subscription
+                ? (subscription.current_period_end as number)
+                : Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
             const periodEnd = new Date(periodEndTimestamp * 1000);
 
             // Use transaction with Serializable isolation to prevent race conditions
@@ -443,9 +444,11 @@ export class SubscriptionService {
                         stripePriceId: priceId || '',
                         stripeSubscriptionItemId: subscription.items.data[0]?.id,
                         status: this.mapStripeStatusToDb(subscription.status),
-                        // Fix 9: Type assertion for period fields (moved to SubscriptionItem in newer Stripe)
+                        // Use type guard for period fields (moved to SubscriptionItem in newer Stripe SDK)
                         currentPeriodStart: new Date(
-                            (subAny.current_period_start ?? Math.floor(Date.now() / 1000)) * 1000,
+                            ('current_period_start' in subscription
+                                ? (subscription.current_period_start as number)
+                                : Math.floor(Date.now() / 1000)) * 1000,
                         ),
                         currentPeriodEnd: periodEnd,
                         cancelAtPeriodEnd: subscription.cancel_at_period_end,

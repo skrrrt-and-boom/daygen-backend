@@ -30,42 +30,11 @@ type SessionStatusResult = {
 export class CreditLedgerService {
     private readonly logger = new Logger(CreditLedgerService.name);
 
-    // In-memory cache for session status with TTL
-    private sessionCache = new Map<string, { data: any; expires: number }>();
-    private readonly CACHE_TTL = 45 * 1000; // 45 seconds (reduced from 120s for faster payment status updates)
-    private readonly MAX_CACHE_SIZE = 1000; // Prevent unbounded growth
-    private cacheCleanupInterval: NodeJS.Timeout | null = null;
-
     constructor(
         private readonly prisma: PrismaService,
         private readonly stripeService: StripeService,
         private readonly userWalletService: UserWalletService,
-    ) {
-        // Start cache cleanup interval (every 5 minutes)
-        this.cacheCleanupInterval = setInterval(() => {
-            this.cleanupExpiredCache();
-        }, 5 * 60 * 1000);
-    }
-
-    onModuleDestroy() {
-        if (this.cacheCleanupInterval) {
-            clearInterval(this.cacheCleanupInterval);
-        }
-    }
-
-    private cleanupExpiredCache() {
-        const now = Date.now();
-        let cleaned = 0;
-        for (const [key, value] of this.sessionCache) {
-            if (value.expires < now) {
-                this.sessionCache.delete(key);
-                cleaned++;
-            }
-        }
-        if (cleaned > 0) {
-            this.logger.debug(`Cleaned ${cleaned} expired session cache entries`);
-        }
-    }
+    ) { }
 
     async createOneTimePurchaseSession(
         user: SanitizedUser,
@@ -121,10 +90,6 @@ export class CreditLedgerService {
             return;
         }
 
-        // Fix 8: Invalidate session cache BEFORE processing to prevent stale reads
-        // Frontend might query immediately after payment, and we want them to see updated status
-        this.invalidateSessionCache(session.id);
-
         // Update payment status first
         await this.prisma.payment.update({
             where: { id: payment.id },
@@ -145,22 +110,26 @@ export class CreditLedgerService {
         this.logger.log(`Successfully processed one-time payment ${session.id}. Added ${payment.credits} top-up credits.`);
     }
 
+    /**
+     * Fast, DB-only session status lookup.
+     * No Stripe API calls - relies on webhook to update payment status.
+     */
     async getSessionStatus(sessionId: string): Promise<SessionStatusResult> {
-        const cached = this.sessionCache.get(sessionId);
-        if (cached && cached.expires > Date.now()) {
-            return cached.data;
-        }
-
-        const session = await this.stripeService.retrieveSession(sessionId);
         const payment = await this.findPaymentBySessionId(sessionId);
 
+        if (!payment) {
+            // Payment record not yet created - still pending
+            return { status: 'pending', paymentStatus: 'PENDING' };
+        }
+
         const result: SessionStatusResult = {
-            status: session.payment_status,
-            paymentStatus: payment?.status || 'PENDING',
-            mode: session.mode,
+            status: payment.status === 'COMPLETED' ? 'complete' : 'pending',
+            paymentStatus: payment.status,
+            mode: payment.type === 'SUBSCRIPTION' ? 'subscription' : 'payment',
         };
 
-        if (session.mode === 'subscription' && payment?.metadata) {
+        // Include metadata for subscriptions
+        if (payment.type === 'SUBSCRIPTION' && payment.metadata) {
             const metadata = payment.metadata as any;
             result.metadata = {
                 planName: metadata.planName,
@@ -169,16 +138,7 @@ export class CreditLedgerService {
             };
         }
 
-        this.sessionCache.set(sessionId, {
-            data: result,
-            expires: Date.now() + this.CACHE_TTL,
-        });
-
         return result;
-    }
-
-    private invalidateSessionCache(sessionId: string): void {
-        this.sessionCache.delete(sessionId);
     }
 
     async addCredits(userId: string, amount: number): Promise<void> {

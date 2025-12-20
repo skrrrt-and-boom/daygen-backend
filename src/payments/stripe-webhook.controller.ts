@@ -25,6 +25,39 @@ export class StripeWebhookController {
     private readonly prisma: PrismaService,
   ) { }
 
+  /**
+   * Reports swallowed webhook errors with structured logging for monitoring/alerting.
+   * These errors don't fail the webhook (to avoid blocking Stripe retries) but should
+   * trigger alerts in production monitoring systems (Sentry, PagerDuty, etc.).
+   */
+  private reportSwallowedError(
+    context: string,
+    error: unknown,
+    metadata: Record<string, unknown> = {},
+  ): void {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    const errorCode = (error as { code?: string })?.code;
+
+    // Structured error log that can be parsed by log aggregators
+    this.logger.error({
+      alert: 'WEBHOOK_HANDLER_ERROR',
+      severity: 'HIGH',
+      context,
+      errorMessage,
+      errorCode,
+      errorStack,
+      timestamp: new Date().toISOString(),
+      ...metadata,
+    });
+
+    // Also log a human-readable version
+    this.logger.error(
+      `[ALERT] Webhook handler error in ${context}: ${errorMessage}`,
+      errorStack,
+    );
+  }
+
   @Post()
   async handleWebhook(
     @Req() req: Request,
@@ -264,10 +297,11 @@ export class StripeWebhookController {
       await this.subscriptionService.handleSuccessfulSubscription(subscription);
       this.logger.log(`Successfully processed subscription ${subscription.id}`);
     } catch (error) {
-      this.logger.error(
-        `Error processing subscription ${subscription.id}:`,
-        error,
-      );
+      this.reportSwallowedError('handleSubscriptionCreated', error, {
+        subscriptionId: subscription.id,
+        customerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id,
+        status: subscription.status,
+      });
       // Don't throw for background events to avoid 500ing the webhook if it's just a duplicate/race condition
     }
   }
@@ -279,10 +313,10 @@ export class StripeWebhookController {
       // Update subscription status in database
       await this.subscriptionService.updateSubscriptionStatus(subscription);
     } catch (error) {
-      this.logger.error(
-        `Error updating subscription ${subscription.id}:`,
-        error,
-      );
+      this.reportSwallowedError('handleSubscriptionUpdated', error, {
+        subscriptionId: subscription.id,
+        status: subscription.status,
+      });
     }
   }
 
@@ -293,10 +327,9 @@ export class StripeWebhookController {
       // Mark subscription as cancelled in database
       await this.subscriptionService.cancelSubscriptionByStripeId(subscription.id);
     } catch (error) {
-      this.logger.error(
-        `Error cancelling subscription ${subscription.id}:`,
-        error,
-      );
+      this.reportSwallowedError('handleSubscriptionDeleted', error, {
+        subscriptionId: subscription.id,
+      });
     }
   }
 
@@ -319,10 +352,11 @@ export class StripeWebhookController {
         this.logger.log(`Invoice ${invoice.id} has no subscription, skipping`);
       }
     } catch (error) {
-      this.logger.error(
-        `Error processing invoice payment ${invoice.id}:`,
-        error,
-      );
+      this.reportSwallowedError('handleInvoicePaymentSucceeded', error, {
+        invoiceId: invoice.id,
+        subscriptionId: (invoice as any).subscription,
+        amountPaid: (invoice as any).amount_paid,
+      });
     }
   }
 
@@ -338,10 +372,11 @@ export class StripeWebhookController {
       await this.subscriptionService.handleFailedPayment(invoice);
       this.logger.log(`Successfully processed failed invoice ${invoice.id}`);
     } catch (error) {
-      this.logger.error(
-        `Error processing failed payment ${invoice.id}:`,
-        error,
-      );
+      this.reportSwallowedError('handleInvoicePaymentFailed', error, {
+        invoiceId: invoice.id,
+        subscriptionId: (invoice as any).subscription,
+        amountDue: (invoice as any).amount_due,
+      });
     }
   }
 
@@ -365,10 +400,9 @@ export class StripeWebhookController {
         );
       }
     } catch (error) {
-      this.logger.error(
-        `Error processing failed payment intent ${paymentIntent.id}:`,
-        error,
-      );
+      this.reportSwallowedError('handlePaymentIntentFailed', error, {
+        paymentIntentId: paymentIntent.id,
+      });
     }
   }
 }

@@ -13,6 +13,7 @@ export interface WalletBalance {
     totalCredits: number;
     subscriptionExpiresAt: Date | null;
     graceLimit: number;
+    subscriptionTotalCredits: number | null; // Total credits per cycle from subscription plan
 }
 
 export interface DeductResult {
@@ -103,12 +104,22 @@ export class UserWalletService {
     async getBalance(userId: string): Promise<WalletBalance> {
         const wallet = await this.getOrCreateWallet(userId);
 
+        // Get the user's active subscription to determine total credits per cycle
+        const subscription = await this.prisma.subscription.findFirst({
+            where: {
+                userId,
+                status: { in: ['ACTIVE', 'TRIALING', 'PAST_DUE'] },
+            },
+            select: { credits: true },
+        });
+
         return {
             subscriptionCredits: wallet.subscriptionCredits,
             topUpCredits: wallet.topUpCredits,
             totalCredits: wallet.subscriptionCredits + wallet.topUpCredits,
             subscriptionExpiresAt: wallet.subscriptionExpiresAt,
             graceLimit: wallet.graceLimit,
+            subscriptionTotalCredits: subscription?.credits ?? null,
         };
     }
 

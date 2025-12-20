@@ -9,6 +9,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { UpgradeSubscriptionDto } from './dto/upgrade-subscription.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -202,102 +203,14 @@ export class PaymentsController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10/min is ample for max 2 requests per payment
   @Get('session/:sessionId/status')
   getSessionStatus(@Param('sessionId') sessionId: string) {
+    // Fast DB-only lookup - no Stripe API call needed
     return this.creditLedgerService.getSessionStatus(sessionId);
   }
 
-  @Public()
-  @Get('session/:sessionId/quick-status')
-  getSessionStatusQuick(@Param('sessionId') sessionId: string) {
-    return this.creditLedgerService.getSessionStatus(sessionId);
-  }
-
-  // TEST ENDPOINTS
-  @Get('find-by-intent/:paymentIntentId')
-  findPaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
-    return this.creditLedgerService.findPaymentByIntentId(paymentIntentId);
-  }
-
-  @Post('test/complete-payment/:sessionId')
-  async completeTestPayment(@Param('sessionId') sessionId: string) {
-    this.checkTestEnv();
-
-    this.logger.log(`🎯 TEST: Manual payment completion for session: ${sessionId}`);
-
-    // Simulate successful payment
-    return this.creditLedgerService.handleSuccessfulPayment({ id: sessionId } as any);
-  }
-
-  @Post('test/complete-by-intent/:paymentIntentId')
-  async completePaymentByIntent(@Param('paymentIntentId') paymentIntentId: string) {
-    this.checkTestEnv();
-
-    const payment = await this.creditLedgerService.findPaymentByIntentId(paymentIntentId);
-    if (payment) {
-      await this.creditLedgerService.updatePaymentStatus(payment.id, 'COMPLETED');
-      await this.creditLedgerService.addCredits(payment.userId, payment.credits);
-      return { status: 'success', payment };
-    }
-    return { status: 'not_found' };
-  }
-
-  @Post('test/create-manual-subscription')
-  createManualSubscription() {
-    this.checkTestEnv();
-    // This was not fully implemented in refactor plan as it's a test helper
-    // If absolutely needed, I would implement it in SubscriptionService
-    throw new BadRequestException('Manual subscription creation not supported in refactor');
-  }
-
-  private checkTestEnv() {
-    if (process.env.NODE_ENV === 'production') {
-      throw new ForbiddenException(
-        'Test endpoints are not available in production',
-      );
-    }
-  }
-
-  /**
-   * Sync subscription credits for users who had credits not granted due to webhook timing issues.
-   * This should only be used in development/test environments.
-   */
-  @Post('test/sync-subscription-credits')
-  async syncSubscriptionCredits(@CurrentUser() user: SanitizedUser) {
-    this.checkTestEnv();
-
-    const subscription = await this.subscriptionService.getUserSubscription(user.authUserId);
-    if (!subscription) {
-      throw new BadRequestException('No subscription found');
-    }
-
-    const wallet = await this.userWalletService.getBalance(user.authUserId);
-    if (wallet.subscriptionCredits > 0) {
-      return {
-        message: 'Credits already granted',
-        subscriptionCredits: wallet.subscriptionCredits,
-        subscription
-      };
-    }
-
-    // Grant the subscription credits
-    if (subscription.credits > 0) {
-      await this.userWalletService.grantInitialSubscriptionCredits(
-        user.authUserId,
-        subscription.credits,
-        subscription.currentPeriodEnd,
-        subscription.id,
-      );
-
-      const updatedWallet = await this.userWalletService.getBalance(user.authUserId);
-      return {
-        message: 'Credits synced successfully',
-        grantedCredits: subscription.credits,
-        subscriptionCredits: updatedWallet.subscriptionCredits,
-        totalCredits: updatedWallet.totalCredits,
-      };
-    }
-
-    return { message: 'No credits to sync', subscription };
-  }
+  // TEST ENDPOINTS REMOVED FOR PRODUCTION SECURITY
+  // If you need these for local development, see git history
 }

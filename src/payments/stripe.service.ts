@@ -1,10 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import type { Stripe as StripeType } from 'stripe';
 
 @Injectable()
-export class StripeService {
+export class StripeService implements OnModuleInit {
   private readonly logger = new Logger(StripeService.name);
   private readonly stripe: StripeType | null;
 
@@ -21,6 +21,17 @@ export class StripeService {
       timeout: 15000,
       maxNetworkRetries: 2,
     });
+
+    // Critical startup validation: warn if webhook secret is missing
+    const webhookSecret = this.configService.get<string>('STRIPE_WEBHOOK_SECRET');
+    if (!webhookSecret) {
+      this.logger.error(
+        '⚠️ STRIPE_WEBHOOK_SECRET not configured - webhooks will fail! ' +
+        'Set this environment variable before processing real payments.'
+      );
+    } else {
+      this.logger.log('✅ Stripe webhook secret configured');
+    }
   }
 
   private ensureStripeConfigured(): void {
@@ -33,6 +44,74 @@ export class StripeService {
     this.ensureStripeConfigured();
     return this.stripe!;
   }
+
+  /**
+   * Validate all configured price IDs exist in Stripe at startup.
+   * This prevents "price not found" errors at checkout time.
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.stripe) {
+      this.logger.warn('Skipping price ID validation - Stripe not configured');
+      return;
+    }
+
+    const priceEnvVars = [
+      'STRIPE_STARTER_PRICE_ID',
+      'STRIPE_PRO_PRICE_ID',
+      'STRIPE_AGENCY_PRICE_ID',
+      'STRIPE_STARTER_YEARLY_PRICE_ID',
+      'STRIPE_PRO_YEARLY_PRICE_ID',
+      'STRIPE_AGENCY_YEARLY_PRICE_ID',
+      'STRIPE_STARTER_TOPUP_PRICE_ID',
+      'STRIPE_PRO_TOPUP_PRICE_ID',
+      'STRIPE_AGENCY_TOPUP_PRICE_ID',
+    ];
+
+    const missingEnvVars: string[] = [];
+    const invalidPriceIds: string[] = [];
+
+    for (const envVar of priceEnvVars) {
+      const priceId = this.configService.get<string>(envVar);
+
+      if (!priceId) {
+        missingEnvVars.push(envVar);
+        continue;
+      }
+
+      // Skip validation for placeholder/test price IDs
+      if (priceId.startsWith('price_') && !priceId.startsWith('price_1')) {
+        continue; // Test placeholder like 'price_starter'
+      }
+
+      try {
+        await this.stripe.prices.retrieve(priceId);
+      } catch (error: any) {
+        if (error?.statusCode === 404 || error?.code === 'resource_missing') {
+          invalidPriceIds.push(`${envVar}=${priceId}`);
+        }
+        // Ignore other errors (e.g., network issues during startup)
+      }
+    }
+
+    if (missingEnvVars.length > 0) {
+      this.logger.warn(
+        `⚠️ Missing Stripe price IDs: ${missingEnvVars.join(', ')}. ` +
+        'Some checkout options may fail.'
+      );
+    }
+
+    if (invalidPriceIds.length > 0) {
+      this.logger.error(
+        `❌ Invalid Stripe price IDs (not found in Stripe): ${invalidPriceIds.join(', ')}. ` +
+        'Please verify these price IDs exist in your Stripe Dashboard.'
+      );
+    }
+
+    if (missingEnvVars.length === 0 && invalidPriceIds.length === 0) {
+      this.logger.log('✅ All Stripe price IDs validated successfully');
+    }
+  }
+
 
   async createCheckoutSession(
     userId: string,
