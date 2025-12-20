@@ -136,19 +136,38 @@ export class R2FilesService {
       productId: null,
     };
 
-    const fetchBatchSize = Math.min(take * 2, 200);
+    const fetchBatchSize = Math.min(take * 2, 50);
     const seenKeys = new Set<string>();
 
-    // Type definition helper
-    type R2FileWithOwner = Awaited<
-      ReturnType<typeof this.prisma.r2File.findMany<{
-        include: {
-          owner: { select: { displayName: true; authUserId: true; profileImage: true } };
-        }
-      }>>
-    >[number];
+    // Type definition for selected fields
+    type R2FileSelected = {
+      id: string;
+      fileName: string;
+      fileUrl: string;
+      fileSize: number | null;
+      mimeType: string | null;
+      prompt: string | null;
+      model: string | null;
+      aspectRatio: string | null;
+      avatarId: string | null;
+      avatarImageId: string | null;
+      productId: string | null;
+      jobId: string | null;
+      isLiked: boolean | null;
+      likeCount: number;
+      likedByAuthIds: string[];
+      isPublic: boolean | null;
+      references: string[];
+      createdAt: Date;
+      updatedAt: Date;
+      owner: {
+        displayName: string | null;
+        authUserId: string;
+        profileImage: string | null;
+      } | null;
+    };
 
-    const collected: (R2FileWithOwner & { viewerHasLiked?: boolean })[] = [];
+    const collected: (R2FileSelected & { viewerHasLiked?: boolean })[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
 
@@ -169,7 +188,26 @@ export class R2FilesService {
           { createdAt: 'desc' },
           { id: 'desc' },
         ],
-        include: {
+        select: {
+          id: true,
+          fileName: true,
+          fileUrl: true,
+          fileSize: true,
+          mimeType: true,
+          prompt: true,
+          model: true,
+          aspectRatio: true,
+          avatarId: true,
+          avatarImageId: true,
+          productId: true,
+          jobId: true,
+          isLiked: true,
+          likeCount: true,
+          likedByAuthIds: true,
+          isPublic: true,
+          references: true,
+          createdAt: true,
+          updatedAt: true,
           owner: {
             select: {
               displayName: true,
@@ -280,10 +318,33 @@ export class R2FilesService {
       productId: null,
     };
 
-    const fetchBatchSize = Math.min(take * 2, 200);
+    const fetchBatchSize = Math.min(take * 2, 50);
     const seenKeys = new Set<string>();
 
-    const collected: (Awaited<ReturnType<typeof this.prisma.r2File.findMany>>[number] & { viewerHasLiked?: boolean })[] = [];
+    // Type definition for selected fields
+    type R2FileSelected = {
+      id: string;
+      fileName: string;
+      fileUrl: string;
+      fileSize: number | null;
+      mimeType: string | null;
+      prompt: string | null;
+      model: string | null;
+      aspectRatio: string | null;
+      avatarId: string | null;
+      avatarImageId: string | null;
+      productId: string | null;
+      jobId: string | null;
+      isLiked: boolean | null;
+      likeCount: number;
+      likedByAuthIds: string[];
+      isPublic: boolean | null;
+      references: string[];
+      createdAt: Date;
+      updatedAt: Date;
+    };
+
+    const collected: (R2FileSelected & { viewerHasLiked?: boolean })[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
 
@@ -304,6 +365,27 @@ export class R2FilesService {
           { createdAt: 'desc' },
           { id: 'desc' },
         ],
+        select: {
+          id: true,
+          fileName: true,
+          fileUrl: true,
+          fileSize: true,
+          mimeType: true,
+          prompt: true,
+          model: true,
+          aspectRatio: true,
+          avatarId: true,
+          avatarImageId: true,
+          productId: true,
+          jobId: true,
+          isLiked: true,
+          likeCount: true,
+          likedByAuthIds: true,
+          isPublic: true,
+          references: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       });
 
       if (batch.length === 0) {
@@ -470,12 +552,31 @@ export class R2FilesService {
       productId: null,
     };
 
-    const fetchBatchSize = Math.min(take * 2, 200);
+    const fetchBatchSize = Math.min(take * 2, 50);
     const seenKeys = new Set<string>();
-    type R2FileRecord = Awaited<
-      ReturnType<typeof this.prisma.r2File.findMany>
-    >[number];
-    const collected: R2FileRecord[] = [];
+    // Type definition for selected fields
+    type R2FileSelected = {
+      id: string;
+      fileName: string;
+      fileUrl: string;
+      fileSize: number | null;
+      mimeType: string | null;
+      prompt: string | null;
+      model: string | null;
+      aspectRatio: string | null;
+      avatarId: string | null;
+      avatarImageId: string | null;
+      productId: string | null;
+      jobId: string | null;
+      isLiked: boolean | null;
+      likeCount: number;
+      likedByAuthIds: string[];
+      isPublic: boolean | null;
+      references: string[];
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    const collected: R2FileSelected[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
 
@@ -496,6 +597,27 @@ export class R2FilesService {
           { createdAt: 'desc' },
           { id: 'desc' },
         ],
+        select: {
+          id: true,
+          fileName: true,
+          fileUrl: true,
+          fileSize: true,
+          mimeType: true,
+          prompt: true,
+          model: true,
+          aspectRatio: true,
+          avatarId: true,
+          avatarImageId: true,
+          productId: true,
+          jobId: true,
+          isLiked: true,
+          likeCount: true,
+          likedByAuthIds: true,
+          isPublic: true,
+          references: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       });
 
       if (batch.length === 0) {
