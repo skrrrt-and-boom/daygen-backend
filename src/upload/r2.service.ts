@@ -155,8 +155,8 @@ export class R2Service {
     folder: string = 'generated-images',
     customFilename?: string,
   ): Promise<string> {
-    // Remove data URL prefix if present
-    const base64 = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
+    // Remove data URL prefix if present - handles formats like image/jpeg, image/png, image/svg+xml, etc.
+    const base64 = base64Data.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
 
     const fileExtension = this.getFileExtensionFromMimeType(mimeType);

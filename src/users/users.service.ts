@@ -137,6 +137,10 @@ export class UsersService {
     base64Data: string,
     mimeType?: string,
   ): Promise<SanitizedUser> {
+    console.log(
+      `[ProfilePicture] Starting upload for user ${authUserId}, data length: ${base64Data.length}, mimeType: ${mimeType || 'default (image/png)'}`,
+    );
+
     // Get current user to check for existing profile image
     const currentUser = await this.findByAuthUserId(authUserId);
 
@@ -183,11 +187,17 @@ export class UsersService {
       'profile-pictures',
     );
 
+    console.log(`[ProfilePicture] Uploaded to R2: ${profileImageUrl}`);
+
     // Update user record with new profile image URL
     const updatedUser = await this.prisma.user.update({
       where: { authUserId },
       data: { profileImage: profileImageUrl },
     });
+
+    console.log(
+      `[ProfilePicture] Database updated for user ${authUserId}, profileImage: ${updatedUser.profileImage}`,
+    );
 
     return this.toSanitizedUser(updatedUser);
   }
