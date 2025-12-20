@@ -77,7 +77,6 @@ export class SweeperService {
         // ─────────────────────────────────────────────────────────────────────────
         if (segments.length > 0) {
             const allFailed = segments.every((s: any) => s.status === 'failed');
-            const hasAnyPending = segments.some((s: any) => s.status === 'pending' || s.status === 'generating');
 
             if (allFailed) {
                 this.logger.warn(`Job ${job.id} has all ${segments.length} segments failed. Marking job as FAILED.`);
@@ -141,8 +140,8 @@ export class SweeperService {
         );
 
         for (const seg of hangingSegments) {
-            const config = (seg.config as any) || {};
-            const retryCount = config.retryCount || 0;
+            const config = seg.config || {};
+            const retryCount = (config as { retryCount?: number }).retryCount || 0;
 
             if (retryCount < MAX_SEGMENT_RETRIES) {
                 // Retry the segment
