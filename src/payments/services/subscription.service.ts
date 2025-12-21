@@ -412,26 +412,12 @@ export class SubscriptionService {
                 return;
             }
 
-            this.logger.error(`🔍 DEBUG BEFORE LOOKUP: priceId = "${priceId}", type = ${typeof priceId}`);
-            this.logger.error(`🔍 DEBUG ENV CHECK: STRIPE_STARTER_PRICE_ID = "${process.env.STRIPE_STARTER_PRICE_ID}"`);
 
             const fallbackPlan = getPlanByStripePriceId(priceId);
-
-            this.logger.error(`🔍 DEBUG AFTER LOOKUP: fallbackPlan = ${JSON.stringify(fallbackPlan ? { id: fallbackPlan.id, name: fallbackPlan.name, credits: fallbackPlan.credits } : null)}`);
-
-            // DEBUG: Log price ID lookup details
             if (!fallbackPlan) {
-                this.logger.error(`❌ PRICE ID MISMATCH: Could not find plan for priceId: "${priceId}"`);
-                this.logger.error(`   Expected price IDs from env:`);
-                this.logger.error(`   - STRIPE_STARTER_PRICE_ID: "${process.env.STRIPE_STARTER_PRICE_ID}"`);
-                this.logger.error(`   - STRIPE_PRO_PRICE_ID: "${process.env.STRIPE_PRO_PRICE_ID}"`);
-                this.logger.error(`   - STRIPE_AGENCY_PRICE_ID: "${process.env.STRIPE_AGENCY_PRICE_ID}"`);
-                this.logger.error(`   - STRIPE_STARTER_YEARLY_PRICE_ID: "${process.env.STRIPE_STARTER_YEARLY_PRICE_ID}"`);
-                this.logger.error(`   - STRIPE_PRO_YEARLY_PRICE_ID: "${process.env.STRIPE_PRO_YEARLY_PRICE_ID}"`);
-                this.logger.error(`   - STRIPE_AGENCY_YEARLY_PRICE_ID: "${process.env.STRIPE_AGENCY_YEARLY_PRICE_ID}"`);
-                this.logger.error(`   Subscription will be created with 0 credits! This is likely a Stripe Pricing Table configuration issue.`);
+                this.logger.error(`Cannot find plan for priceId: "${priceId}"`);
             } else {
-                this.logger.log(`✅ Found plan "${fallbackPlan.name}" (${fallbackPlan.id}) with ${fallbackPlan.credits} credits for priceId: "${priceId}"`);
+                this.logger.log(`Found plan "${fallbackPlan.name}" with ${fallbackPlan.credits} credits`);
             }
 
             // CRITICAL FIX: Throw error if plan lookup fails to prevent 0-credit grants
@@ -441,6 +427,8 @@ export class SubscriptionService {
                     `Check that STRIPE_*_PRICE_ID environment variables match your Stripe Dashboard configuration.`
                 );
             }
+            this.logger.log(`[DEBUG] handleSuccessfulSubscription resolved plan: ${JSON.stringify(fallbackPlan)}`);
+
             const fallbackCredits = fallbackPlan.credits;
             // Stripe webhooks include current_period_end/start at subscription level for backward compatibility,
             // but the SDK types moved them to SubscriptionItem. Use type guard with property check for safety.
@@ -459,12 +447,16 @@ export class SubscriptionService {
                 });
 
                 // Upsert subscription record - handles duplicate webhook events atomically
+                // IMPORTANT: Update clause includes credits to fix subscriptions created with wrong values
                 const existingOrNew = await tx.subscription.upsert({
                     where: { stripeSubscriptionId: subscription.id },
                     update: {
-                        // Only update if this is a duplicate event - keep existing data
+                        // Update status and credits even for duplicates - ensures recovery from bad data
                         status: this.mapStripeStatusToDb(subscription.status),
                         cancelAtPeriodEnd: subscription.cancel_at_period_end,
+                        // Fix: Update credits if they were set incorrectly (e.g., 0 from race condition)
+                        credits: fallbackCredits,
+                        stripePriceId: priceId || undefined, // Update if we have a valid priceId
                     },
                     create: {
                         userId: user.authUserId,
@@ -487,7 +479,11 @@ export class SubscriptionService {
 
                 // Fix 5: Use creditsGranted flag instead of time-based race condition window
                 // This is atomic and reliable, unlike the previous 5-second time check
-                if (!existingOrNew.creditsGranted) {
+                // RECOVERY: Also grant credits if creditsGranted=true but credits=0 (stale code bug)
+                const needsCreditsGrant = !existingOrNew.creditsGranted ||
+                    (existingOrNew.creditsGranted && existingOrNew.credits === 0);
+
+                if (needsCreditsGrant) {
                     // Only grant credits if not already granted (flag-based idempotency)
                     this.logger.log(`New subscription created, granting ${fallbackCredits} credits to user ${user.authUserId}`);
 
@@ -503,8 +499,11 @@ export class SubscriptionService {
                     this.logger.log(`Subscription ${subscription.id}: credits already granted (creditsGranted=true), skipping`);
                 }
 
-                // Find and update pending payment record
-                // FIX #10: Search by stripeSessionId from checkout session metadata, not stripeSubscriptionId
+                // ATOMIC PAYMENT HANDLING: Use upsert to prevent race condition duplicates
+                // When both checkout.session.completed and customer.subscription.created fire
+                // simultaneously, only one payment record will be created due to unique constraint
+
+                // First, try to find and update a pending payment by session ID (checkout flow)
                 const pendingPayment = await tx.payment.findFirst({
                     where: {
                         userId: user.authUserId,
@@ -518,10 +517,12 @@ export class SubscriptionService {
                 });
 
                 if (pendingPayment) {
+                    // Update the existing pending payment atomically
                     await tx.payment.update({
                         where: { id: pendingPayment.id },
                         data: {
                             status: 'COMPLETED',
+                            stripeSubscriptionId: subscription.id,
                             metadata: {
                                 ...(pendingPayment.metadata as any || {}),
                                 stripeSubscriptionId: subscription.id,
@@ -531,27 +532,48 @@ export class SubscriptionService {
                     });
                     this.logger.log(`Updated payment ${pendingPayment.id} for subscription ${subscription.id}`);
                 } else {
-                    // Fix 11: Create payment record if none exists (fallback for subscription.created webhook)
+                    // No pending payment found - use upsert to atomically create or update
+                    // This prevents race conditions between parallel webhooks
                     const plan = getPlanByStripePriceId(priceId);
-                    await tx.payment.create({
-                        data: {
-                            userId: user.authUserId,
-                            stripeSessionId: `sub_webhook_${subscription.id}`,
-                            amount: plan?.price || 0,
-                            credits: fallbackCredits,
-                            status: 'COMPLETED',
-                            type: 'SUBSCRIPTION',
-                            metadata: {
-                                stripeSubscriptionId: subscription.id,
-                                planId: plan?.id,
-                                planName: plan?.name,
-                                billingPeriod: plan?.interval === 'year' ? 'yearly' : 'monthly',
-                                source: 'subscription_webhook_fallback',
-                                processedAt: new Date().toISOString(),
+                    try {
+                        await tx.payment.upsert({
+                            where: {
+                                userId_stripeSubscriptionId: {
+                                    userId: user.authUserId,
+                                    stripeSubscriptionId: subscription.id,
+                                },
                             },
-                        },
-                    });
-                    this.logger.log(`Created fallback payment record for subscription ${subscription.id}`);
+                            create: {
+                                userId: user.authUserId,
+                                stripeSessionId: `sub_webhook_${subscription.id}`,
+                                stripeSubscriptionId: subscription.id,
+                                amount: plan?.price || 0,
+                                credits: fallbackCredits,
+                                status: 'COMPLETED',
+                                type: 'SUBSCRIPTION',
+                                metadata: {
+                                    stripeSubscriptionId: subscription.id,
+                                    planId: plan?.id,
+                                    planName: plan?.name,
+                                    billingPeriod: plan?.interval === 'year' ? 'yearly' : 'monthly',
+                                    source: 'subscription_webhook_fallback',
+                                    processedAt: new Date().toISOString(),
+                                },
+                            },
+                            update: {
+                                // Payment already exists - just ensure it's marked as completed
+                                status: 'COMPLETED',
+                            },
+                        });
+                        this.logger.log(`Upserted payment record for subscription ${subscription.id}`);
+                    } catch (upsertError: any) {
+                        // Handle unique constraint violation gracefully (parallel webhook race)
+                        if (upsertError?.code === 'P2002') {
+                            this.logger.log(`Payment already exists for subscription ${subscription.id} (race condition handled)`);
+                        } else {
+                            throw upsertError;
+                        }
+                    }
                 }
             }, {
                 // Serializable isolation prevents phantom reads and ensures atomicity
@@ -577,6 +599,8 @@ export class SubscriptionService {
         expiresAt: Date,
         subscriptionId: string,
     ): Promise<void> {
+        this.logger.log(`[DEBUG] grantInitialCreditsInTransaction called with ${credits} credits for user ${userId}`);
+
         // Get or create wallet in transaction
         let wallet = await tx.userWallet.findUnique({ where: { userId } });
 

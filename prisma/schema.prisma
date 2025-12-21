@@ -175,6 +175,7 @@ model Payment {
   userId                String
   stripeSessionId       String?       @unique
   stripePaymentIntentId String?       @unique
+  stripeSubscriptionId  String?       // Store subscription ID for deduplication
   amount                Int
   credits               Int
   status                PaymentStatus @default(PENDING)
@@ -187,6 +188,7 @@ model Payment {
   @@index([userId, createdAt(sort: Desc)])
   @@index([stripeSessionId])
   @@index([stripePaymentIntentId])
+  @@unique([userId, stripeSubscriptionId]) // Prevent duplicate payments per subscription
 }
 
 model Subscription {

@@ -59,7 +59,16 @@ async function bootstrap() {
     } else {
       console.warn(message);
     }
+  } else {
+    console.log('✅ All Stripe Price IDs configured');
   }
+
+  // Log configured price IDs for debugging (first 12 chars only for security)
+  console.log('📋 Stripe Price ID Configuration:');
+  stripePriceIds.forEach(key => {
+    const value = configService.get(key);
+    console.log(`   - ${key}: ${value ? value.substring(0, 12) + '...' : 'NOT SET'}`);
+  });
   app.useLogger(app.get(Logger));
   app.setGlobalPrefix('api', {
     exclude: [

@@ -184,18 +184,27 @@ export function getPriceIdForSubscription(planId: string): string {
 }
 
 export function getPlanByStripePriceId(stripePriceId: string): SubscriptionPlan | undefined {
-    // Build reverse lookup from env vars
-    const envMappings: Record<string, string> = {
-        [process.env.STRIPE_STARTER_PRICE_ID || '']: 'starter',
-        [process.env.STRIPE_PRO_PRICE_ID || '']: 'pro',
-        [process.env.STRIPE_AGENCY_PRICE_ID || '']: 'agency',
-        [process.env.STRIPE_STARTER_YEARLY_PRICE_ID || '']: 'starter-yearly',
-        [process.env.STRIPE_PRO_YEARLY_PRICE_ID || '']: 'pro-yearly',
-        [process.env.STRIPE_AGENCY_YEARLY_PRICE_ID || '']: 'agency-yearly',
+    // Build reverse lookup from env vars - only add entries with valid values
+    const envMappings: Record<string, string> = {};
+
+    const priceIdMappings = [
+        { envVar: 'STRIPE_STARTER_PRICE_ID', planId: 'starter' },
+        { envVar: 'STRIPE_PRO_PRICE_ID', planId: 'pro' },
+        { envVar: 'STRIPE_AGENCY_PRICE_ID', planId: 'agency' },
+        { envVar: 'STRIPE_STARTER_YEARLY_PRICE_ID', planId: 'starter-yearly' },
+        { envVar: 'STRIPE_PRO_YEARLY_PRICE_ID', planId: 'pro-yearly' },
+        { envVar: 'STRIPE_AGENCY_YEARLY_PRICE_ID', planId: 'agency-yearly' },
         // Legacy
-        [process.env.STRIPE_ENTERPRISE_PRICE_ID || '']: 'pro',
-        [process.env.STRIPE_ENTERPRISE_YEARLY_PRICE_ID || '']: 'pro-yearly',
-    };
+        { envVar: 'STRIPE_ENTERPRISE_PRICE_ID', planId: 'pro' },
+        { envVar: 'STRIPE_ENTERPRISE_YEARLY_PRICE_ID', planId: 'pro-yearly' },
+    ];
+
+    for (const { envVar, planId } of priceIdMappings) {
+        const priceId = process.env[envVar];
+        if (priceId) {
+            envMappings[priceId] = planId;
+        }
+    }
 
     let planId = envMappings[stripePriceId];
 

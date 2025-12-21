@@ -4,8 +4,7 @@ import { PrismaClient } from '@prisma/client';
 @Injectable()
 export class PrismaService
   extends PrismaClient
-  implements OnModuleInit, OnModuleDestroy
-{
+  implements OnModuleInit, OnModuleDestroy {
   constructor() {
     const databaseUrl = process.env.DATABASE_URL;
 
@@ -19,13 +18,12 @@ export class PrismaService
         if (isSupabase && (port === 6543 || port === 6532)) {
           if (!eu.searchParams.get('sslmode')) eu.searchParams.set('sslmode', 'require');
           if (!eu.searchParams.get('pgbouncer')) eu.searchParams.set('pgbouncer', 'true');
-          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '1');
+          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '10');
           effectiveUrl = eu.toString();
         }
         const logUrl = new URL(effectiveUrl);
         console.log(
-          `PrismaService: using db ${logUrl.hostname}:${logUrl.port || '5432'} (sslmode=${
-            logUrl.searchParams.get('sslmode') || 'n/a'
+          `PrismaService: using db ${logUrl.hostname}:${logUrl.port || '5432'} (sslmode=${logUrl.searchParams.get('sslmode') || 'n/a'
           }, pgbouncer=${logUrl.searchParams.get('pgbouncer') || 'n/a'})`,
         );
       }
@@ -44,7 +42,7 @@ export class PrismaService
 
     // Check if using Supabase pooler or PgBouncer (port 6543 or pooler.supabase.com)
     const isUsingPooler = finalUrl && (
-      finalUrl.includes(':6543/') || 
+      finalUrl.includes(':6543/') ||
       finalUrl.includes('pooler.supabase.com')
     );
 

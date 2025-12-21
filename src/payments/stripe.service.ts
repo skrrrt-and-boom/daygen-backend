@@ -281,7 +281,7 @@ export class StripeService implements OnModuleInit {
   async updateSubscription(
     subscriptionId: string,
     newPriceId: string,
-    prorationBehavior: 'create_prorations' | 'none' = 'create_prorations',
+    prorationBehavior: 'create_prorations' | 'none' = 'none',
     metadata?: Record<string, string>,
   ): Promise<StripeType.Subscription> {
     this.ensureStripeConfigured();
