@@ -412,8 +412,36 @@ export class SubscriptionService {
                 return;
             }
 
+            this.logger.error(`🔍 DEBUG BEFORE LOOKUP: priceId = "${priceId}", type = ${typeof priceId}`);
+            this.logger.error(`🔍 DEBUG ENV CHECK: STRIPE_STARTER_PRICE_ID = "${process.env.STRIPE_STARTER_PRICE_ID}"`);
+
             const fallbackPlan = getPlanByStripePriceId(priceId);
-            const fallbackCredits = fallbackPlan?.credits || 0;
+
+            this.logger.error(`🔍 DEBUG AFTER LOOKUP: fallbackPlan = ${JSON.stringify(fallbackPlan ? { id: fallbackPlan.id, name: fallbackPlan.name, credits: fallbackPlan.credits } : null)}`);
+
+            // DEBUG: Log price ID lookup details
+            if (!fallbackPlan) {
+                this.logger.error(`❌ PRICE ID MISMATCH: Could not find plan for priceId: "${priceId}"`);
+                this.logger.error(`   Expected price IDs from env:`);
+                this.logger.error(`   - STRIPE_STARTER_PRICE_ID: "${process.env.STRIPE_STARTER_PRICE_ID}"`);
+                this.logger.error(`   - STRIPE_PRO_PRICE_ID: "${process.env.STRIPE_PRO_PRICE_ID}"`);
+                this.logger.error(`   - STRIPE_AGENCY_PRICE_ID: "${process.env.STRIPE_AGENCY_PRICE_ID}"`);
+                this.logger.error(`   - STRIPE_STARTER_YEARLY_PRICE_ID: "${process.env.STRIPE_STARTER_YEARLY_PRICE_ID}"`);
+                this.logger.error(`   - STRIPE_PRO_YEARLY_PRICE_ID: "${process.env.STRIPE_PRO_YEARLY_PRICE_ID}"`);
+                this.logger.error(`   - STRIPE_AGENCY_YEARLY_PRICE_ID: "${process.env.STRIPE_AGENCY_YEARLY_PRICE_ID}"`);
+                this.logger.error(`   Subscription will be created with 0 credits! This is likely a Stripe Pricing Table configuration issue.`);
+            } else {
+                this.logger.log(`✅ Found plan "${fallbackPlan.name}" (${fallbackPlan.id}) with ${fallbackPlan.credits} credits for priceId: "${priceId}"`);
+            }
+
+            // CRITICAL FIX: Throw error if plan lookup fails to prevent 0-credit grants
+            if (!fallbackPlan) {
+                throw new Error(
+                    `Cannot process subscription ${subscription.id}: Unable to find plan for priceId "${priceId}". ` +
+                    `Check that STRIPE_*_PRICE_ID environment variables match your Stripe Dashboard configuration.`
+                );
+            }
+            const fallbackCredits = fallbackPlan.credits;
             // Stripe webhooks include current_period_end/start at subscription level for backward compatibility,
             // but the SDK types moved them to SubscriptionItem. Use type guard with property check for safety.
             const periodEndTimestamp = 'current_period_end' in subscription

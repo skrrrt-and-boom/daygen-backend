@@ -222,8 +222,12 @@ export function getPlanByStripePriceId(stripePriceId: string): SubscriptionPlan 
         planId = placeholderMap[stripePriceId];
     }
 
-    if (!planId) return undefined;
-    return getSubscriptionPlanById(planId);
+    if (!planId) {
+        return undefined;
+    }
+
+    const plan = getSubscriptionPlanById(planId);
+    return plan;
 }
 
 /**

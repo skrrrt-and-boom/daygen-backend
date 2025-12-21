@@ -141,12 +141,22 @@ export class CreditLedgerService {
         return result;
     }
 
+    /**
+     * @deprecated Use userWalletService.addTopUpCredits() instead.
+     * This method only updates user.credits without syncing the wallet,
+     * which causes credit drift. Kept for backward compatibility only.
+     */
     async addCredits(userId: string, amount: number): Promise<void> {
-        await this.prisma.user.update({
-            where: { authUserId: userId },
-            data: { credits: { increment: amount } },
-        });
-        this.logger.log(`Added ${amount} credits to user ${userId}`);
+        this.logger.warn(
+            `DEPRECATED: addCredits() called for user ${userId}. Use userWalletService.addTopUpCredits() instead.`
+        );
+        // Redirect to wallet service to maintain consistency
+        await this.userWalletService.addTopUpCredits(
+            userId,
+            amount,
+            `legacy_addCredits_${Date.now()}`,
+            `Legacy credit addition: ${amount} credits`,
+        );
     }
 
     async refundCredits(userId: string, amount: number, reason: string): Promise<void> {
