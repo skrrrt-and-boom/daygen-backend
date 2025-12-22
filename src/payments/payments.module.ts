@@ -28,4 +28,3 @@ import { UserWalletService } from './services/user-wallet.service';
   ],
 })
 export class PaymentsModule { }
-

@@ -212,12 +212,8 @@ model Subscription {
   @@index([stripePriceId])
 }
 
-model WebhookEvent {
-  id        String   @id @default(cuid())
-  eventId   String   @unique
-  type      String
-  createdAt DateTime @default(now())
-}
+
+
 
 model TimelineSegment {
   id           String   @id @default(cuid())

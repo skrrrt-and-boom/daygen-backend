@@ -11,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
-import { UpgradeSubscriptionDto } from './dto/upgrade-subscription.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
@@ -177,17 +176,7 @@ export class PaymentsController {
     return { message: 'Cancellation removed successfully' };
   }
 
-  @Post('subscription/upgrade')
-  async upgradeSubscription(
-    @CurrentUser() user: SanitizedUser,
-    @Body() body: UpgradeSubscriptionDto,
-  ) {
-    await this.subscriptionService.upgradeSubscription(
-      user.authUserId,
-      body.planId,
-    );
-    return { message: 'Subscription upgraded successfully' };
-  }
+  // NOTE: upgradeSubscription endpoint removed - all tier changes go through Stripe Customer Portal
 
   @Post('portal')
   async createPortal(@CurrentUser() user: SanitizedUser) {

@@ -191,32 +191,4 @@ export class SweeperService {
         }
     }
 
-    /**
-     * Webhook Event Cleanup:
-     * Removes old webhook events to prevent unbounded table growth.
-     * Runs daily at 3 AM.
-     */
-    @Cron('0 3 * * *') // Every day at 3:00 AM
-    async cleanupOldWebhookEvents() {
-        this.logger.log('Running Webhook Event Cleanup...');
-
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-        try {
-            const result = await (this.prisma as any).webhookEvent.deleteMany({
-                where: {
-                    createdAt: {
-                        lt: thirtyDaysAgo,
-                    },
-                },
-            });
-
-            if (result.count > 0) {
-                this.logger.log(`Cleaned up ${result.count} old webhook events (older than 30 days).`);
-            }
-        } catch (error) {
-            // Table might not exist or other error - log but don't throw
-            this.logger.warn(`Webhook cleanup skipped: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-    }
 }

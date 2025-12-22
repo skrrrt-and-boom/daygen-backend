@@ -433,4 +433,44 @@ export class StripeService implements OnModuleInit {
   ): Promise<StripeType.Subscription> {
     return this.removeCancellation(subscriptionId);
   }
+
+  /**
+   * Retrieve a subscription schedule to check for pending plan changes.
+   * When users change their plan via Customer Portal with no proration,
+   * Stripe creates a schedule that takes effect at the next billing cycle.
+   */
+  async retrieveSubscriptionSchedule(
+    scheduleId: string,
+  ): Promise<StripeType.SubscriptionSchedule> {
+    this.ensureStripeConfigured();
+    try {
+      return await this.stripe!.subscriptionSchedules.retrieve(scheduleId);
+    } catch (error) {
+      this.logger.error(
+        `Failed to retrieve subscription schedule ${scheduleId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Retrieve subscription with expanded schedule to check for pending changes.
+   */
+  async retrieveSubscriptionWithSchedule(
+    subscriptionId: string,
+  ): Promise<StripeType.Subscription> {
+    this.ensureStripeConfigured();
+    try {
+      return await this.stripe!.subscriptions.retrieve(subscriptionId, {
+        expand: ['schedule', 'schedule.phases'],
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to retrieve subscription with schedule ${subscriptionId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
 }

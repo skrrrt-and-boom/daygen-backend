@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaymentStatus, PaymentType } from '@prisma/client';
+import { PaymentStatus, PaymentType, WalletType } from '@prisma/client';
 import { StripeService } from '../stripe.service';
 import { SanitizedUser } from '../../users/types';
 import {
@@ -142,28 +142,20 @@ export class CreditLedgerService {
     }
 
     /**
-     * @deprecated Use userWalletService.addTopUpCredits() instead.
-     * This method only updates user.credits without syncing the wallet,
-     * which causes credit drift. Kept for backward compatibility only.
+     * Refund credits to the appropriate wallet after a failed operation.
+     * Refunds go to the top-up wallet since we can't determine original source.
      */
-    async addCredits(userId: string, amount: number): Promise<void> {
-        this.logger.warn(
-            `DEPRECATED: addCredits() called for user ${userId}. Use userWalletService.addTopUpCredits() instead.`
-        );
-        // Redirect to wallet service to maintain consistency
-        await this.userWalletService.addTopUpCredits(
+    async refundCredits(userId: string, amount: number, reason: string): Promise<void> {
+        if (amount <= 0) return;
+
+        // Use wallet service to maintain consistency with dual-wallet architecture
+        await this.userWalletService.refundCredits(
             userId,
             amount,
-            `legacy_addCredits_${Date.now()}`,
-            `Legacy credit addition: ${amount} credits`,
+            WalletType.TOPUP, // Refunds go to perpetual wallet
+            reason,
+            `refund_${Date.now()}`,
         );
-    }
-
-    async refundCredits(userId: string, amount: number, reason: string): Promise<void> {
-        await this.prisma.user.update({
-            where: { authUserId: userId },
-            data: { credits: { decrement: amount } },
-        });
         this.logger.log(`Refunded ${amount} credits for user ${userId}. Reason: ${reason}`);
     }
 

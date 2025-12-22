@@ -33,39 +33,56 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  // Stripe Price ID validation (warnings - not fatal in development)
-  const stripePriceIds = [
+  // Stripe Price ID validation
+  // Subscription price IDs are REQUIRED in production - fail fast to prevent 0-credit bugs
+  const requiredStripePriceIds = [
     'STRIPE_STARTER_PRICE_ID',
     'STRIPE_PRO_PRICE_ID',
     'STRIPE_AGENCY_PRICE_ID',
     'STRIPE_STARTER_YEARLY_PRICE_ID',
     'STRIPE_PRO_YEARLY_PRICE_ID',
     'STRIPE_AGENCY_YEARLY_PRICE_ID',
+  ];
+
+  // Top-up price IDs are optional (warning only)
+  const optionalStripePriceIds = [
     'STRIPE_STARTER_TOPUP_PRICE_ID',
     'STRIPE_PRO_TOPUP_PRICE_ID',
     'STRIPE_AGENCY_TOPUP_PRICE_ID',
   ];
 
-  const missingStripeIds = stripePriceIds.filter(
+  const missingRequiredStripeIds = requiredStripePriceIds.filter(
     (key) => !configService.get(key),
   );
 
-  if (missingStripeIds.length > 0) {
+  const missingOptionalStripeIds = optionalStripePriceIds.filter(
+    (key) => !configService.get(key),
+  );
+
+  if (missingRequiredStripeIds.length > 0) {
     const isProduction = process.env.NODE_ENV === 'production';
-    const message = `⚠️  Missing Stripe Price IDs: ${missingStripeIds.join(', ')}`;
+    const message = `Missing REQUIRED Stripe Subscription Price IDs: ${missingRequiredStripeIds.join(', ')}`;
     if (isProduction) {
-      // Changed from process.exit(1) to warning only - allows app to start without Stripe fully configured
-      console.warn(`⚠️  ${message} - Payment processing will fail until configured!`);
+      // FAIL FAST in production to prevent 0-credit bugs
+      console.error(`❌ ${message}`);
+      console.error(`   This would cause subscriptions to grant 0 credits. Exiting.`);
+      process.exit(1);
     } else {
-      console.warn(message);
+      console.warn(`⚠️  ${message} - Subscription payments will fail!`);
     }
-  } else {
-    console.log('✅ All Stripe Price IDs configured');
+  }
+
+  if (missingOptionalStripeIds.length > 0) {
+    console.warn(`⚠️  Optional Stripe Top-up Price IDs not set: ${missingOptionalStripeIds.join(', ')}`);
+  }
+
+  if (missingRequiredStripeIds.length === 0) {
+    console.log('✅ All required Stripe Price IDs configured');
   }
 
   // Log configured price IDs for debugging (first 12 chars only for security)
   console.log('📋 Stripe Price ID Configuration:');
-  stripePriceIds.forEach(key => {
+  [...requiredStripePriceIds, ...optionalStripePriceIds].forEach(key => {
     const value = configService.get(key);
     console.log(`   - ${key}: ${value ? value.substring(0, 12) + '...' : 'NOT SET'}`);
   });

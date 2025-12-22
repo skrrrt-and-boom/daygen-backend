@@ -246,3 +246,27 @@ export function hasPriorityQueue(planId: string): boolean {
     return planId === 'agency' || planId === 'agency-yearly';
 }
 
+/**
+ * Validate all required Stripe price IDs are configured.
+ * Should be called during application startup to fail fast.
+ */
+export function validateStripePriceIds(): void {
+    const required = [
+        { env: 'STRIPE_STARTER_PRICE_ID', plan: 'starter' },
+        { env: 'STRIPE_PRO_PRICE_ID', plan: 'pro' },
+        { env: 'STRIPE_AGENCY_PRICE_ID', plan: 'agency' },
+        { env: 'STRIPE_STARTER_YEARLY_PRICE_ID', plan: 'starter-yearly' },
+        { env: 'STRIPE_PRO_YEARLY_PRICE_ID', plan: 'pro-yearly' },
+        { env: 'STRIPE_AGENCY_YEARLY_PRICE_ID', plan: 'agency-yearly' },
+    ];
+
+    const missing = required.filter(({ env }) => !process.env[env]);
+
+    if (missing.length > 0) {
+        throw new Error(
+            `Missing required Stripe price IDs: ${missing.map(m => m.env).join(', ')}. ` +
+            `Check your environment configuration.`
+        );
+    }
+}
+
