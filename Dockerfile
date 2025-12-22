@@ -30,4 +30,4 @@ RUN apk add --no-cache python3 py3-pip ffmpeg py3-numpy ttf-dejavu ttf-liberatio
 # Install only essential python packages for stitching (avoiding heavy librosa build)
 RUN pip3 install ffmpeg-python --break-system-packages
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma migrate deploy || echo 'Migration failed, continuing...' && node dist/src/main.js"]
+CMD ["node", "dist/src/main.js"]
