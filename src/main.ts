@@ -15,6 +15,7 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const requiredEnvVars = [
     'DATABASE_URL',
+    'DIRECT_URL',
     'SUPABASE_JWT_SECRET',
     'CLOUDFLARE_R2_ACCESS_KEY_ID',
     'CLOUDFLARE_R2_SECRET_ACCESS_KEY',
