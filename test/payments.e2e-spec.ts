@@ -33,7 +33,16 @@ describe('Payments E2E', () => {
                 data: [{ price: { id: 'price_test' } }],
             },
         }),
-        constructWebhookEvent: jest.fn(),
+        constructWebhookEvent: jest.fn().mockImplementation((payload, signature) => {
+            if (signature === 'invalid_signature') {
+                throw new Error('Invalid signature');
+            }
+            return {
+                id: 'evt_test_123',
+                type: 'checkout.session.completed',
+                data: { object: {} }
+            };
+        }),
     };
 
     beforeAll(async () => {

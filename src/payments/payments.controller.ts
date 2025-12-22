@@ -7,7 +7,6 @@ import {
   UseGuards,
   Logger,
   BadRequestException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';

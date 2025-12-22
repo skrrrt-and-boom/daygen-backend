@@ -66,25 +66,25 @@ export class StripeWebhookController {
     switch (event.type) {
       case 'customer.subscription.created':
         await this.subscriptionService.handleSuccessfulSubscription(
-          event.data.object as Stripe.Subscription
+          event.data.object
         );
         break;
 
       case 'customer.subscription.updated':
         await this.subscriptionService.updateSubscriptionStatus(
-          event.data.object as Stripe.Subscription
+          event.data.object
         );
         break;
 
       case 'customer.subscription.deleted':
         await this.subscriptionService.cancelSubscriptionByStripeId(
-          (event.data.object as Stripe.Subscription).id
+          (event.data.object).id
         );
         break;
 
       case 'invoice.paid':
       case 'invoice.payment_succeeded':
-        const invoice = event.data.object as Stripe.Invoice;
+        const invoice = event.data.object;
         if ((invoice as any).billing_reason === 'subscription_cycle') {
           await this.subscriptionService.handleRecurringPayment(invoice);
         }
@@ -92,12 +92,12 @@ export class StripeWebhookController {
 
       case 'invoice.payment_failed':
         await this.subscriptionService.handleFailedPayment(
-          event.data.object as Stripe.Invoice
+          event.data.object
         );
         break;
 
       case 'checkout.session.completed':
-        const session = event.data.object as Stripe.Checkout.Session;
+        const session = event.data.object;
         if (session.mode === 'payment') {
           await this.creditLedgerService.handleSuccessfulPayment({
             ...session,
