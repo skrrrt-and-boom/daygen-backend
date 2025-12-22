@@ -170,9 +170,10 @@ export class StripeService implements OnModuleInit {
     this.ensureStripeConfigured();
     try {
       // Deterministic idempotency unless overridden (e.g., to force a fresh session)
+      // Include priceId to avoid conflicts when Stripe products are recreated
       const idempotencyKey =
         options?.idempotencyKey ||
-        [userId, type, metadata.packageId || metadata.planId || 'na']
+        [userId, type, metadata.packageId || metadata.planId || 'na', priceId, Date.now().toString()]
           .filter(Boolean)
           .join(':');
       const session = await this.stripe!.checkout.sessions.create(

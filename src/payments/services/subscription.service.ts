@@ -144,6 +144,15 @@ export class SubscriptionService {
         const periodStart = new Date((subAny.current_period_start || Math.floor(Date.now() / 1000)) * 1000);
 
         await this.prisma.$transaction(async (tx) => {
+            // Ensure the user has the correct Stripe Customer ID linked
+            if (user.stripeCustomerId !== customer.id) {
+                this.logger.log(`Linking user ${user.authUserId} to Stripe customer ${customer.id}`);
+                await tx.user.update({
+                    where: { authUserId: user.authUserId },
+                    data: { stripeCustomerId: customer.id },
+                });
+            }
+
             const record = await tx.subscription.upsert({
                 where: { stripeSubscriptionId: sub.id },
                 create: {
@@ -164,11 +173,48 @@ export class SubscriptionService {
             });
 
             if (!record.creditsGranted) {
-                await tx.userWallet.upsert({
+                const wallet = await tx.userWallet.upsert({
                     where: { userId: user.authUserId },
                     create: { userId: user.authUserId, subscriptionCredits: plan.credits, subscriptionExpiresAt: periodEnd },
                     update: { subscriptionCredits: plan.credits, subscriptionExpiresAt: periodEnd },
                 });
+
+                // Create Payment record for audit trail (idempotent via upsert)
+                await tx.payment.upsert({
+                    where: {
+                        userId_stripeSubscriptionId: {
+                            userId: user.authUserId,
+                            stripeSubscriptionId: sub.id,
+                        },
+                    },
+                    create: {
+                        userId: user.authUserId,
+                        stripeSessionId: `sub_session_${sub.id}`,
+                        stripeSubscriptionId: sub.id,
+                        amount: sub.items.data[0]?.price.unit_amount || 0,
+                        credits: plan.credits,
+                        status: 'COMPLETED',
+                        type: 'SUBSCRIPTION',
+                        metadata: { planId: plan.id, planName: plan.name },
+                    },
+                    update: {},
+                });
+
+                // Create WalletTransaction for credit audit trail
+                await tx.walletTransaction.create({
+                    data: {
+                        userId: user.authUserId,
+                        walletType: 'SUBSCRIPTION',
+                        transactionType: 'CREDIT',
+                        amount: plan.credits,
+                        balanceBefore: wallet.subscriptionCredits - plan.credits,
+                        balanceAfter: wallet.subscriptionCredits,
+                        sourceType: 'SUBSCRIPTION',
+                        sourceId: sub.id,
+                        description: `Subscription: ${plan.name} (${plan.credits} credits)`,
+                    },
+                });
+
                 await tx.subscription.update({
                     where: { id: record.id },
                     data: { creditsGranted: true },
@@ -205,12 +251,24 @@ export class SubscriptionService {
     }
 
     async updateSubscriptionStatus(sub: Stripe.Subscription): Promise<void> {
-        await this.prisma.subscription.updateMany({
+        const priceId = sub.items.data[0]?.price.id;
+        const plan = getPlanByStripePriceId(priceId);
+
+        const data: any = {
+            status: this.mapStatus(sub.status),
+            cancelAtPeriodEnd: sub.cancel_at_period_end,
+        };
+
+        if (priceId) {
+            data.stripePriceId = priceId;
+        }
+        if (plan) {
+            data.credits = plan.credits;
+        }
+
+        await this.prisma.subscription.update({
             where: { stripeSubscriptionId: sub.id },
-            data: {
-                status: this.mapStatus(sub.status),
-                cancelAtPeriodEnd: sub.cancel_at_period_end,
-            },
+            data,
         });
     }
 
