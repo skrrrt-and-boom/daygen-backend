@@ -288,7 +288,7 @@ export class R2Service {
     });
 
     try {
-      const uploadUrl = await getSignedUrl(this.s3Client, command, {
+      const uploadUrl = await getSignedUrl(this.s3Client as any, command as any, {
         expiresIn: 3600, // 1 hour
       });
 
