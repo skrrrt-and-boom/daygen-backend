@@ -32,6 +32,7 @@ export interface R2FileResponse {
   avatarImageId?: string;
   productId?: string;
   jobId?: string;
+  jobType?: string;  // Job type derived from the associated Job
   isLiked?: boolean;
   likeCount?: number;
   isPublic?: boolean;
@@ -575,6 +576,7 @@ export class R2FilesService {
       references: string[];
       createdAt: Date;
       updatedAt: Date;
+      job: { type: string } | null;
     };
     const collected: R2FileSelected[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
@@ -617,6 +619,11 @@ export class R2FilesService {
           references: true,
           createdAt: true,
           updatedAt: true,
+          job: {
+            select: {
+              type: true,
+            },
+          },
         },
       });
 
@@ -891,6 +898,7 @@ export class R2FilesService {
     references?: string[] | null;
     createdAt: Date;
     updatedAt: Date;
+    job?: { type: string } | null;
   }): R2FileResponse {
     return {
       id: file.id,
@@ -905,6 +913,7 @@ export class R2FilesService {
       avatarImageId: file.avatarImageId ?? undefined,
       productId: file.productId ?? undefined,
       jobId: file.jobId ?? undefined,
+      jobType: file.job?.type ?? undefined,
       isLiked: file.isLiked ?? undefined,
       likeCount: file.likeCount ?? 0,
       isPublic: file.isPublic ?? undefined,
