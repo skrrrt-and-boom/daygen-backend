@@ -128,7 +128,6 @@ export class GoogleAuthService {
       const profile = await this.usersService.upsertFromSupabaseUser(
         authUser as any,
         {
-          displayName: googleUserInfo.name || 'Google User',
           profileImage: googleUserInfo.picture ?? undefined,
         },
       );

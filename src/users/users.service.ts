@@ -25,7 +25,6 @@ export class UsersService {
         id: randomUUID(),
         email: normalizedEmail,
         authUserId,
-        displayName: input.displayName?.trim() || null,
         credits: 20, // 20 free credits for new accounts
         role: 'USER',
       },
@@ -44,7 +43,6 @@ export class UsersService {
       select: {
         authUserId: true,
         email: true,
-        displayName: true,
         credits: true,
         profileImage: true,
         bio: true,
@@ -98,15 +96,10 @@ export class UsersService {
 
   async updateProfile(
     authUserId: string,
-    patch: { displayName?: string | null; profileImage?: string | null; bio?: string | null; username?: string | null; country?: string | null },
+    patch: { profileImage?: string | null; bio?: string | null; username?: string | null; country?: string | null },
   ): Promise<SanitizedUser> {
     // Build update data object with only the fields that were explicitly provided
     const updateData: Prisma.UserUpdateInput = {};
-
-    // Only update displayName if it was explicitly provided in the patch
-    if (patch.displayName !== undefined) {
-      updateData.displayName = patch.displayName?.trim() || null;
-    }
 
     // Only update bio if it was explicitly provided in the patch
     if (patch.bio !== undefined) {
@@ -263,7 +256,6 @@ export class UsersService {
   async upsertFromSupabaseUser(
     authUser: SupabaseAuthUser,
     options: {
-      displayName?: string | null;
       profileImage?: string | null;
       credits?: number;
     } = {},
@@ -277,15 +269,7 @@ export class UsersService {
       : `${authUser.id}@supabase.local`;
 
     const metadata = (authUser.user_metadata ?? {}) as Record<string, unknown>;
-    const metaDisplayName = this.extractString(
-      metadata.display_name ?? metadata.full_name,
-    );
     const metaAvatarUrl = this.extractString(metadata.avatar_url);
-
-    const desiredDisplayName =
-      options.displayName?.trim() ||
-      metaDisplayName ||
-      (authUser.email ? authUser.email.split('@')[0] : null);
 
     const desiredProfileImage = options.profileImage ?? metaAvatarUrl ?? null;
 
@@ -295,16 +279,12 @@ export class UsersService {
     });
 
     // Build update payload with safe rules
-    // - Always update email and optionally display name
+    // - Always update email
     // - Only update profileImage from metadata when creating a new user
     // - For existing users, only change profileImage if an explicit override was provided
     const updateData: Prisma.UserUpdateInput = {
       email: normalizedEmail,
     };
-
-    if (desiredDisplayName !== undefined) {
-      updateData.displayName = desiredDisplayName;
-    }
 
     if (!existingUser) {
       // New user: allow setting profile image from desiredProfileImage (metadata or override)
@@ -342,7 +322,6 @@ export class UsersService {
             id: randomUUID(),
             authUserId: authUser.id,
             email: normalizedEmail,
-            displayName: desiredDisplayName ?? null,
             profileImage: desiredProfileImage,
             credits:
               options.credits !== undefined && options.credits !== null
@@ -372,7 +351,6 @@ export class UsersService {
       authUserId: user.authUserId,
       email: normalizeEmailValue(user.email),
       username: (user as any).username ?? null,
-      displayName: user.displayName ?? null,
       credits: user.credits,
       profileImage: user.profileImage ?? null,
       bio: (user as any).bio ?? null,

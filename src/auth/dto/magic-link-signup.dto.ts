@@ -12,11 +12,6 @@ export class MagicLinkSignUpDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(80)
-  displayName?: string;
-
-  @IsOptional()
-  @IsString()
   @MinLength(8)
   @MaxLength(128)
   password?: string;

@@ -1,6 +1,5 @@
 export interface CreateLocalUserInput {
   email: string;
-  displayName?: string;
 }
 
 export interface SanitizedUser {
@@ -8,7 +7,6 @@ export interface SanitizedUser {
   authUserId: string;
   email: string;
   username: string | null;
-  displayName: string | null;
   credits: number;
   profileImage: string | null;
   bio?: string | null;

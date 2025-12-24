@@ -34,7 +34,7 @@ export class UsersController {
   @Post('me')
   async createUserProfile(
     @Headers('authorization') authorization: string,
-    @Body() body: { email: string; displayName?: string; authUserId: string },
+    @Body() body: { email: string; authUserId: string },
   ) {
     const token = authorization?.replace('Bearer ', '');
     if (!token) {
@@ -47,9 +47,7 @@ export class UsersController {
         throw new Error('Invalid or expired token');
       }
 
-      return this.usersService.upsertFromSupabaseUser(authUser, {
-        displayName: body.displayName,
-      });
+      return this.usersService.upsertFromSupabaseUser(authUser);
     } catch (error) {
       console.error('Error creating user profile:', error);
       throw new Error('Failed to create user profile');
@@ -135,7 +133,6 @@ export class UsersController {
     return {
       id: user.authUserId,
       username: user.username,
-      displayName: user.displayName,
       profileImage: user.profileImage,
       bio: user.bio,
       country: user.country,

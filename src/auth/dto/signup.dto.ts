@@ -19,9 +19,4 @@ export class SignUpDto {
     message: 'Password must be no more than 128 characters long',
   })
   password?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(80)
-  displayName?: string;
 }

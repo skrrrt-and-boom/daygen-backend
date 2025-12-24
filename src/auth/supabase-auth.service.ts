@@ -24,7 +24,7 @@ export class SupabaseAuthService {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly usersService: UsersService,
-  ) {}
+  ) { }
 
   async signUp(
     dto: MagicLinkSignUpDto,
@@ -36,9 +36,6 @@ export class SupabaseAuthService {
         email: dto.email,
         password: dto.password,
         options: {
-          data: {
-            display_name: dto.displayName,
-          },
           emailRedirectTo: `${process.env.FRONTEND_URL}/auth/callback`,
         },
       });
@@ -55,7 +52,7 @@ export class SupabaseAuthService {
 
       if (data.user) {
         try {
-          await this.syncUserRecord(data.user, dto.displayName);
+          await this.syncUserRecord(data.user);
         } catch (syncError) {
           console.error('Failed to sync user profile after signup:', syncError);
         }
@@ -72,9 +69,6 @@ export class SupabaseAuthService {
     const { error } = await supabase.auth.signInWithOtp({
       email: dto.email,
       options: {
-        data: {
-          display_name: dto.displayName,
-        },
         emailRedirectTo: `${process.env.FRONTEND_URL}/auth/callback`,
       },
     });
@@ -214,7 +208,6 @@ export class SupabaseAuthService {
 
     const DEV_EMAIL = 'dev@daygen.ai';
     const DEV_PASSWORD = 'devpassword123';
-    const DEV_DISPLAY_NAME = 'Dev User';
 
     const adminClient = this.supabaseService.getAdminClient();
 
@@ -232,9 +225,6 @@ export class SupabaseAuthService {
           email: DEV_EMAIL,
           password: DEV_PASSWORD,
           email_confirm: true,
-          user_metadata: {
-            display_name: DEV_DISPLAY_NAME,
-          },
         });
 
       // Handle case where user already exists (race condition or list didn't find them)
@@ -250,7 +240,7 @@ export class SupabaseAuthService {
         );
       } else if (newUserData.user) {
         // Sync to our database
-        await this.syncUserRecord(newUserData.user, DEV_DISPLAY_NAME);
+        await this.syncUserRecord(newUserData.user);
       }
     }
 
@@ -270,7 +260,7 @@ export class SupabaseAuthService {
     let sanitized: SanitizedUser | null = null;
     try {
       if (data.user) {
-        sanitized = await this.syncUserRecord(data.user, DEV_DISPLAY_NAME);
+        sanitized = await this.syncUserRecord(data.user);
       }
     } catch (profileError) {
       console.error('Error ensuring dev user profile:', profileError);
@@ -284,10 +274,7 @@ export class SupabaseAuthService {
 
   private async syncUserRecord(
     authUser: SupabaseAuthUser,
-    displayNameOverride?: string | null,
   ): Promise<SanitizedUser> {
-    return this.usersService.upsertFromSupabaseUser(authUser, {
-      displayName: displayNameOverride ?? undefined,
-    });
+    return this.usersService.upsertFromSupabaseUser(authUser);
   }
 }
