@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   NotFoundException,
+  ConflictException,
   Param,
   Patch,
   Post,
@@ -12,6 +13,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -73,10 +75,22 @@ export class UsersController {
     @CurrentUser() user: SanitizedUser,
     @Body() dto: UpdateProfileDto,
   ) {
-    const updatedUser = await this.usersService.updateProfile(user.authUserId, dto);
-    // Invalidate the JWT strategy cache so the next request fetches fresh data
-    this.jwtStrategy.invalidateUserCache(user.authUserId);
-    return updatedUser;
+    try {
+      const updatedUser = await this.usersService.updateProfile(user.authUserId, dto);
+      // Invalidate the JWT strategy cache so the next request fetches fresh data
+      this.jwtStrategy.invalidateUserCache(user.authUserId);
+      return updatedUser;
+    } catch (error) {
+      // Handle Prisma unique constraint violation (e.g., username already taken)
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const target = error.meta?.target as string[] | undefined;
+        if (target?.includes('username')) {
+          throw new ConflictException('This username is already taken. Please choose a different one.');
+        }
+        throw new ConflictException('A unique constraint was violated. Please try again with different values.');
+      }
+      throw error;
+    }
   }
 
   @UseGuards(JwtAuthGuard)
