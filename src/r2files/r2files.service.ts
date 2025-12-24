@@ -50,8 +50,10 @@ export interface UpdateR2FileDto {
 export interface PublicR2FileResponse extends R2FileResponse {
   owner?: {
     displayName?: string;
+    username?: string;
     authUserId: string;
     profileImage?: string;
+    country?: string;
   };
 }
 
@@ -163,8 +165,10 @@ export class R2FilesService {
       updatedAt: Date;
       owner: {
         displayName: string | null;
+        username: string | null;
         authUserId: string;
         profileImage: string | null;
+        country: string | null;
       } | null;
     };
 
@@ -212,8 +216,10 @@ export class R2FilesService {
           owner: {
             select: {
               displayName: true,
+              username: true,
               authUserId: true,
               profileImage: true,
+              country: true,
             },
           },
         },
@@ -273,8 +279,10 @@ export class R2FilesService {
           owner: item.owner
             ? {
               displayName: item.owner.displayName ?? undefined,
+              username: item.owner.username ?? undefined,
               authUserId: item.owner.authUserId,
               profileImage: item.owner.profileImage ?? undefined,
+              country: item.owner.country ?? undefined,
             }
             : undefined,
         };
@@ -293,9 +301,11 @@ export class R2FilesService {
     nextCursor: string | null;
     user?: {
       displayName?: string;
+      username?: string;
       authUserId: string;
       profileImage?: string;
       bio?: string;
+      country?: string;
     };
   }> {
     const take = Math.min(Math.max(limit, 1), 100);
@@ -305,9 +315,11 @@ export class R2FilesService {
       where: { authUserId: userId },
       select: {
         displayName: true,
+        username: true,
         authUserId: true,
         profileImage: true,
         bio: true,
+        country: true,
       },
     });
 
@@ -442,9 +454,11 @@ export class R2FilesService {
           owner: user
             ? {
               displayName: user.displayName ?? undefined,
+              username: user.username ?? undefined,
               authUserId: user.authUserId,
               profileImage: user.profileImage ?? undefined,
               bio: user.bio ?? undefined,
+              country: user.country ?? undefined,
             }
             : undefined,
         };
@@ -454,9 +468,11 @@ export class R2FilesService {
       user: user
         ? {
           displayName: user.displayName ?? undefined,
+          username: user.username ?? undefined,
           authUserId: user.authUserId,
           profileImage: user.profileImage ?? undefined,
           bio: user.bio ?? undefined,
+          country: user.country ?? undefined,
         }
         : undefined,
     };
@@ -476,8 +492,10 @@ export class R2FilesService {
         owner: {
           select: {
             displayName: true,
+            username: true,
             authUserId: true,
             profileImage: true,
+            country: true,
           },
         },
       },
@@ -527,8 +545,10 @@ export class R2FilesService {
     updatedAt: Date;
     owner?: {
       displayName?: string | null;
+      username?: string | null;
       authUserId: string;
       profileImage?: string | null;
+      country?: string | null;
     } | null;
   }): PublicR2FileResponse {
     return {
@@ -536,8 +556,10 @@ export class R2FilesService {
       owner: file.owner
         ? {
           displayName: file.owner.displayName ?? undefined,
+          username: file.owner.username ?? undefined,
           authUserId: file.owner.authUserId,
           profileImage: file.owner.profileImage ?? undefined,
+          country: file.owner.country ?? undefined,
         }
         : undefined,
     };

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, MinLength, Matches } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength, Matches, Length } from 'class-validator';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -24,4 +24,10 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(500)
   bio?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 2, { message: 'Country must be a 2-letter ISO code' })
+  country?: string;
 }
+

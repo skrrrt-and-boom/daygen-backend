@@ -12,6 +12,7 @@ export interface SanitizedUser {
   credits: number;
   profileImage: string | null;
   bio?: string | null;
+  country?: string | null;
   role: 'USER' | 'ADMIN';
   createdAt: Date;
   updatedAt: Date;

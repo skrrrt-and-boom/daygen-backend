@@ -9,6 +9,8 @@ import {
   Query,
   UseGuards,
   Headers,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -17,12 +19,14 @@ import type { SanitizedUser } from './types';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AdminGuard } from '../auth/admin.guard';
 import { SupabaseService } from '../supabase/supabase.service';
+import { JwtStrategy } from '../auth/jwt.strategy';
 
 @Controller('users')
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly supabaseService: SupabaseService,
+    @Inject(forwardRef(() => JwtStrategy)) private readonly jwtStrategy: JwtStrategy,
   ) { }
 
   @Post('me')
@@ -65,11 +69,14 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard)
   @Patch('me')
-  updateProfile(
+  async updateProfile(
     @CurrentUser() user: SanitizedUser,
     @Body() dto: UpdateProfileDto,
   ) {
-    return this.usersService.updateProfile(user.authUserId, dto);
+    const updatedUser = await this.usersService.updateProfile(user.authUserId, dto);
+    // Invalidate the JWT strategy cache so the next request fetches fresh data
+    this.jwtStrategy.invalidateUserCache(user.authUserId);
+    return updatedUser;
   }
 
   @UseGuards(JwtAuthGuard)
@@ -78,17 +85,21 @@ export class UsersController {
     @CurrentUser() user: SanitizedUser,
     @Body() body: { base64Data: string; mimeType?: string },
   ) {
-    return this.usersService.uploadProfilePicture(
+    const updatedUser = await this.usersService.uploadProfilePicture(
       user.authUserId,
       body.base64Data,
       body.mimeType,
     );
+    this.jwtStrategy.invalidateUserCache(user.authUserId);
+    return updatedUser;
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('me/remove-profile-picture')
   async removeProfilePicture(@CurrentUser() user: SanitizedUser) {
-    return this.usersService.removeProfilePicture(user.authUserId);
+    const updatedUser = await this.usersService.removeProfilePicture(user.authUserId);
+    this.jwtStrategy.invalidateUserCache(user.authUserId);
+    return updatedUser;
   }
 
   /**
@@ -113,6 +124,7 @@ export class UsersController {
       displayName: user.displayName,
       profileImage: user.profileImage,
       bio: user.bio,
+      country: user.country,
     };
   }
 }

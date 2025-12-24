@@ -98,7 +98,7 @@ export class UsersService {
 
   async updateProfile(
     authUserId: string,
-    patch: { displayName?: string | null; profileImage?: string | null; bio?: string | null; username?: string | null },
+    patch: { displayName?: string | null; profileImage?: string | null; bio?: string | null; username?: string | null; country?: string | null },
   ): Promise<SanitizedUser> {
     // Build update data object with only the fields that were explicitly provided
     const updateData: Prisma.UserUpdateInput = {};
@@ -122,6 +122,11 @@ export class UsersService {
     // Only update username if it was explicitly provided in the patch
     if (patch.username !== undefined) {
       updateData.username = patch.username?.toLowerCase().trim() || null;
+    }
+
+    // Only update country if it was explicitly provided in the patch
+    if (patch.country !== undefined) {
+      updateData.country = patch.country?.toUpperCase().trim() || null;
     }
 
     const user = await this.prisma.user.update({
@@ -371,6 +376,7 @@ export class UsersService {
       credits: user.credits,
       profileImage: user.profileImage ?? null,
       bio: (user as any).bio ?? null,
+      country: (user as any).country ?? null,
       role: user.role,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,

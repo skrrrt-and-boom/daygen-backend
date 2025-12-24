@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
@@ -14,7 +14,7 @@ const jwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
 
 @Module({
   imports: [
-    UsersModule,
+    forwardRef(() => UsersModule),
     SupabaseModule,
     PassportModule,
     JwtModule.register({
@@ -30,6 +30,6 @@ const jwtSecret = process.env.JWT_SECRET ?? 'change-me-in-production';
     JwtStrategy,
     AdminGuard,
   ],
-  exports: [AuthService, SupabaseAuthService, GoogleAuthService, AdminGuard],
+  exports: [AuthService, SupabaseAuthService, GoogleAuthService, AdminGuard, JwtStrategy],
 })
-export class AuthModule {}
+export class AuthModule { }

@@ -80,6 +80,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
+  /**
+   * Invalidate the cache for a specific user.
+   * Call this when a user's profile is updated.
+   */
+  invalidateUserCache(authUserId: string): void {
+    this.userCache.delete(authUserId);
+  }
+
   async validate(payload: JwtPayload) {
     // Check if the user has the authenticated role
     if (payload.role !== 'authenticated') {
