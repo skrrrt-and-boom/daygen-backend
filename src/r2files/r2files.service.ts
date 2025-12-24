@@ -565,14 +565,27 @@ export class R2FilesService {
     };
   }
 
-  async list(userId: string, limit = 50, cursor?: string) {
+  async list(userId: string, limit = 50, cursor?: string, type?: 'image' | 'video') {
     const take = Math.min(Math.max(limit, 1), 100);
+
+    // Build mimeType filter based on type parameter
+    const mimeTypeFilter: Prisma.R2FileWhereInput = type === 'video'
+      ? { mimeType: { startsWith: 'video/' } }
+      : type === 'image'
+        ? {
+          OR: [
+            { mimeType: { startsWith: 'image/' } },
+            { mimeType: null }, // Include items without mimeType in image view
+          ],
+        }
+        : {};
 
     const where: Prisma.R2FileWhereInput = {
       userId: userId,
       deletedAt: null,
       avatarId: null,
       productId: null,
+      ...mimeTypeFilter,
     };
 
     const fetchBatchSize = Math.min(take * 2, 50);

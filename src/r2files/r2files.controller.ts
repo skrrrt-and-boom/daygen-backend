@@ -132,12 +132,14 @@ export class R2FilesController {
     @CurrentUser() user: SanitizedUser,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('type') type?: 'image' | 'video',
   ) {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
     return this.r2FilesService.list(
       user.authUserId,
       parsedLimit,
       cursor ?? undefined,
+      type,
     );
   }
 
