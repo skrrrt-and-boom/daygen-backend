@@ -34,7 +34,6 @@ export class UsersController {
   @Post('me')
   async createUserProfile(
     @Headers('authorization') authorization: string,
-    @Body() body: { email: string; authUserId: string },
   ) {
     const token = authorization?.replace('Bearer ', '');
     if (!token) {
