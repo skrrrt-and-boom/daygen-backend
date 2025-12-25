@@ -333,7 +333,7 @@ export class R2FilesService {
       result
         .filter((item) => item.userId !== null)
         .map(async (item) => {
-          const userId = item.userId as string;
+          const userId = item.userId;
           // Get user info
           const user = await this.prisma.user.findUnique({
             where: { authUserId: userId },
