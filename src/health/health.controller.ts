@@ -14,7 +14,7 @@ export class HealthController {
     private readonly health: HealthCheckService,
     private readonly prisma: PrismaHealthIndicator,
     private readonly prismaService: PrismaService,
-  ) {}
+  ) { }
 
   @Get()
   @HealthCheck()
@@ -26,7 +26,7 @@ export class HealthController {
       process.env.DATABASE_URL &&
       process.env.SKIP_DATABASE_HEALTHCHECK !== 'true'
     ) {
-      checks.push(() => this.prisma.pingCheck('database', this.prismaService));
+      checks.push(() => this.prisma.pingCheck('database', this.prismaService, { timeout: 5000 }));
     }
 
     if (checks.length === 0) {
