@@ -83,6 +83,13 @@ export class R2FilesController {
     );
   }
 
+  // Public endpoint to get top creators by aggregated likes
+  @Get('public/top-creators')
+  listTopCreators(@Query('limit') limit?: string) {
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : 5;
+    return this.r2FilesService.listTopCreators(parsedLimit);
+  }
+
   // Public endpoint to list a specific user's public generations for creator profile modal
   // Optional auth to check for likes
   @UseGuards(OptionalJwtAuthGuard)

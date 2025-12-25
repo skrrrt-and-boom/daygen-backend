@@ -289,6 +289,94 @@ export class R2FilesService {
   }
 
   /**
+   * List top creators by aggregated likes across all their public generations
+   */
+  async listTopCreators(limit = 5): Promise<{
+    creators: Array<{
+      userId: string;
+      username?: string;
+      profileImage?: string;
+      country?: string;
+      totalLikes: number;
+      imageCount: number;
+      bestImage: string;
+    }>;
+  }> {
+    // Use raw aggregation query to get top creators by total likes
+    const result = await this.prisma.r2File.groupBy({
+      by: ['userId'],
+      where: {
+        isPublic: true,
+        deletedAt: null,
+        avatarId: null,
+        productId: null,
+        userId: { not: undefined },
+      },
+      _sum: {
+        likeCount: true,
+      },
+      _count: true,
+      orderBy: {
+        _sum: {
+          likeCount: 'desc',
+        },
+      },
+      take: limit,
+    });
+
+    if (result.length === 0) {
+      return { creators: [] };
+    }
+
+    // Get user details and best image for each top creator
+    const creators = await Promise.all(
+      result
+        .filter((item) => item.userId !== null)
+        .map(async (item) => {
+          const userId = item.userId as string;
+          // Get user info
+          const user = await this.prisma.user.findUnique({
+            where: { authUserId: userId },
+            select: {
+              username: true,
+              authUserId: true,
+              profileImage: true,
+              country: true,
+            },
+          });
+
+          // Get best image (highest liked) for this creator
+          const bestImage = await this.prisma.r2File.findFirst({
+            where: {
+              userId: userId,
+              isPublic: true,
+              deletedAt: null,
+              avatarId: null,
+              productId: null,
+            },
+            orderBy: { likeCount: 'desc' },
+            select: { fileUrl: true },
+          });
+
+          return {
+            userId,
+            username: user?.username ?? undefined,
+            profileImage: user?.profileImage ?? undefined,
+            country: user?.country ?? undefined,
+            totalLikes: item._sum?.likeCount ?? 0,
+            imageCount: typeof item._count === 'number' ? item._count : 0,
+            bestImage: bestImage?.fileUrl ?? '',
+          };
+        }),
+    );
+
+    // Filter out creators without a best image
+    return {
+      creators: creators.filter((c) => c.bestImage),
+    };
+  }
+
+  /**
    * List public generations for a specific user (for creator profile modal)
    */
   async listPublicByUser(userId: string, limit = 50, cursor?: string, viewerAuthId?: string): Promise<{
