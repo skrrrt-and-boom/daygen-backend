@@ -13,19 +13,21 @@ export class PrismaService
     try {
       if (effectiveUrl) {
         const eu = new URL(effectiveUrl);
-        const isSupabase = /supabase\.co$/i.test(eu.hostname);
+        const isSupabase = /supabase\.co(m)?$/i.test(eu.hostname);
         const port = Number(eu.port || '5432');
         if (isSupabase && (port === 6543 || port === 6532)) {
           if (!eu.searchParams.get('sslmode')) eu.searchParams.set('sslmode', 'require');
           if (!eu.searchParams.get('pgbouncer')) eu.searchParams.set('pgbouncer', 'true');
-          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '50');
-          if (!eu.searchParams.get('pool_timeout')) eu.searchParams.set('pool_timeout', '30');
+          // Use conservative connection limit to avoid exhausting Supabase pooler
+          // Supabase transaction pooler has limited server-side connections
+          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '5');
+          // Longer pool timeout to wait for connections instead of failing fast
+          if (!eu.searchParams.get('pool_timeout')) eu.searchParams.set('pool_timeout', '60');
           effectiveUrl = eu.toString();
         }
         const logUrl = new URL(effectiveUrl);
         console.log(
-          `PrismaService: using db ${logUrl.hostname}:${logUrl.port || '5432'} (sslmode=${logUrl.searchParams.get('sslmode') || 'n/a'
-          }, pgbouncer=${logUrl.searchParams.get('pgbouncer') || 'n/a'})`,
+          `PrismaService: using db ${logUrl.hostname}:${logUrl.port || '5432'} (connection_limit=${logUrl.searchParams.get('connection_limit') || 'default'}, pool_timeout=${logUrl.searchParams.get('pool_timeout') || 'default'}, pgbouncer=${logUrl.searchParams.get('pgbouncer') || 'n/a'})`,
         );
       }
     } catch {
