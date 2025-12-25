@@ -21,6 +21,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { CleanupService } from './cleanup/cleanup.service';
 import { AvatarsModule } from './avatars/avatars.module';
 import { ProductsModule } from './products/products.module';
+import { PromptsModule } from './prompts/prompts.module';
 
 import { SweeperService } from './cron/sweeper.service';
 
@@ -87,6 +88,7 @@ import { SweeperService } from './cron/sweeper.service';
     TimelineModule,
     AvatarsModule,
     ProductsModule,
+    PromptsModule,
   ],
   controllers: [AppController],
   providers: [AppService, CleanupService, SweeperService],
