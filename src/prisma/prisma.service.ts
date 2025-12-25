@@ -18,7 +18,8 @@ export class PrismaService
         if (isSupabase && (port === 6543 || port === 6532)) {
           if (!eu.searchParams.get('sslmode')) eu.searchParams.set('sslmode', 'require');
           if (!eu.searchParams.get('pgbouncer')) eu.searchParams.set('pgbouncer', 'true');
-          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '10');
+          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '50');
+          if (!eu.searchParams.get('pool_timeout')) eu.searchParams.set('pool_timeout', '30');
           effectiveUrl = eu.toString();
         }
         const logUrl = new URL(effectiveUrl);
