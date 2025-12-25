@@ -65,4 +65,12 @@ export class AvatarsController {
     ) {
         return this.avatarsService.removeImage(user.authUserId, id, imageId);
     }
+
+    @Post(':id/set-me')
+    setMeAvatar(
+        @CurrentUser() user: SanitizedUser,
+        @Param('id') id: string,
+    ) {
+        return this.avatarsService.setMeAvatar(user.authUserId, id);
+    }
 }

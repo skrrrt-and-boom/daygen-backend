@@ -51,6 +51,12 @@ export class AvatarsService {
             counter++;
         }
 
+        // Check if this is the user's first avatar (to auto-set as "Me")
+        const existingAvatarCount = await this.prisma.avatar.count({
+            where: { userId, deletedAt: null },
+        });
+        const isFirstAvatar = existingAvatarCount === 0;
+
         const avatar = await this.prisma.avatar.create({
             data: {
                 userId,
@@ -60,6 +66,7 @@ export class AvatarsService {
                 source: dto.source,
                 sourceId: dto.sourceId,
                 published: dto.published ?? false,
+                isMe: isFirstAvatar, // Auto-set first avatar as "Me"
                 images: dto.images?.length
                     ? {
                         create: dto.images.map((img, index) => ({
@@ -228,6 +235,27 @@ export class AvatarsService {
         return { success: true };
     }
 
+    /**
+     * Set an avatar as the "Me" avatar (user's own avatar)
+     * Ensures only one avatar per user can be isMe: true
+     */
+    async setMeAvatar(userId: string, avatarId: string) {
+        // First, unset any existing "Me" avatar for this user
+        await this.prisma.avatar.updateMany({
+            where: { userId, isMe: true, deletedAt: null },
+            data: { isMe: false },
+        });
+
+        // Set the specified avatar as "Me"
+        const avatar = await this.prisma.avatar.update({
+            where: { id: avatarId },
+            data: { isMe: true },
+            include: { images: true },
+        });
+
+        return this.toResponse(avatar);
+    }
+
     private toResponse(avatar: any) {
         const primaryImage = avatar.images?.find((img: any) => img.isPrimary) || avatar.images?.[0];
 
@@ -239,6 +267,7 @@ export class AvatarsService {
             source: avatar.source,
             sourceId: avatar.sourceId,
             published: avatar.published,
+            isMe: avatar.isMe ?? false,
             createdAt: avatar.createdAt.toISOString(),
             updatedAt: avatar.updatedAt.toISOString(),
             primaryImageId: primaryImage?.id || null,

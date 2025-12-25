@@ -404,6 +404,7 @@ model Avatar {
   source        String        // "upload" | "gallery"
   sourceId      String?
   published     Boolean       @default(false)
+  isMe          Boolean       @default(false)  // Designates user's own avatar
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   deletedAt     DateTime?
