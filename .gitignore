@@ -51,6 +51,7 @@ service-account-key.json
 !tsconfig*.json
 !jest.config.js
 !eslint.config.*
+!test/jest-e2e.json
 
 # temp directory
 .temp
