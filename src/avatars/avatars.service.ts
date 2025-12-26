@@ -51,11 +51,13 @@ export class AvatarsService {
             counter++;
         }
 
-        // Check if this is the user's first avatar (to auto-set as "Me")
-        const existingAvatarCount = await this.prisma.avatar.count({
-            where: { userId, deletedAt: null },
-        });
-        const isFirstAvatar = existingAvatarCount === 0;
+        // If isMe is explicitly set to true, unset any existing Me avatar first
+        if (dto.isMe) {
+            await this.prisma.avatar.updateMany({
+                where: { userId, isMe: true, deletedAt: null },
+                data: { isMe: false },
+            });
+        }
 
         const avatar = await this.prisma.avatar.create({
             data: {
@@ -66,7 +68,7 @@ export class AvatarsService {
                 source: dto.source,
                 sourceId: dto.sourceId,
                 published: dto.published ?? false,
-                isMe: isFirstAvatar, // Auto-set first avatar as "Me"
+                isMe: dto.isMe ?? false, // Only set isMe if explicitly requested
                 images: dto.images?.length
                     ? {
                         create: dto.images.map((img, index) => ({
@@ -254,6 +256,46 @@ export class AvatarsService {
         });
 
         return this.toResponse(avatar);
+    }
+
+    /**
+     * Set a specific image as the primary image for an avatar
+     */
+    async setPrimaryImage(userId: string, avatarId: string, imageId: string) {
+        const avatar = await this.prisma.avatar.findFirst({
+            where: { id: avatarId, userId, deletedAt: null },
+            include: { images: true },
+        });
+
+        if (!avatar) {
+            throw new NotFoundException('Avatar not found');
+        }
+
+        const image = avatar.images.find(img => img.id === imageId);
+        if (!image) {
+            throw new NotFoundException('Image not found');
+        }
+
+        // Unmark all images as primary
+        await this.prisma.r2File.updateMany({
+            where: { avatarId },
+            data: { isPrimary: false },
+        });
+
+        // Mark the selected image as primary
+        await this.prisma.r2File.update({
+            where: { id: imageId },
+            data: { isPrimary: true },
+        });
+
+        // Update avatar's primary imageUrl
+        const updatedAvatar = await this.prisma.avatar.update({
+            where: { id: avatarId },
+            data: { imageUrl: image.fileUrl },
+            include: { images: true },
+        });
+
+        return this.toResponse(updatedAvatar);
     }
 
     private toResponse(avatar: any) {

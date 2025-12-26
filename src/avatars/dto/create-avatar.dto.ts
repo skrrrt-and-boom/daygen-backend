@@ -36,6 +36,10 @@ export class CreateAvatarDto {
     published?: boolean;
 
     @IsOptional()
+    @IsBoolean()
+    isMe?: boolean;
+
+    @IsOptional()
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => CreateAvatarImageDto)

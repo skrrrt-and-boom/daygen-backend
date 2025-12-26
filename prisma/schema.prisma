@@ -277,6 +277,7 @@ enum JobType {
   IMAGE_EDIT
   IMAGE_RESIZE
   CYRAN_ROLL
+  RECREATE_IMAGE
 }
 
 enum JobStatus {

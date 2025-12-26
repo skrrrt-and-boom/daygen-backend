@@ -73,4 +73,13 @@ export class AvatarsController {
     ) {
         return this.avatarsService.setMeAvatar(user.authUserId, id);
     }
+
+    @Post(':id/images/:imageId/set-primary')
+    setPrimaryImage(
+        @CurrentUser() user: SanitizedUser,
+        @Param('id') id: string,
+        @Param('imageId') imageId: string,
+    ) {
+        return this.avatarsService.setPrimaryImage(user.authUserId, id, imageId);
+    }
 }

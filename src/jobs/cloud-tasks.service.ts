@@ -35,6 +35,7 @@ export class CloudTasksService {
     [JobType.SCENE_GENERATION]: 'scene-generation-queue',
     [JobType.IMAGE_EDIT]: 'image-generation-queue', // Reuse image generation queue
     [JobType.IMAGE_RESIZE]: 'image-generation-queue', // Reuse image generation queue
+    [JobType.RECREATE_IMAGE]: 'image-generation-queue', // Reuse image generation queue
   };
 
   constructor(
@@ -215,6 +216,8 @@ export class CloudTasksService {
       type = JobType.IMAGE_EDIT;
     } else if (data.jobType === 'resize' || data.jobType === 'IMAGE_RESIZE') {
       type = JobType.IMAGE_RESIZE;
+    } else if (data.jobType === 'RECREATE_IMAGE') {
+      type = JobType.RECREATE_IMAGE;
     } else {
       type = JobType.IMAGE_GENERATION;
     }
