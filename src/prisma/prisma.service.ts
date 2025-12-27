@@ -18,11 +18,13 @@ export class PrismaService
         if (isSupabase && (port === 6543 || port === 6532)) {
           if (!eu.searchParams.get('sslmode')) eu.searchParams.set('sslmode', 'require');
           if (!eu.searchParams.get('pgbouncer')) eu.searchParams.set('pgbouncer', 'true');
-          // Use conservative connection limit to avoid exhausting Supabase pooler
-          // Supabase transaction pooler has limited server-side connections
-          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '5');
-          // Longer pool timeout to wait for connections instead of failing fast
-          if (!eu.searchParams.get('pool_timeout')) eu.searchParams.set('pool_timeout', '60');
+          // Connection limit increased to handle concurrent requests better
+          // Supabase pooler can handle more connections with proper idle transaction timeouts
+          if (!eu.searchParams.get('connection_limit')) eu.searchParams.set('connection_limit', '15');
+          // Pool timeout for waiting on available connections
+          if (!eu.searchParams.get('pool_timeout')) eu.searchParams.set('pool_timeout', '30');
+          // Idle timeout to automatically close stale connections
+          if (!eu.searchParams.get('idle_in_transaction_session_timeout')) eu.searchParams.set('idle_in_transaction_session_timeout', '30000');
           effectiveUrl = eu.toString();
         }
         const logUrl = new URL(effectiveUrl);

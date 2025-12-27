@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../upload/r2.service';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import pLimit from 'p-limit';
 
 export interface CreateR2FileDto {
   fileName: string;
@@ -173,8 +174,11 @@ export class R2FilesService {
     const collected: (R2FileSelected & { viewerHasLiked?: boolean })[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
+    const maxIterations = 20; // Prevent infinite loops and connection hogging
+    let iterations = 0;
 
-    while (collected.length < take && hasMore) {
+    while (collected.length < take && hasMore && iterations < maxIterations) {
+      iterations++;
       const batch = await this.prisma.r2File.findMany({
         where: {
           ...where,
@@ -328,11 +332,14 @@ export class R2FilesService {
       return { creators: [] };
     }
 
+    // Limit concurrent database queries to prevent connection pool exhaustion
+    const concurrencyLimit = pLimit(3);
+
     // Get user details and best image for each top creator
     const creators = await Promise.all(
       result
         .filter((item) => item.userId !== null)
-        .map(async (item) => {
+        .map((item) => concurrencyLimit(async () => {
           const userId = item.userId;
           // Get user info
           const user = await this.prisma.user.findUnique({
@@ -367,7 +374,7 @@ export class R2FilesService {
             imageCount: typeof item._count === 'number' ? item._count : 0,
             bestImage: bestImage?.fileUrl ?? '',
           };
-        }),
+        })),
     );
 
     // Filter out creators without a best image
@@ -442,8 +449,11 @@ export class R2FilesService {
     const collected: (R2FileSelected & { viewerHasLiked?: boolean })[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
+    const maxIterations = 20; // Prevent infinite loops and connection hogging
+    let iterations = 0;
 
-    while (collected.length < take && hasMore) {
+    while (collected.length < take && hasMore && iterations < maxIterations) {
+      iterations++;
       const batch = await this.prisma.r2File.findMany({
         where: {
           ...where,
@@ -693,8 +703,11 @@ export class R2FilesService {
     const collected: R2FileSelected[] = [];
     let pagingCursor = cursor ? new Date(cursor) : undefined;
     let hasMore = true;
+    const maxIterations = 20; // Prevent infinite loops and connection hogging
+    let iterations = 0;
 
-    while (collected.length < take && hasMore) {
+    while (collected.length < take && hasMore && iterations < maxIterations) {
+      iterations++;
       const batch = await this.prisma.r2File.findMany({
         where: {
           ...where,
@@ -989,6 +1002,103 @@ export class R2FilesService {
     });
 
     return { success: true };
+  }
+
+  /**
+   * Remove orphaned avatar/product image R2File records from the gallery.
+   * These are records where the fileUrl matches an avatar/product image,
+   * but avatarId/productId is null (incorrectly stored in gallery).
+   */
+  async cleanupOrphanedAvatarImages(userId: string): Promise<{
+    cleaned: number;
+    avatarImagesFound: number;
+  }> {
+    // 1. Get all avatar image URLs for this user
+    const avatars = await this.prisma.avatar.findMany({
+      where: { userId, deletedAt: null },
+      include: { images: { select: { fileUrl: true } } },
+    });
+
+    // Collect all avatar image URLs
+    const avatarImageUrls = new Set<string>();
+    for (const avatar of avatars) {
+      if (avatar.imageUrl) {
+        avatarImageUrls.add(avatar.imageUrl.trim());
+        // Also add base URL without query params
+        avatarImageUrls.add(avatar.imageUrl.split('?')[0]);
+      }
+      for (const img of avatar.images) {
+        if (img.fileUrl) {
+          avatarImageUrls.add(img.fileUrl.trim());
+          avatarImageUrls.add(img.fileUrl.split('?')[0]);
+        }
+      }
+    }
+
+    if (avatarImageUrls.size === 0) {
+      return { cleaned: 0, avatarImagesFound: 0 };
+    }
+
+    // 2. Find orphaned R2File records: matching URLs but no avatarId
+    const orphanedRecords = await this.prisma.r2File.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        avatarId: null,
+        productId: null,
+        fileUrl: { in: Array.from(avatarImageUrls) },
+      },
+      select: { id: true, fileUrl: true },
+    });
+
+    if (orphanedRecords.length === 0) {
+      return { cleaned: 0, avatarImagesFound: avatarImageUrls.size };
+    }
+
+    // 3. Soft delete the orphaned records
+    const now = new Date();
+    await this.prisma.r2File.updateMany({
+      where: {
+        id: { in: orphanedRecords.map((r) => r.id) },
+      },
+      data: {
+        deletedAt: now,
+        updatedAt: now,
+      },
+    });
+
+    return {
+      cleaned: orphanedRecords.length,
+      avatarImagesFound: avatarImageUrls.size,
+    };
+  }
+
+  /**
+   * Remove orphaned avatar/product images from ALL users.
+   * This is an admin operation to clean up all accounts.
+   */
+  async cleanupAllOrphanedAvatarImages(): Promise<{
+    usersProcessed: number;
+    totalCleaned: number;
+  }> {
+    // Get all unique user IDs
+    const users = await this.prisma.r2File.findMany({
+      where: { deletedAt: null },
+      select: { userId: true },
+      distinct: ['userId'],
+    });
+
+    let totalCleaned = 0;
+
+    for (const { userId } of users) {
+      const result = await this.cleanupOrphanedAvatarImages(userId);
+      totalCleaned += result.cleaned;
+    }
+
+    return {
+      usersProcessed: users.length,
+      totalCleaned,
+    };
   }
 
   private toResponse(file: {

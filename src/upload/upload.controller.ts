@@ -42,6 +42,14 @@ class UploadBase64Dto {
   @IsOptional()
   @IsString()
   model?: string;
+
+  @IsOptional()
+  @IsString()
+  avatarId?: string;
+
+  @IsOptional()
+  @IsString()
+  productId?: string;
 }
 
 class PresignedUploadDto {
@@ -167,23 +175,26 @@ export class UploadController {
         dto.folder,
       );
 
-      // Save R2File record to database
-      // Determine file prefix based on MIME type
-      const filePrefix = mimeType.startsWith('audio/')
-        ? 'audio'
-        : mimeType.startsWith('video/')
-          ? 'video'
-          : 'image';
-      const extension = mimeType.split('/')[1] || 'bin';
-      const fileName = `${filePrefix}-${Date.now()}.${extension}`;
-      await this.r2FilesService.create(user.authUserId, {
-        fileName,
-        fileUrl: publicUrl,
-        fileSize: Math.round((dto.base64Data.length * 3) / 4), // Approximate size
-        mimeType,
-        prompt: dto.prompt,
-        model: dto.model,
-      });
+      // Save R2File record to database (skip if this is an avatar/product image - those get their own records via the avatar/product endpoints)
+      // Only create R2File if no avatarId or productId is specified (those flows handle their own R2File creation)
+      if (!dto.avatarId && !dto.productId) {
+        // Determine file prefix based on MIME type
+        const filePrefix = mimeType.startsWith('audio/')
+          ? 'audio'
+          : mimeType.startsWith('video/')
+            ? 'video'
+            : 'image';
+        const extension = mimeType.split('/')[1] || 'bin';
+        const fileName = `${filePrefix}-${Date.now()}.${extension}`;
+        await this.r2FilesService.create(user.authUserId, {
+          fileName,
+          fileUrl: publicUrl,
+          fileSize: Math.round((dto.base64Data.length * 3) / 4), // Approximate size
+          mimeType,
+          prompt: dto.prompt,
+          model: dto.model,
+        });
+      }
 
       return {
         success: true,

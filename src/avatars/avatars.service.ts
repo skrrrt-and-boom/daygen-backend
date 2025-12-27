@@ -39,16 +39,21 @@ export class AvatarsService {
     async create(userId: string, dto: CreateAvatarDto) {
         const baseSlug = generateSlug(dto.name);
 
-        // Find unique slug
+        // Find unique slug (max 10 attempts to prevent infinite loops)
         let slug = baseSlug;
         let counter = 1;
-        while (true) {
+        const maxAttempts = 10;
+        while (counter <= maxAttempts) {
             const existing = await this.prisma.avatar.findUnique({
                 where: { userId_slug: { userId, slug } },
             });
             if (!existing) break;
             slug = `${baseSlug}-${counter}`;
             counter++;
+        }
+        // If we exhausted attempts, add a random suffix
+        if (counter > maxAttempts) {
+            slug = `${baseSlug}-${Date.now()}`;
         }
 
         // If isMe is explicitly set to true, unset any existing Me avatar first
@@ -106,19 +111,24 @@ export class AvatarsService {
             throw new NotFoundException('Avatar not found');
         }
 
-        // If name changed, regenerate slug
+        // If name changed, regenerate slug (max 10 attempts to prevent infinite loops)
         let slug = avatar.slug;
         if (dto.name && dto.name !== avatar.name) {
             const baseSlug = generateSlug(dto.name);
             slug = baseSlug;
             let counter = 1;
-            while (true) {
+            const maxAttempts = 10;
+            while (counter <= maxAttempts) {
                 const existing = await this.prisma.avatar.findFirst({
                     where: { userId, slug, id: { not: id } },
                 });
                 if (!existing) break;
                 slug = `${baseSlug}-${counter}`;
                 counter++;
+            }
+            // If we exhausted attempts, add a random suffix
+            if (counter > maxAttempts) {
+                slug = `${baseSlug}-${Date.now()}`;
             }
         }
 

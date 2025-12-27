@@ -199,4 +199,24 @@ export class R2FilesController {
   remove(@CurrentUser() user: SanitizedUser, @Param('id') id: string) {
     return this.r2FilesService.remove(user.authUserId, id);
   }
+
+  /**
+   * Clean up orphaned avatar images from the current user's gallery.
+   * This removes R2File records that match avatar image URLs but don't have avatarId set.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('cleanup-avatar-images')
+  cleanupAvatarImages(@CurrentUser() user: SanitizedUser) {
+    return this.r2FilesService.cleanupOrphanedAvatarImages(user.authUserId);
+  }
+
+  /**
+   * Clean up orphaned avatar images from ALL users' galleries.
+   * This is an admin operation - should be protected by admin auth in production.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('cleanup-all-avatar-images')
+  cleanupAllAvatarImages() {
+    return this.r2FilesService.cleanupAllOrphanedAvatarImages();
+  }
 }
