@@ -670,8 +670,6 @@ export class R2FilesService {
     const where: Prisma.R2FileWhereInput = {
       userId: userId,
       deletedAt: null,
-      avatarId: null,
-      productId: null,
       ...mimeTypeFilter,
     };
 
