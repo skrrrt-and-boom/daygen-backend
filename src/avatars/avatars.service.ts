@@ -36,6 +36,20 @@ export class AvatarsService {
         return this.toResponse(avatar);
     }
 
+    async findMe(userId: string) {
+        const avatar = await this.prisma.avatar.findFirst({
+            where: { userId, isMe: true, deletedAt: null },
+            include: { images: true },
+        });
+
+        // Return null instead of throwing if no "me" avatar exists
+        if (!avatar) {
+            return null;
+        }
+
+        return this.toResponse(avatar);
+    }
+
     async create(userId: string, dto: CreateAvatarDto) {
         const baseSlug = generateSlug(dto.name);
 

@@ -24,6 +24,11 @@ export class AvatarsController {
         return this.avatarsService.findAll(user.authUserId);
     }
 
+    @Get('me')
+    findMe(@CurrentUser() user: SanitizedUser) {
+        return this.avatarsService.findMe(user.authUserId);
+    }
+
     @Get(':id')
     findOne(@CurrentUser() user: SanitizedUser, @Param('id') id: string) {
         return this.avatarsService.findOne(user.authUserId, id);
